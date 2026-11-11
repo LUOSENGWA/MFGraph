@@ -1,0 +1,76 @@
+# MFGit
+
+[English](README.md) | **简体中文**
+
+**面向团队与 Agent 的项目工作区版本化服务。**
+
+MFGit 是一个设计阶段的自托管服务，用于对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。
+
+> 状态：**设计/规格阶段**。本仓库暂无生产代码；这里定义的是待实现的契约。
+
+## 为什么需要 MFGit
+
+多数工具只解决一个切片：
+
+- 面向对象存储的 Git 式数据版本化；
+- Git 的大文件指针；
+- 带元数据与审批的文档管理；
+- AEC/媒体/PLM 垂直系统；
+- 工作流引擎。
+
+MFGit 关注的是这些能力的组合缺口：
+
+1. **项目层级** — `project` 是业务根；`project_node` 可嵌套（阶段/楼栋/剧集/模块/包）；`workstream` 是执行车道。
+2. **Workstream ≠ branch** — 一个 workstream 可以有多个 branch；`branch_id` / `ref_name` 是独立的版本引用。
+3. **二进制/大文件是一等公民** — 内容寻址 chunk、packfile、manifest、独占锁；不做不安全的自动合并。
+4. **格式与行业模板** — 文本/Office/PDF/图片/音视频/CAD/BIM/数据集/归档/DICOM 以模板配置，不硬编码垂直分支。
+5. **工作流可选** — 内置 HTTP 适配器可连接外部工作流引擎；没有引擎时，REST/CLI/MCP 仍可用。
+6. **人与 Agent 中立** — 统一 `principal_uid` 身份；不依赖特定 Agent 运行时或 Matrix。
+
+## 它不是什么
+
+- 不是 Git 服务器，也不实现 Git 兼容协议；
+- 不是完整的文档管理/ECM 系统；
+- 不是 PLM/BOM 系统；
+- 不是工作流引擎；
+- 不是只服务 Agent 或只依赖 Matrix 的产品。
+
+## 架构速览
+
+```text
+tenant
+└─ project
+   └─ project_node*        (可选：子项目/阶段/楼栋/剧集/模块)
+      └─ workspace         (版本化内容根)
+         └─ workstream 1:N branches
+            └─ snapshot     (不可变 manifest)
+workflow (外部，可选)
+```
+
+## 存储与数据库
+
+- **数据库：** v1 采用 MySQL 兼容方言（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）。只存状态与索引，不把文件字节存进数据库。
+- **对象存储：** S3 兼容（AWS S3、RustFS、MinIO、Ceph RGW、R2、B2、OSS S3 模式、IBM COS、Oracle Object Storage S3）与 POSIX/NFS。Azure Blob 与 GCS 适配器为后续计划。
+- **二进制/大文件：** chunk + packfile + manifest；二进制内容使用锁并发控制。
+
+## 文档
+
+- [架构](docs/zh-CN/architecture.md)
+- [数据模型](docs/zh-CN/data-model.md)
+- [存储](docs/zh-CN/storage.md)
+- [API](docs/zh-CN/api.md)
+- [工作流集成](docs/zh-CN/workflow.md)
+- [安全](docs/zh-CN/security.md)
+- [部署](docs/zh-CN/deployment.md)
+- [路线图](docs/zh-CN/roadmap.md)
+- [FAQ](docs/zh-CN/faq.md)
+
+## 状态与许可
+
+本仓库是**设计/规格仓库**。代码将按照 `docs/` 中的契约实现。
+
+许可：**Apache-2.0**（见 [LICENSE](LICENSE)）。
+
+## 贡献
+
+见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)（[English](CONTRIBUTING.md)）。安全问题见 [SECURITY.zh-CN.md](SECURITY.zh-CN.md)（[English](SECURITY.md)）。行为准则见 [CODE_OF_CONDUCT.zh-CN.md](CODE_OF_CONDUCT.zh-CN.md)（[English](CODE_OF_CONDUCT.md)）。

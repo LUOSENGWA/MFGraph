@@ -1,0 +1,31 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.txt
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Local data
+/data/
+*.log
+
+# Generated
+/derived/
