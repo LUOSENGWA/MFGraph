@@ -65,3 +65,11 @@ There is no distributed transaction across DB and object storage. A commit is a 
 - lease expiry is compared against **DB time** (`NOW(6)`), and lock acquire/takeover commit share the `workspace_fencing` row lock (serialization point);
 - expired writer commits get 409; break-glass is admin-only and audited;
 - commit checks `base_head`: concurrent edits to the same path return 409 `path_conflict` — retries never silently overwrite.
+
+## Garbage collection
+
+- v1 **never deletes committed snapshots**: every committed snapshot is a root, so GC only reclaims orphans, staged objects and trash;
+- two phases: **mark (DB) → sweep (object store)** with a 24h grace period; objects younger than the grace window are never deleted;
+- bucket versioning is enabled by default: the sweeper deletes **specific version ids** (a plain `DELETE` only adds a delete marker); the grace window doubles as an undelete window; noncurrent versions expire after 30 days;
+- GC never crosses workspaces; `gc_state` (one row per workspace) holds the watermark and the mutex;
+- packs are not compressed in v1; range reads map directly to `offset/length`.

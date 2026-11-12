@@ -65,3 +65,11 @@ DB 与对象存储之间没有分布式事务。一次提交是**文件/版本�
 - 租约过期判定用 **DB 时间**（`NOW(6)`）；acquire/接管与提交共用 `workspace_fencing` 行锁（串行化点）；
 - 过期写者的提交返回 409；break-glass 仅管理员可用，且必须审计；
 - 提交校验 `base_head`：同一路径被并发修改返回 409 `path_conflict`——重试绝不静默覆盖。
+
+## 垃圾回收
+
+- v1 **不删除任何已提交快照**：所有已提交快照都是根，GC 只回收孤儿、暂存与 trash；
+- 两段式：**mark（DB）→ sweep（对象存储）**，24h grace；创建后未过 grace 的对象一律不删；
+- 默认启用 bucket versioning：sweep 删除**具体 version id**（普通 `DELETE` 只加删除标记）；grace 期同时是撤消窗口；非当前版本 30 天后过期；
+- GC 不跨 workspace；`gc_state`（每 workspace 一行）提供水位与互斥；
+- v1 pack 不压缩；Range 直接映射 `offset/length`。
