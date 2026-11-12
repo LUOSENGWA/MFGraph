@@ -1,14 +1,14 @@
-# MFGit
+# MFGraph
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Project workspace versioning for teams and agents.**
+**Project-level version graph for teams and agents.**
 
-MFGit is a design-stage, self-hosted service for versioning project workspaces. It separates the business hierarchy (`project` → `project_node`), the content layer (`workspace` → `snapshot`), the execution layer (`workstream` → `branch`), and the process layer (external workflow engine).
+MFGraph is a design-stage, self-hosted service for versioning project workspaces as a graph. It separates the business hierarchy (`project` → `project_node`), the content layer (`workspace` → `snapshot`), the execution layer (`workstream` → `branch`), and the process layer (external workflow engine). A workspace is a node in the project graph; the project-level commit layer is on the roadmap.
 
 > Status: **design/spec stage**. There is no production code in this repository yet. The documents here define the contracts to implement.
 
-## Why MFGit
+## Why MFGraph
 
 Most tools solve one slice:
 
@@ -18,13 +18,13 @@ Most tools solve one slice:
 - AEC/ media/ PLM vertical systems;
 - workflow engines.
 
-MFGit focuses on the missing combination:
+MFGraph focuses on the missing combination:
 
 1. **Project hierarchy** — `project` is the business root; `project_node` can nest (phase, building, episode, module, package); `workstream` is the execution lane.
 2. **Workstream ≠ branch** — a workstream can have multiple branches; `branch_id` / `ref_name` are independent version refs.
 3. **Binary/large files are first-class** — content-addressed chunks, packfiles, manifests, exclusive locks; no unsafe auto-merge.
 4. **Format and industry templates** — text/office/PDF/images/audio-video/CAD/BIM/datasets/archives/DICOM, configured as templates, not hardcoded vertical branches.
-5. **Workflow is optional** — a built-in HTTP adapter can connect to an external workflow engine; MFGit still works with REST/CLI/MCP when no engine is present.
+5. **Workflow is optional** — a built-in HTTP adapter can connect to an external workflow engine; MFGraph still works with REST/CLI/MCP when no engine is present.
 6. **Human/agent neutral** — one `principal_uid` identity; no special Agent runtime or Matrix dependency.
 
 ## What it is not

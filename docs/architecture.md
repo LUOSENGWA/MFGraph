@@ -4,7 +4,7 @@
 
 ## 1. Scope
 
-MFGit is a versioning service for project workspaces. It owns:
+MFGraph is a project-level version graph service. Each workspace is a node in the graph; the service owns:
 
 - workspace / workstream / branch / snapshot;
 - content-addressed blobs, chunks, packs, manifests;
@@ -43,26 +43,26 @@ host / server
 │  ├─ blob store registry
 │  ├─ event log / outbox
 │  └─ module registry
-├─ mfgit core
+├─ mfgraph core
 │  ├─ project tree / workspace / workstream
 │  ├─ branch / snapshot / manifest
 │  ├─ chunk / pack / upload / lock
 │  └─ diff / restore
-├─ mfgit-merge (optional)
-└─ mfgit-workflow (optional; built-in HTTP adapter)
+├─ mfgraph-merge (optional)
+└─ mfgraph-workflow (optional; built-in HTTP adapter)
 ```
 
 ## 4. Module boundaries
 
-- `mfgit` core is one process/binary.
-- `mfgit-merge` is optional; without it, core supports fast-forward/replace.
-- `mfgit-workflow` contains the built-in HTTP adapter for external workflow engines; it does not import an engine SDK.
+- `mfgraph` core is one process/binary.
+- `mfgraph-merge` is optional; without it, core supports fast-forward/replace.
+- `mfgraph-workflow` contains the built-in HTTP adapter for external workflow engines; it does not import an engine SDK.
 - Format handlers/preview workers are optional external processes.
 
 ## 5. Deployment modes
 
 - embedded module in a host platform;
-- standalone `mfgit-server`;
+- standalone `mfgraph-server`;
 - single-node or HA;
 - S3-compatible or POSIX/NFS storage.
 

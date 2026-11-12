@@ -4,7 +4,7 @@
 
 ## 1. 范围
 
-MFGit 是项目工作区的版本化服务。它负责：
+MFGraph 是项目级版本图谱服务。workspace 是图谱中的节点；它负责：
 
 - workspace / workstream / branch / snapshot；
 - 内容寻址 blob、chunk、pack、manifest；
@@ -43,26 +43,26 @@ MFGit 是项目工作区的版本化服务。它负责：
 │  ├─ blob store 注册表
 │  ├─ 事件日志 / outbox
 │  └─ 模块注册表
-├─ mfgit core
+├─ mfgraph core
 │  ├─ 项目树 / workspace / workstream
 │  ├─ branch / snapshot / manifest
 │  ├─ chunk / pack / upload / lock
 │  └─ diff / restore
-├─ mfgit-merge（可选）
-└─ mfgit-workflow（可选；内置 HTTP 适配器）
+├─ mfgraph-merge（可选）
+└─ mfgraph-workflow（可选；内置 HTTP 适配器）
 ```
 
 ## 4. 模块边界
 
-- `mfgit` core 是单进程/单二进制。
-- `mfgit-merge` 可选；没有它时 core 支持 fast-forward/replace。
-- `mfgit-workflow` 包含面向外部工作流引擎的内置 HTTP 适配器；不 import 引擎 SDK。
+- `mfgraph` core 是单进程/单二进制。
+- `mfgraph-merge` 可选；没有它时 core 支持 fast-forward/replace。
+- `mfgraph-workflow` 包含面向外部工作流引擎的内置 HTTP 适配器；不 import 引擎 SDK。
 - 格式处理器/预览 worker 是可选的外部进程。
 
 ## 5. 部署形态
 
 - 作为宿主平台内的嵌入式模块；
-- 独立 `mfgit-server`；
+- 独立 `mfgraph-server`；
 - 单机或高可用；
 - S3 兼容或 POSIX/NFS 存储。
 

@@ -2,7 +2,7 @@
 
 [English](workflow.md) | [简体中文](zh-CN/workflow.md)
 
-MFGit is **workflow-enabled, not workflow-dependent**.
+MFGraph is **workflow-enabled, not workflow-dependent**.
 
 Every important operation has a command and an event. An optional adapter can bridge to an external workflow engine. Without an engine, REST/CLI/MCP still work.
 
@@ -26,8 +26,8 @@ CloudEvents-style envelope:
 {
   "specversion": "1.0",
   "id": "01J...",
-  "source": "mfgit://tenant/t1/project/p1",
-  "type": "mfgit.workstream.dispatched.v1",
+  "source": "mfgraph://tenant/t1/project/p1",
+  "type": "mfgraph.workstream.dispatched.v1",
   "subject": "workstreams/01J...",
   "time": "2026-11-11T12:00:00Z",
   "data": {
@@ -64,7 +64,7 @@ Optional:
 - outbox retries with exponential backoff;
 - dead-letter after max attempts;
 - reconcile by `correlation_id`;
-- a workflow failure never rolls back a successful MFGit command.
+- a workflow failure never rolls back a successful MFGraph command.
 
 ## Dispatch semantics
 

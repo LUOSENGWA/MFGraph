@@ -17,7 +17,7 @@
 
 ## M2 — integrations
 
-- optional `mfgit-merge` (text 3-way, binary lock-only);
+- optional `mfgraph-merge` (text 3-way, binary lock-only);
 - built-in HTTP workflow adapter;
 - optional webhook/governance adapter;
 - gate: workflow e2e; no-engine path still works.

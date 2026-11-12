@@ -2,7 +2,7 @@
 
 [English](../workflow.md) | **简体中文**
 
-MFGit **支持工作流，但不依赖工作流**。
+MFGraph **支持工作流，但不依赖工作流**。
 
 每个重要操作都有命令和事件。可选适配器可以桥接到外部工作流引擎。没有引擎时，REST/CLI/MCP 仍然可用。
 
@@ -26,8 +26,8 @@ CloudEvents 风格信封：
 {
   "specversion": "1.0",
   "id": "01J...",
-  "source": "mfgit://tenant/t1/project/p1",
-  "type": "mfgit.workstream.dispatched.v1",
+  "source": "mfgraph://tenant/t1/project/p1",
+  "type": "mfgraph.workstream.dispatched.v1",
   "subject": "workstreams/01J...",
   "time": "2026-11-11T12:00:00Z",
   "data": {
@@ -64,7 +64,7 @@ EnsureWorkflow / Signal / Cancel / Status / OnEvent
 - outbox 指数退避重试；
 - 超过最大次数进死信；
 - 按 `correlation_id` 对账；
-- 工作流失败绝不回滚已经成功的 MFGit 命令。
+- 工作流失败绝不回滚已经成功的 MFGraph 命令。
 
 ## 派发语义
 

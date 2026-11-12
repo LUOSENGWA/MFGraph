@@ -2,7 +2,7 @@
 
 [English](../data-model.md) | **简体中文**
 
-MFGit v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）。schema 只存状态与索引，不存文件字节。
+MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）。schema 只存状态与索引，不存文件字节。
 
 ## 核心表
 

@@ -2,7 +2,7 @@
 
 [English](data-model.md) | [简体中文](zh-CN/data-model.md)
 
-MFGit v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset). The schema stores state and indexes, not file bytes.
+MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset). The schema stores state and indexes, not file bytes.
 
 ## Core tables
 

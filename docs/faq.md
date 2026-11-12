@@ -2,13 +2,13 @@
 
 [English](faq.md) | [简体中文](zh-CN/faq.md)
 
-## Is MFGit a Git server?
+## Is MFGraph a Git server?
 
 No. It borrows content-addressed snapshots/branches but does not implement Git protocol, `git clone/push`, rebase, or cherry-pick.
 
 ## Is it a DMS/ECM?
 
-No. It is a versioning substrate. Metadata, approvals, and retention policies can be layered on top; MFGit does not aim to replace M-Files/Alfresco/Nuxeo.
+No. It is a versioning substrate. Metadata, approvals, and retention policies can be layered on top; MFGraph does not aim to replace M-Files/Alfresco/Nuxeo.
 
 ## Does it require an agent runtime or Matrix?
 
@@ -32,7 +32,7 @@ v1 first-class: S3-compatible and POSIX/NFS. Azure Blob and GCS are planned nati
 
 ## Why not Git LFS?
 
-Git LFS solves large files inside Git. MFGit targets general project workspaces, non-code teams, binary locks, format handlers, and optional workflow integration.
+Git LFS solves large files inside Git. MFGraph targets general project workspaces, non-code teams, binary locks, format handlers, and optional workflow integration.
 
 ## Why not Rust?
 

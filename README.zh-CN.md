@@ -1,14 +1,14 @@
-# MFGit
+# MFGraph
 
 [English](README.md) | **简体中文**
 
-**面向团队与 Agent 的项目工作区版本化服务。**
+**面向团队与 Agent 的项目级版本图谱。**
 
-MFGit 是一个设计阶段的自托管服务，用于对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。
+MFGraph 是一个设计阶段的自托管服务，用图谱方式对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。workspace 是项目图谱中的节点；项目级 commit 层在路线图中。
 
 > 状态：**设计/规格阶段**。本仓库暂无生产代码；这里定义的是待实现的契约。
 
-## 为什么需要 MFGit
+## 为什么需要 MFGraph
 
 多数工具只解决一个切片：
 
@@ -18,7 +18,7 @@ MFGit 是一个设计阶段的自托管服务，用于对项目工作区做版�
 - AEC/媒体/PLM 垂直系统；
 - 工作流引擎。
 
-MFGit 关注的是这些能力的组合缺口：
+MFGraph 关注的是这些能力的组合缺口：
 
 1. **项目层级** — `project` 是业务根；`project_node` 可嵌套（阶段/楼栋/剧集/模块/包）；`workstream` 是执行车道。
 2. **Workstream ≠ branch** — 一个 workstream 可以有多个 branch；`branch_id` / `ref_name` 是独立的版本引用。

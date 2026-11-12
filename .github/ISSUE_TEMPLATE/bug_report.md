@@ -19,7 +19,7 @@ labels: bug
 
 ## Environment
 
-- MFGit version/commit:
+- MFGraph version/commit:
 - DB:
 - Blob backend:
 - OS:

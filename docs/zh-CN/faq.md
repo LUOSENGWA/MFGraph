@@ -2,13 +2,13 @@
 
 [English](../faq.md) | **简体中文**
 
-## MFGit 是 Git 服务器吗？
+## MFGraph 是 Git 服务器吗？
 
 不是。它借鉴了内容寻址 snapshot/branch，但不实现 Git 协议、`git clone/push`、rebase 或 cherry-pick。
 
 ## 它是 DMS/ECM 吗？
 
-不是。它是版本化底座。元数据、审批、保留策略可以在上层实现；MFGit 不打算替代 M-Files/Alfresco/Nuxeo。
+不是。它是版本化底座。元数据、审批、保留策略可以在上层实现；MFGraph 不打算替代 M-Files/Alfresco/Nuxeo。
 
 ## 它需要 Agent 运行时或 Matrix 吗？
 
@@ -32,7 +32,7 @@ v1 一等：S3 兼容与 POSIX/NFS。Azure Blob 与 GCS 是后续原生适配器
 
 ## 为什么不用 Git LFS？
 
-Git LFS 解决 Git 内的大文件。MFGit 面向通用项目工作区、非代码团队、二进制锁、格式处理器与可选工作流集成。
+Git LFS 解决 Git 内的大文件。MFGraph 面向通用项目工作区、非代码团队、二进制锁、格式处理器与可选工作流集成。
 
 ## 为什么不用 Rust？
 
