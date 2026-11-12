@@ -50,17 +50,18 @@ tenants/<tenant_id>/
 
 ## Commit protocol
 
-1. write blobs/chunks (immutable);
-2. write pack files;
-3. write manifest;
-4. DB transaction: snapshot + parents + entries + branch CAS + outbox;
-5. orphan objects are GC'd.
+1. write content objects (immutable; whole-file `sha256`);
+2. write pack files (optional);
+3. write tree nodes (hash-addressed; the root node **is** the manifest);
+4. DB transaction: snapshot (`root_tree_hash`) + parents + branch CAS + outbox — no bulk `snapshot_entries` write;
+5. orphan objects are GC'd (see GC below).
 
 There is no distributed transaction across DB and object storage. A commit is a **file/version correlation point**; workflow refs are observed, not transactional.
 
 ## Locks
 
-- `exclusive` for binary/large files; `shared` for read-only inputs;
-- TTL + heartbeat + fencing token;
-- expired writer commits get 409;
-- break-glass is admin-only and audited.
+- `exclusive` for binary/large files; `shared` for read-only inputs; shared locks may coexist, exclusive ones are mutually exclusive (helper table `lock_exclusive_active`);
+- TTL + heartbeat + fencing token; the holder capability is the **lock_id**, not the principal;
+- lease expiry is compared against **DB time** (`NOW(6)`), and lock acquire/takeover commit share the `workspace_fencing` row lock (serialization point);
+- expired writer commits get 409; break-glass is admin-only and audited;
+- commit checks `base_head`: concurrent edits to the same path return 409 `path_conflict` — retries never silently overwrite.

@@ -50,17 +50,18 @@ tenants/<tenant_id>/
 
 ## 提交协议
 
-1. 写 blob/chunk（不可变）；
-2. 写 pack 文件；
-3. 写 manifest；
-4. DB 事务：snapshot + parents + entries + branch CAS + outbox；
-5. 孤儿对象由 GC 回收。
+1. 写内容对象（不可变；整文件 `sha256`）；
+2. 写 pack 文件（可选）；
+3. 写树节点（按 hash 寻址；根节点**就是** manifest）；
+4. DB 事务：snapshot（`root_tree_hash`）+ parents + branch CAS + outbox —— 不批量写 `snapshot_entries`；
+5. 孤儿对象由 GC 回收（见下方 GC）。
 
 DB 与对象存储之间没有分布式事务。一次提交是**文件/版本关联点**；workflow 引用是观察值，不是事务参与者。
 
 ## 锁
 
-- 二进制/大文件用 `exclusive`；只读输入用 `shared`；
-- TTL + 心跳 + fencing token；
-- 过期写者的提交返回 409；
-- break-glass 仅管理员可用，且必须审计。
+- 二进制/大文件用 `exclusive`；只读输入用 `shared`；共享锁可并存、独占锁互斥（辅助表 `lock_exclusive_active`）；
+- TTL + 心跳 + fencing token；持有凭据是 **lock_id**，不是 principal；
+- 租约过期判定用 **DB 时间**（`NOW(6)`）；acquire/接管与提交共用 `workspace_fencing` 行锁（串行化点）；
+- 过期写者的提交返回 409；break-glass 仅管理员可用，且必须审计；
+- 提交校验 `base_head`：同一路径被并发修改返回 409 `path_conflict`——重试绝不静默覆盖。
