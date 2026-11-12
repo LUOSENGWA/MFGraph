@@ -16,7 +16,12 @@ Thanks for considering a contribution.
 2. Keep changes focused; one concern per PR.
 3. Update docs/contracts if behavior changes.
 4. Add tests when code is added.
-5. Run the documented checks locally.
+5. Run the documented checks locally:
+
+   ```bash
+   python3 scripts/check_links.py .
+   python3 scripts/scan_sensitive.py .
+   ```
 
 ## Commit style
 

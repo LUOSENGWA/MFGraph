@@ -16,7 +16,12 @@
 2. 保持改动聚焦；一个 PR 只解决一个问题。
 3. 行为变化时同步更新 docs/contracts。
 4. 添加代码时补充测试。
-5. 在本地运行文档中列出的检查。
+5. 本地跑文档检查：
+
+   ```bash
+   python3 scripts/check_links.py .
+   python3 scripts/scan_sensitive.py .
+   ```
 
 ## Commit 风格
 
