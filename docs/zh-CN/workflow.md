@@ -9,7 +9,7 @@ MFGraph **支持工作流，但不依赖工作流**。
 ## 命令
 
 ```text
-workstream.create / assign / dispatch / archive
+workstream.create / archive
 branch.create
 snapshot.create / restore
 upload.init / complete
@@ -27,7 +27,7 @@ CloudEvents 风格信封：
   "specversion": "1.0",
   "id": "01J...",
   "source": "mfgraph://tenant/t1/project/p1",
-  "type": "mfgraph.workstream.dispatched.v1",
+  "type": "mfgraph.snapshot.created.v1",
   "subject": "workstreams/01J...",
   "time": "2026-11-11T12:00:00Z",
   "data": {
@@ -45,7 +45,8 @@ CloudEvents 风格信封：
 ## 适配器 SPI
 
 ```text
-EnsureWorkflow / Signal / Cancel / Status / OnEvent
+Publish(event) -> ack      # 只投递事件；MFGraph 从不驱动引擎
+Health() -> ok
 ```
 
 内置适配器：
@@ -66,9 +67,9 @@ EnsureWorkflow / Signal / Cancel / Status / OnEvent
 - 按 `correlation_id` 对账；
 - 工作流失败绝不回滚已经成功的 MFGraph 命令。
 
-## 派发语义
+## 不派发
 
-`workstream.dispatch` 只写状态 + outbox；**不会**同步调用工作流引擎。适配器消费 `workstream.dispatched`，创建/更新工作流。工作流引擎可以回写 `workflow_ref`（仅引用）。
+MFGraph **不指派、不派发任务**（MF-D32）。`workstream` 只是版本车道（active/archived）；任务指派、派发与任务状态归外部任务/工作流系统。MFGraph 只发领域事件（如 `mfgraph.snapshot.created.v1`），工作流引擎可回写 `workflow_ref`（仅引用）。
 
 ## 安全
 

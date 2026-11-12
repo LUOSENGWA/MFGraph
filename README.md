@@ -4,9 +4,11 @@
 
 **Project-level version graph for teams and agents.**
 
-MFGraph is a design-stage, self-hosted service for versioning project workspaces as a graph. It separates the business hierarchy (`project` → `project_node`), the content layer (`workspace` → `snapshot`), the execution layer (`workstream` → `branch`), and the process layer (external workflow engine). A workspace is a node in the project graph; the project-level commit layer is on the roadmap.
+MFGraph is a design-stage, self-hosted service for versioning project workspaces as a graph. It separates the business hierarchy (`project` → `project_node`), the content layer (`workspace` → `snapshot`), the execution layer (`workstream` → `branch`), and the process layer (external workflow engine). A workspace is a node in the project graph; the project-level commit layer (superproject, MF-D28) is a **v1 core feature**.
 
 > Status: **design/spec stage**. There is no production code in this repository yet. The documents here define the contracts to implement.
+>
+> ⚠️ **Snapshot notice (2026-11-12)**: this public repo is a *pre-M0 snapshot*, not the current internal contract. Some docs still describe superseded designs (e.g. workstream `assign`/`dispatch` was removed — MFGraph does not assign or dispatch tasks). The source of truth is the internal design set; this repo will be re-synced after M0 freeze.
 
 ## Why MFGraph
 

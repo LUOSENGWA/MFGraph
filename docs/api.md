@@ -20,14 +20,12 @@ POST   /api/v1/workspaces/{id}/workstreams
 GET    /api/v1/workspaces/{id}/workstreams
 GET    /api/v1/workstreams/{id}
 POST   /api/v1/workstreams/{id}/branches
-POST   /api/v1/workstreams/{id}/assign
-POST   /api/v1/workstreams/{id}/dispatch
 POST   /api/v1/workstreams/{id}/archive
 GET    /api/v1/workspaces/{id}/branches
-GET    /api/v1/workspaces/{id}/branches/{ref}
+GET    /api/v1/workspaces/{id}/branches/{branch_id}
 ```
 
-`ref` is URL-encoded and may contain `/`:
+`workstream` is a version lane only — **MFGraph does not expose `assign` / `dispatch`** (task assignment and task status belong to the external task/workflow system). Branches are addressed by immutable `branch_id`; fetch by ref with `?ref=`:
 
 ```text
 main

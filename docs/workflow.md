@@ -9,7 +9,7 @@ Every important operation has a command and an event. An optional adapter can br
 ## Commands
 
 ```text
-workstream.create / assign / dispatch / archive
+workstream.create / archive
 branch.create
 snapshot.create / restore
 upload.init / complete
@@ -27,7 +27,7 @@ CloudEvents-style envelope:
   "specversion": "1.0",
   "id": "01J...",
   "source": "mfgraph://tenant/t1/project/p1",
-  "type": "mfgraph.workstream.dispatched.v1",
+  "type": "mfgraph.snapshot.created.v1",
   "subject": "workstreams/01J...",
   "time": "2026-11-11T12:00:00Z",
   "data": {
@@ -45,7 +45,8 @@ Events carry IDs/status/refs only. Never file bytes, tokens, env vars, or absolu
 ## Adapter SPI
 
 ```text
-EnsureWorkflow / Signal / Cancel / Status / OnEvent
+Publish(event) -> ack      # event delivery only; MFGraph never drives the engine
+Health() -> ok
 ```
 
 Built-in adapter:
@@ -66,9 +67,9 @@ Optional:
 - reconcile by `correlation_id`;
 - a workflow failure never rolls back a successful MFGraph command.
 
-## Dispatch semantics
+## No dispatch
 
-`workstream.dispatch` writes status + outbox; it does **not** call the workflow engine synchronously. The adapter consumes `workstream.dispatched` and creates/updates a workflow. The workflow engine may write back `workflow_ref` (reference only).
+MFGraph does **not** assign or dispatch tasks (MF-D32). A `workstream` is only a version lane (active/archived); task assignment, dispatch and task status belong to the external task/workflow system. MFGraph emits domain events (e.g. `mfgraph.snapshot.created.v1`) and the workflow engine may write back `workflow_ref` (reference only).
 
 ## Security
 

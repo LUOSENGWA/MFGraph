@@ -20,14 +20,12 @@ POST   /api/v1/workspaces/{id}/workstreams
 GET    /api/v1/workspaces/{id}/workstreams
 GET    /api/v1/workstreams/{id}
 POST   /api/v1/workstreams/{id}/branches
-POST   /api/v1/workstreams/{id}/assign
-POST   /api/v1/workstreams/{id}/dispatch
 POST   /api/v1/workstreams/{id}/archive
 GET    /api/v1/workspaces/{id}/branches
-GET    /api/v1/workspaces/{id}/branches/{ref}
+GET    /api/v1/workspaces/{id}/branches/{branch_id}
 ```
 
-`ref` 需要 URL 编码，可以包含 `/`：
+`workstream` 只是版本车道——**MFGraph 不提供 `assign`/`dispatch`**（任务指派与任务状态归外部任务/工作流系统）。分支用不可变 `branch_id` 寻址，按 ref 查询用 `?ref=`：
 
 ```text
 main

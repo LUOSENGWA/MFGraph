@@ -4,9 +4,11 @@
 
 **面向团队与 Agent 的项目级版本图谱。**
 
-MFGraph 是一个设计阶段的自托管服务，用图谱方式对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。workspace 是项目图谱中的节点；项目级 commit 层在路线图中。
+MFGraph 是一个设计阶段的自托管服务，用图谱方式对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。workspace 是项目图谱中的节点；项目级 commit 层（superproject，MF-D28）是 **v1 核心特性**。
 
 > 状态：**设计/规格阶段**。本仓库暂无生产代码；这里定义的是待实现的契约。
+>
+> ⚠️ **快照声明（2026-11-12）**：公开仓是 **pre-M0 快照**，不是现行内部契约。部分文档仍描述已被取代的设计（如 workstream 的 `assign`/`dispatch` 已移除——MFGraph 不指派、不派发任务）。以内部设计集为准；M0 冻结后会重新同步。
 
 ## 为什么需要 MFGraph
 
