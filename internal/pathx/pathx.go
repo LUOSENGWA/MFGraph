@@ -207,6 +207,44 @@ func NormalizeSegment(s string) (string, error) {
 	return n, nil
 }
 
+// ValidateStoredName applies the read-time rules to a name found in a stored
+// tree node (an entry name or the first name of an index reference). None of
+// them depends on Unicode tables:
+//
+//  1. valid UTF-8 (invalid_utf8) and non-empty (empty);
+//  2. no '/' (contains_slash);
+//  3. scanning from left to right, no '\' (backslash), no control character
+//     U+0000-U+001F or U+007F-U+009F (control_char), no bidi control or
+//     zero-width character (disallowed_char);
+//  4. not "." or ".." (dot_segment);
+//  5. at most MaxSegmentBytes bytes as stored (segment_too_long).
+//
+// It deliberately does not check NFC, case-fold conflicts or whether code
+// points are assigned: those write-time rules depend on the Unicode version,
+// and a tree written under one version must stay readable under any later
+// one.
+func ValidateStoredName(name string) error {
+	if name == "" {
+		return fail(KindEmpty, name, "")
+	}
+	if !utf8.ValidString(name) {
+		return fail(KindInvalidUTF8, name, "")
+	}
+	if strings.IndexByte(name, '/') >= 0 {
+		return fail(KindContainsSlash, name, "")
+	}
+	if err := checkChars(name, name, false); err != nil {
+		return err
+	}
+	if name == "." || name == ".." {
+		return fail(KindDotSegment, name, "")
+	}
+	if len(name) > MaxSegmentBytes {
+		return fail(KindSegmentTooLong, name, fmt.Sprintf("name is %d bytes, limit %d", len(name), MaxSegmentBytes))
+	}
+	return nil
+}
+
 // IsNormalizedSegment reports whether s is a valid segment already in
 // canonical form (NormalizeSegment(s) == s).
 func IsNormalizedSegment(s string) bool {

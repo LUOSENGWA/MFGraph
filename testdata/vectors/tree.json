@@ -1,7 +1,7 @@
 {
  "schema": "mfgraph-test-vectors/tree/1",
  "review_status": "pending-human-review",
- "description": "Manifest tree vectors (format 1). Each case builds a tree from a list of files and gives the expected root hash, the number of distinct nodes and the nodes in walk order (a directory's own nodes - index first, then its pages - followed by its subdirectories in name order). canonical is the exact node text (UTF-8, no trailing newline); it is listed for nodes up to 4096 bytes, larger nodes give size and hash only. Cases with error must be rejected with that path error kind. decode_invalid lists node byte strings that a strict decoder must reject.",
+ "description": "Manifest tree vectors (format 1). Each case builds a tree from a list of files and gives the expected root hash, the number of distinct nodes and the nodes in walk order (a directory's own nodes - index first, then its pages - followed by its subdirectories in name order). canonical is the exact node text (UTF-8, no trailing newline); it is listed for nodes up to 4096 bytes, larger nodes give size and hash only. Cases with error must be rejected by Build (write-time rules) with that path error kind. decode_invalid lists node byte strings that a strict decoder must reject under the read-time rules. decode_valid_build_rejects lists node byte strings that a decoder must accept (the read-time rules do not depend on Unicode tables) but that the write path never produces: write_rule names the write-time rule they violate (nfc: a name is not in NFC; case_conflict; unassigned_char).",
  "inputs": "files: {path, content (UTF-8 text), mode (default 420)}; the file's hash is sha256 of content and its size is the byte length. generate: for i in [start, start+count): path = dir + '/' + prefix*prefix_repeat + zero-padded decimal i (digits wide), or without 'dir/' when dir is empty; content = UTF-8 bytes of the path; mode 420.",
  "limits": {
   "max_entries_per_node": 1024,
@@ -441,6 +441,50 @@
    ]
   },
   {
+   "name": "allowed-zwj-zwnj-fullwidth-reserved-names",
+   "files": [
+    {
+     "path": "👨\u200d👩\u200d👧.txt",
+     "content": "family\n"
+    },
+    {
+     "path": "می\u200cخواهم.txt",
+     "content": "zwnj\n"
+    },
+    {
+     "path": "a\uff0fb.txt",
+     "content": "fullwidth solidus\n"
+    },
+    {
+     "path": "CON",
+     "content": "reserved on some platforms\n"
+    },
+    {
+     "path": "notes.",
+     "content": "trailing dot\n"
+    },
+    {
+     "path": "notes ",
+     "content": "trailing space\n"
+    },
+    {
+     "path": "\ue000.txt",
+     "content": "private use\n"
+    }
+   ],
+   "root": "sha256:f0a0a8007714d2422542ba1629e4a609056246bcc023b7be85a80d06b47a19ed",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:f0a0a8007714d2422542ba1629e4a609056246bcc023b7be85a80d06b47a19ed",
+     "size": 1005,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:ad51f9117452359de18de6c4423fddbaf2bb5a8be6643d544b527cf407dd48ad\",\"mode\":420,\"name\":\"CON\",\"size\":27,\"type\":\"file\"},{\"hash\":\"sha256:c77b8e1f613cc3d9bc6d6cb4e79900945c193de22d13650bf63861be994633db\",\"mode\":420,\"name\":\"a\uff0fb.txt\",\"size\":18,\"type\":\"file\"},{\"hash\":\"sha256:e3e3784c80358d913628e6a03c4a450ca2c4257cf6500e08a026d4f2fd4d6766\",\"mode\":420,\"name\":\"notes \",\"size\":15,\"type\":\"file\"},{\"hash\":\"sha256:7445baaf4414cda35778e4a8f323ee8cf800c050a714ce4fd1c0fb0751c882a8\",\"mode\":420,\"name\":\"notes.\",\"size\":13,\"type\":\"file\"},{\"hash\":\"sha256:397a36acd9cec2df5d6079b1f8994ba845ea266d63a674cd4c0028e7f7dd593e\",\"mode\":420,\"name\":\"می\u200cخواهم.txt\",\"size\":5,\"type\":\"file\"},{\"hash\":\"sha256:e563ce06518cec1684fe643aa6cedffa2c5ec5f260d4be349fd478fcecc19ced\",\"mode\":420,\"name\":\"\ue000.txt\",\"size\":12,\"type\":\"file\"},{\"hash\":\"sha256:f886996f4c6cb40ca5a3d35302de098a535b876265d7c2c3025aaf253196f725\",\"mode\":420,\"name\":\"👨\u200d👩\u200d👧.txt\",\"size\":7,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
    "name": "dir-1024-entries-one-node",
    "generate": [
     {
@@ -739,6 +783,76 @@
     }
    ],
    "error": "absolute"
+  },
+  {
+   "name": "reject-c1-control",
+   "files": [
+    {
+     "path": "a\u0085b.txt",
+     "content": "a"
+    }
+   ],
+   "error": "control_char"
+  },
+  {
+   "name": "reject-bidi-override",
+   "files": [
+    {
+     "path": "invoice\u202egpj.exe",
+     "content": "a"
+    }
+   ],
+   "error": "disallowed_char"
+  },
+  {
+   "name": "reject-zero-width-space",
+   "files": [
+    {
+     "path": "a\u200b.txt",
+     "content": "a"
+    }
+   ],
+   "error": "disallowed_char"
+  },
+  {
+   "name": "reject-byte-order-mark-in-subdirectory",
+   "files": [
+    {
+     "path": "docs/\ufeffa.txt",
+     "content": "a"
+    }
+   ],
+   "error": "disallowed_char"
+  },
+  {
+   "name": "reject-unassigned-u0378",
+   "files": [
+    {
+     "path": "x\u0378.txt",
+     "content": "a"
+    }
+   ],
+   "error": "unassigned_char"
+  },
+  {
+   "name": "reject-unassigned-plane4",
+   "files": [
+    {
+     "path": "\ud8c0\udc00.txt",
+     "content": "a"
+    }
+   ],
+   "error": "unassigned_char"
+  },
+  {
+   "name": "reject-noncharacter",
+   "files": [
+    {
+     "path": "a\uffff",
+     "content": "a"
+    }
+   ],
+   "error": "unassigned_char"
   }
  ],
  "decode_invalid": [
@@ -831,10 +945,6 @@
    "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\\/b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
   },
   {
-   "name": "name-not-nfc",
-   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"cafe\u0301\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
-  },
-  {
    "name": "name-dotdot",
    "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"..\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
   },
@@ -869,10 +979,6 @@
   {
    "name": "duplicate-names",
    "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
-  },
-  {
-   "name": "case-conflict-in-node",
-   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"A\",\"size\":0,\"type\":\"file\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
   },
   {
    "name": "mode-0666",
@@ -931,8 +1037,94 @@
    "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"b\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"a\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
   },
   {
+   "name": "name-with-c1-control-u0085",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u0085b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-c1-control-u009f",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u009f\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-bidi-override-u202e",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"invoice\u202egpj.exe\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-bidi-isolate-u2066",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2066b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-bidi-mark-u200e",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u200eb\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-arabic-letter-mark-u061c",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u061cb\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-zero-width-space-u200b",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u200bb\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-word-joiner-u2060",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2060b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-byte-order-mark-ufeff",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"\ufeffa\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "dir-entry-name-with-bidi-u202b",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"name\":\"a\u202bb\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "index-first-with-bidi-u202e",
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"a\u202e\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"b\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+  },
+  {
+   "name": "index-first-with-c1-control",
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"a\u0085\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"b\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+  }
+ ],
+ "decode_valid_build_rejects": [
+  {
+   "name": "name-not-nfc",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"cafe\u0301\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
+   "write_rule": "nfc"
+  },
+  {
+   "name": "case-conflict-in-node",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"A\",\"size\":0,\"type\":\"file\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
+   "write_rule": "case_conflict"
+  },
+  {
    "name": "index-first-not-nfc",
-   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"cafe\u0301\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"d\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"cafe\u0301\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"d\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}",
+   "write_rule": "nfc"
+  },
+  {
+   "name": "sharp-s-conflict-in-node",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"STRASSE\",\"size\":0,\"type\":\"file\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"straße\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
+   "write_rule": "case_conflict"
+  },
+  {
+   "name": "file-and-dir-differ-in-case",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"name\":\"Docs\",\"type\":\"dir\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"docs\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
+   "write_rule": "case_conflict"
+  },
+  {
+   "name": "name-unassigned-u0378",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"x\u0378\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
+   "write_rule": "unassigned_char"
+  },
+  {
+   "name": "name-noncharacter-uffff",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"x\uffff\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
+   "write_rule": "unassigned_char"
+  },
+  {
+   "name": "index-first-unassigned-plane4",
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"\ud8c0\udc00\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"\ud8c0\udc01\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}",
+   "write_rule": "unassigned_char"
   }
  ]
 }

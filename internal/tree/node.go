@@ -192,9 +192,13 @@ func appendString(b []byte, s string) []byte {
 	return append(b, '"')
 }
 
-// Validate checks the single-node rules: kind, entry and reference fields,
-// name syntax (NFC segment), strict byte order of names, no case-fold or
-// file/dir conflicts inside the node, and the entry/size limits.
+// Validate checks the read-time rules of a single node: kind, entry and
+// reference fields, names (pathx.ValidateStoredName), strict byte order of
+// names (which also excludes a name used twice or as both file and
+// directory), and the entry limits. It does not check NFC, case-fold
+// conflicts or unassigned code points: those are write-time rules (enforced
+// by Build) that depend on Unicode tables, and stored trees must stay
+// readable when the tables change.
 func (n Node) Validate() error {
 	switch n.Kind {
 	case KindDir, KindDirPage:
@@ -207,7 +211,6 @@ func (n Node) Validate() error {
 		if len(n.Entries) > MaxEntriesPerNode {
 			return fmt.Errorf("%w: %d entries exceed %d", ErrInvalidNode, len(n.Entries), MaxEntriesPerNode)
 		}
-		sib := make([]pathx.Sibling, len(n.Entries))
 		for i, e := range n.Entries {
 			if err := validateEntry(e); err != nil {
 				return err
@@ -215,10 +218,6 @@ func (n Node) Validate() error {
 			if i > 0 && n.Entries[i-1].Name >= e.Name {
 				return fmt.Errorf("%w: entries not in strictly ascending byte order at %q", ErrInvalidNode, e.Name)
 			}
-			sib[i] = pathx.Sibling{Name: e.Name, Dir: e.Type == TypeDir}
-		}
-		if err := pathx.CheckSiblings(sib); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidNode, err)
 		}
 	case KindDirIndex:
 		if n.Entries != nil {
@@ -231,8 +230,8 @@ func (n Node) Validate() error {
 			if p.Count < 1 || p.Count > MaxSafeInteger {
 				return fmt.Errorf("%w: reference count %d out of range", ErrInvalidNode, p.Count)
 			}
-			if !pathx.IsNormalizedSegment(p.First) {
-				return fmt.Errorf("%w: invalid first name %q", ErrInvalidNode, p.First)
+			if err := pathx.ValidateStoredName(p.First); err != nil {
+				return fmt.Errorf("%w: reference first name: %v", ErrInvalidNode, err)
 			}
 			if p.Hash.IsZero() {
 				return fmt.Errorf("%w: reference without hash", ErrInvalidNode)
@@ -248,12 +247,8 @@ func (n Node) Validate() error {
 }
 
 func validateEntry(e Entry) error {
-	if !pathx.IsNormalizedSegment(e.Name) {
-		_, err := pathx.NormalizeSegment(e.Name)
-		if err == nil {
-			err = fmt.Errorf("name is not in NFC")
-		}
-		return fmt.Errorf("%w: entry name %q: %v", ErrInvalidNode, e.Name, err)
+	if err := pathx.ValidateStoredName(e.Name); err != nil {
+		return fmt.Errorf("%w: entry name: %v", ErrInvalidNode, err)
 	}
 	if e.Hash.IsZero() {
 		return fmt.Errorf("%w: entry %q without hash", ErrInvalidNode, e.Name)
@@ -298,9 +293,9 @@ type rawPage struct {
 	Hash  *string `json:"hash"`
 }
 
-// Decode parses and validates one node strictly: the node must satisfy
-// Validate and its bytes must be exactly Encode of the decoded node, so every
-// node has a single accepted byte representation.
+// Decode parses and validates one node strictly (read-time rules): the node
+// must satisfy Validate and its bytes must be exactly Encode of the decoded
+// node, so every node has a single accepted byte representation.
 func Decode(b []byte) (Node, error) {
 	if len(b) > MaxNodeBytes {
 		return Node{}, fmt.Errorf("%w: %d bytes exceed %d", ErrInvalidNode, len(b), MaxNodeBytes)

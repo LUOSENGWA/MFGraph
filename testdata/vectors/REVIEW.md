@@ -30,7 +30,31 @@ are upgraded). No root hash or node byte of an existing positive tree case chang
   `windows-reserved-name-allowed`, `trailing-dot-allowed`, `trailing-space-allowed`,
   `private-use-allowed`;
 * branch names: `rel\u0085`, `main\u202e`, `\u0378` rejected; a ZWJ emoji sequence
-  accepted.
+  accepted;
+* new section `stored_names` (27 cases): the read-time rules for names in stored nodes
+  (NFD names, case variants and unassigned code points are accepted; C1 controls, bidi
+  controls and zero-width characters are rejected).
+
+`tree.json`:
+
+* moved from `decode_invalid` to the new section `decode_valid_build_rejects`:
+  `name-not-nfc`, `case-conflict-in-node`, `index-first-not-nfc` — decoders now accept
+  them, the write path never produces them;
+* also new in `decode_valid_build_rejects`: `sharp-s-conflict-in-node`,
+  `file-and-dir-differ-in-case`, `name-unassigned-u0378`, `name-noncharacter-uffff`,
+  `index-first-unassigned-plane4`;
+* new in `decode_invalid` (read-time rejections): `name-with-c1-control-*`,
+  `name-with-bidi-*`, `name-with-arabic-letter-mark-u061c`, `name-with-zero-width-space-u200b`,
+  `name-with-word-joiner-u2060`, `name-with-byte-order-mark-ufeff`,
+  `dir-entry-name-with-bidi-u202b`, `index-first-with-bidi-u202e`,
+  `index-first-with-c1-control`;
+* new Build rejections: `reject-c1-control` (`control_char`), `reject-bidi-override`,
+  `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory` (`disallowed_char`),
+  `reject-unassigned-u0378`, `reject-unassigned-plane4`, `reject-noncharacter`
+  (`unassigned_char`);
+* new positive case `allowed-zwj-zwnj-fullwidth-reserved-names`;
+* all 16 existing positive cases keep their root hash and node bytes; the 9 existing
+  rejections keep their error kinds.
 
 ## How the expected values were produced
 
@@ -228,6 +252,40 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | bytes `6d61696eff` | ✗ `invalid_utf8` |
 | `a`×256 (256 bytes) | ✗ `segment_too_long` |
 
+### 2.5 Stored names (read-time rules)
+
+Names inside stored tree nodes are checked only with rules that do not depend on Unicode tables: valid UTF-8, non-empty, no `/`, then the first offending character (backslash, control_char, disallowed_char), not `.`/`..`, at most 255 bytes as stored. No NFC, case-fold or unassigned checks, so trees stay readable after a Unicode upgrade.
+
+| name | input | result |
+|---|---|---|
+| plain | `a.txt` | ✓ accepted |
+| nfd-accepted | `cafe\u0301` | ✓ accepted |
+| case-variant-accepted | `Plan.dwg` | ✓ accepted |
+| unassigned-accepted | `x\u0378` | ✓ accepted |
+| noncharacter-accepted | `x\uffff` | ✓ accepted |
+| plane4-accepted | `\U00040000` | ✓ accepted |
+| zwj-sequence-accepted | `👨\u200d👩\u200d👧` | ✓ accepted |
+| zwnj-accepted | `a\u200cb` | ✓ accepted |
+| dots-inside-accepted | `..a` | ✓ accepted |
+| max-255-bytes | `a`×255 (255 bytes) | ✓ accepted |
+| empty | (empty string) | ✗ `empty` |
+| invalid-utf8 | bytes `61ff` | ✗ `invalid_utf8` |
+| slash | `a/b` | ✗ `contains_slash` |
+| backslash | `a\b` | ✗ `backslash` |
+| c0-control | `a\u0001` | ✗ `control_char` |
+| del | `a\u007f` | ✗ `control_char` |
+| c1-control | `a\u0085` | ✗ `control_char` |
+| bidi-override | `a\u202eb` | ✗ `disallowed_char` |
+| bidi-isolate | `a\u2068b` | ✗ `disallowed_char` |
+| zero-width-space | `a\u200bb` | ✗ `disallowed_char` |
+| byte-order-mark | `\ufeffa` | ✗ `disallowed_char` |
+| dot | `.` | ✗ `dot_segment` |
+| dotdot | `..` | ✗ `dot_segment` |
+| 256-bytes | `a`×256 (256 bytes) | ✗ `segment_too_long` |
+| length-counted-as-stored-not-after-nfc | `e\u0301`×127 (381 bytes) | ✗ `segment_too_long` |
+| order-slash-before-characters | `a\u202e/b` | ✗ `contains_slash` |
+| order-first-character-wins | `a\u0085\u202e` | ✗ `control_char` |
+
 ## 3. tree (format 1)
 
 Rules checked by these vectors:
@@ -252,6 +310,7 @@ Rules checked by these vectors:
 | empty-file | 1 file(s) | root `sha256:ace1320d99e2…`, 1 node(s) |
 | deep-path | 1 file(s) | root `sha256:8a797cbf3e0a…`, 10 node(s) |
 | shared-subtree | 2 file(s) | root `sha256:b73fb86088a2…`, 2 node(s) |
+| allowed-zwj-zwnj-fullwidth-reserved-names | 7 file(s) | root `sha256:f0a0a8007714…`, 1 node(s) |
 | dir-1024-entries-one-node | generated `f` + 5-digit index, 0…1023 | root `sha256:84d212b37a4d…`, 1 node(s) |
 | dir-1025-entries-two-pages | generated `f` + 5-digit index, 0…1024 | root `sha256:bc1eec93a002…`, 3 node(s) |
 | subdir-3000-entries-three-pages | 1 file(s); generated `big`/`f` + 5-digit index, 0…2999 | root `sha256:43b5f3318a5b…`, 5 node(s) |
@@ -266,6 +325,13 @@ Rules checked by these vectors:
 | reject-dotdot | 1 file(s) | ✗ `dot_segment` |
 | reject-backslash | 1 file(s) | ✗ `backslash` |
 | reject-absolute | 1 file(s) | ✗ `absolute` |
+| reject-c1-control | 1 file(s) | ✗ `control_char` |
+| reject-bidi-override | 1 file(s) | ✗ `disallowed_char` |
+| reject-zero-width-space | 1 file(s) | ✗ `disallowed_char` |
+| reject-byte-order-mark-in-subdirectory | 1 file(s) | ✗ `disallowed_char` |
+| reject-unassigned-u0378 | 1 file(s) | ✗ `unassigned_char` |
+| reject-unassigned-plane4 | 1 file(s) | ✗ `unassigned_char` |
+| reject-noncharacter | 1 file(s) | ✗ `unassigned_char` |
 
 ### 3.2 Small cases in full
 
@@ -417,6 +483,8 @@ root: `sha256:5282381cdc942bd029ac3f1a639eb6ca11dfb6940d5336ebfcd19037b106447a`
   {"entries":[{"hash":"sha256:9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa","mode":420,"name":"0","size":2,"type":"file"},{"hash":"sha256:07a9b7b36597df7db7d84b0d7020517da1dc87cf381ed4bc62f0dc331faffcd0","mode":420,"name":"Apple","size":6,"type":"file"},{"hash":"sha256:f359ee0750695221acac365545d61a0977ff538f0b25d8db6dc762ce59509c36","mode":420,"name":"Zeta","size":5,"type":"file"},{"hash":"sha256:5a81483d96b0bc15ad19af7f5a662e14b275729fbc05579b18513e7f550016b1","mode":420,"name":"banana","size":7,"type":"file"},{"hash":"sha256:fbeb6ab43380abefb4387f6674697e6cee6a55a386bbb8014a02e6c1a53461e9","mode":420,"name":"~tilde","size":7,"type":"file"},{"hash":"sha256:edd3a863872a04239eb29ad4bc12fc892b3d4ae57cc7e786a3697816f8e141c2","mode":420,"name":"é","size":3,"type":"file"},{"hash":"sha256:a44cede6bdbbab155e6dbcc010c4529ebdf97936e8ad6ec8d2e484b4a64a3c16","mode":420,"name":"｡","size":4,"type":"file"},{"hash":"sha256:8b6f07cb8272054393ef8ffe1cabd9549a108cb0841ecc2659c5cc9aba5acbb7","mode":420,"name":"𝄞","size":5,"type":"file"}],"format":1,"kind":"dir"}
   ```
 
+  The same bytes with invisible characters shown as code points: `{"entries":[{"hash":"sha256:9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa","mode":420,"name":"0","size":2,"type":"file"},{"hash":"sha256:07a9b7b36597df7db7d84b0d7020517da1dc87cf381ed4bc62f0dc331faffcd0","mode":420,"name":"Apple","size":6,"type":"file"},{"hash":"sha256:f359ee0750695221acac365545d61a0977ff538f0b25d8db6dc762ce59509c36","mode":420,"name":"Zeta","size":5,"type":"file"},{"hash":"sha256:5a81483d96b0bc15ad19af7f5a662e14b275729fbc05579b18513e7f550016b1","mode":420,"name":"banana","size":7,"type":"file"},{"hash":"sha256:fbeb6ab43380abefb4387f6674697e6cee6a55a386bbb8014a02e6c1a53461e9","mode":420,"name":"~tilde","size":7,"type":"file"},{"hash":"sha256:edd3a863872a04239eb29ad4bc12fc892b3d4ae57cc7e786a3697816f8e141c2","mode":420,"name":"é","size":3,"type":"file"},{"hash":"sha256:a44cede6bdbbab155e6dbcc010c4529ebdf97936e8ad6ec8d2e484b4a64a3c16","mode":420,"name":"\uff61","size":4,"type":"file"},{"hash":"sha256:8b6f07cb8272054393ef8ffe1cabd9549a108cb0841ecc2659c5cc9aba5acbb7","mode":420,"name":"𝄞","size":5,"type":"file"}],"format":1,"kind":"dir"}`
+
 #### `nfc-input`
 
 | path | content | mode |
@@ -566,6 +634,28 @@ root: `sha256:b73fb86088a26afe77c51cebe5350c44a161dac0f869d535c3854ac3775a79d9`
   {"entries":[{"hash":"sha256:a6328afc76e9db71da297ebff4b0d3e7a7eb3b01d917c05a6573fef121b6ecb6","mode":420,"name":"data.txt","size":5,"type":"file"}],"format":1,"kind":"dir"}
   ```
 
+#### `allowed-zwj-zwnj-fullwidth-reserved-names`
+
+| path | content | mode |
+|---|---|---:|
+| `👨\u200d👩\u200d👧.txt` | `family\u000a` | 420 |
+| `می\u200cخواهم.txt` | `zwnj\u000a` | 420 |
+| `a\uff0fb.txt` | `fullwidth solidus\u000a` | 420 |
+| `CON` | `reserved on some platforms\u000a` | 420 |
+| `notes.` | `trailing dot\u000a` | 420 |
+| `notes ` | `trailing space\u000a` | 420 |
+| `\ue000.txt` | `private use\u000a` | 420 |
+
+root: `sha256:f0a0a8007714d2422542ba1629e4a609056246bcc023b7be85a80d06b47a19ed`
+
+* dir `.` (root) · `dir` · `sha256:f0a0a8007714d2422542ba1629e4a609056246bcc023b7be85a80d06b47a19ed` · 1005 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:ad51f9117452359de18de6c4423fddbaf2bb5a8be6643d544b527cf407dd48ad","mode":420,"name":"CON","size":27,"type":"file"},{"hash":"sha256:c77b8e1f613cc3d9bc6d6cb4e79900945c193de22d13650bf63861be994633db","mode":420,"name":"a／b.txt","size":18,"type":"file"},{"hash":"sha256:e3e3784c80358d913628e6a03c4a450ca2c4257cf6500e08a026d4f2fd4d6766","mode":420,"name":"notes ","size":15,"type":"file"},{"hash":"sha256:7445baaf4414cda35778e4a8f323ee8cf800c050a714ce4fd1c0fb0751c882a8","mode":420,"name":"notes.","size":13,"type":"file"},{"hash":"sha256:397a36acd9cec2df5d6079b1f8994ba845ea266d63a674cd4c0028e7f7dd593e","mode":420,"name":"می‌خواهم.txt","size":5,"type":"file"},{"hash":"sha256:e563ce06518cec1684fe643aa6cedffa2c5ec5f260d4be349fd478fcecc19ced","mode":420,"name":".txt","size":12,"type":"file"},{"hash":"sha256:f886996f4c6cb40ca5a3d35302de098a535b876265d7c2c3025aaf253196f725","mode":420,"name":"👨‍👩‍👧.txt","size":7,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+  The same bytes with invisible characters shown as code points: `{"entries":[{"hash":"sha256:ad51f9117452359de18de6c4423fddbaf2bb5a8be6643d544b527cf407dd48ad","mode":420,"name":"CON","size":27,"type":"file"},{"hash":"sha256:c77b8e1f613cc3d9bc6d6cb4e79900945c193de22d13650bf63861be994633db","mode":420,"name":"a\uff0fb.txt","size":18,"type":"file"},{"hash":"sha256:e3e3784c80358d913628e6a03c4a450ca2c4257cf6500e08a026d4f2fd4d6766","mode":420,"name":"notes ","size":15,"type":"file"},{"hash":"sha256:7445baaf4414cda35778e4a8f323ee8cf800c050a714ce4fd1c0fb0751c882a8","mode":420,"name":"notes.","size":13,"type":"file"},{"hash":"sha256:397a36acd9cec2df5d6079b1f8994ba845ea266d63a674cd4c0028e7f7dd593e","mode":420,"name":"می\u200cخواهم.txt","size":5,"type":"file"},{"hash":"sha256:e563ce06518cec1684fe643aa6cedffa2c5ec5f260d4be349fd478fcecc19ced","mode":420,"name":"\ue000.txt","size":12,"type":"file"},{"hash":"sha256:f886996f4c6cb40ca5a3d35302de098a535b876265d7c2c3025aaf253196f725","mode":420,"name":"👨\u200d👩\u200d👧.txt","size":7,"type":"file"}],"format":1,"kind":"dir"}`
+
 ### 3.3 Large cases (root and selected nodes)
 
 #### `dir-1024-entries-one-node`
@@ -644,9 +734,24 @@ root `sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c`; 
 {"entries":[{"hash":"sha256:44e4b4c77b4136e901c4b5ea556456aefce698ae618fff1e078c5b60ac8daa6b","mode":420,"name":"f1048576","size":8,"type":"file"}],"format":1,"kind":"dir_page"}
 ```
 
-### 3.4 Strict decoding: inputs that must be rejected
+### 3.4 Strict decoding: inputs that must be rejected (read-time rules)
 
-`trailing-newline`, `leading-space`, `byte-order-mark`, `space-after-colon`, `whitespace-inside-array`, `keys-out-of-order`, `unknown-key`, `duplicate-key`, `format-2`, `format-as-string`, `format-as-float`, `unknown-kind`, `null-entries`, `not-an-object`, `truncated`, `empty-dir-page`, `empty-dir-index`, `dir-with-pages-key`, `index-with-entries-key`, `escaped-ascii-in-name`, `escaped-non-ascii-in-name`, `escaped-solidus-in-name`, `name-not-nfc`, `name-dotdot`, `name-with-slash`, `name-with-control-char`, `name-with-backslash`, `empty-name`, `uppercase-hash`, `hash-without-prefix`, `entries-not-sorted`, `duplicate-names`, `case-conflict-in-node`, `mode-0666`, `mode-as-string`, `file-without-mode`, `file-without-size`, `size-negative`, `size-leading-zero`, `size-plus-sign`, `size-exponent`, `size-above-2^53-1`, `dir-entry-with-size`, `dir-entry-with-mode`, `type-symlink`, `index-count-zero`, `index-pages-not-sorted`, `index-first-not-nfc`.
+`trailing-newline`, `leading-space`, `byte-order-mark`, `space-after-colon`, `whitespace-inside-array`, `keys-out-of-order`, `unknown-key`, `duplicate-key`, `format-2`, `format-as-string`, `format-as-float`, `unknown-kind`, `null-entries`, `not-an-object`, `truncated`, `empty-dir-page`, `empty-dir-index`, `dir-with-pages-key`, `index-with-entries-key`, `escaped-ascii-in-name`, `escaped-non-ascii-in-name`, `escaped-solidus-in-name`, `name-dotdot`, `name-with-slash`, `name-with-control-char`, `name-with-backslash`, `empty-name`, `uppercase-hash`, `hash-without-prefix`, `entries-not-sorted`, `duplicate-names`, `mode-0666`, `mode-as-string`, `file-without-mode`, `file-without-size`, `size-negative`, `size-leading-zero`, `size-plus-sign`, `size-exponent`, `size-above-2^53-1`, `dir-entry-with-size`, `dir-entry-with-mode`, `type-symlink`, `index-count-zero`, `index-pages-not-sorted`, `name-with-c1-control-u0085`, `name-with-c1-control-u009f`, `name-with-bidi-override-u202e`, `name-with-bidi-isolate-u2066`, `name-with-bidi-mark-u200e`, `name-with-arabic-letter-mark-u061c`, `name-with-zero-width-space-u200b`, `name-with-word-joiner-u2060`, `name-with-byte-order-mark-ufeff`, `dir-entry-name-with-bidi-u202b`, `index-first-with-bidi-u202e`, `index-first-with-c1-control`.
+
+### 3.5 Accepted when reading, never produced when writing
+
+A decoder must accept these nodes (the read-time rules do not use Unicode tables); the write path never produces them: `tree.Build` rejects the equivalent input or normalizes the name.
+
+| name | violated write-time rule | node |
+|---|---|---|
+| name-not-nfc | `nfc` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"cafe\u0301","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| case-conflict-in-node | `case_conflict` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"A","size":0,"type":"file"},{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| index-first-not-nfc | `nfc` | `{"format":1,"kind":"dir_index","pages":[{"count":1,"first":"cafe\u0301","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},{"count":1,"first":"d","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}` |
+| sharp-s-conflict-in-node | `case_conflict` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"STRASSE","size":0,"type":"file"},{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"straße","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| file-and-dir-differ-in-case | `case_conflict` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","name":"Docs","type":"dir"},{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"docs","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-unassigned-u0378 | `unassigned_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"x\u0378","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-noncharacter-uffff | `unassigned_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"x\uffff","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| index-first-unassigned-plane4 | `unassigned_char` | `{"format":1,"kind":"dir_index","pages":[{"count":1,"first":"\U00040000","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},{"count":1,"first":"\U00040001","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}` |
 
 ## 4. Coverage checklist
 
@@ -688,6 +793,6 @@ root `sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c`; 
    code points with the same status in both versions (U+0378, U+40000, U+FFFF, U+FDD0 are
    unassigned in both; the 4,489 characters added in Unicode 15.0 are not used).
 5. **Allowed on purpose**: ZWNJ U+200C and ZWJ U+200D (emoji sequences such as
-   `👨‍👩‍👧`, Persian and Indic text), fullwidth solidus U+FF0F, private-use
+   `👨\u200d👩\u200d👧`, Persian and Indic text), fullwidth solidus U+FF0F, private-use
    characters, names that are reserved on some platforms (`CON`, trailing dots or spaces).
    Platform-specific names are left to a future export layer.

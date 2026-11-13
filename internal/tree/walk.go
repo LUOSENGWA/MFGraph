@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
-	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 )
 
 // Getter returns the canonical bytes of the node with hash h. Implementations
@@ -47,10 +46,12 @@ type NodeInfo struct {
 type WalkFunc func(path string, e Entry) error
 
 // Walk visits every file and directory below root in pre-order, siblings in
-// byte order of their names. It verifies the whole tree on the way: node
-// hashes, strict decoding, no empty subdirectories, page reference counts and
-// first names, global ordering and sibling conflicts across pages, and that
-// every paged directory is split exactly as Build would split it.
+// byte order of their names. It verifies the whole tree with the read-time
+// rules: node hashes, strict decoding, no empty subdirectories, page
+// reference counts and first names, strictly ascending names across all pages
+// of a directory, and that every paged directory is split exactly as Build
+// would split it. Like Decode it does not check NFC, case-fold conflicts or
+// unassigned code points (write-time rules that depend on Unicode tables).
 func Walk(ctx context.Context, g Getter, root contenthash.Hash, fn WalkFunc) error {
 	w := walker{ctx: ctx, g: g, lim: frozenLimits, onEntry: fn}
 	return w.dir("", root, true)
@@ -135,15 +136,10 @@ func (w *walker) loadDir(path string, ref contenthash.Hash, isRoot bool) ([]Entr
 	if err != nil {
 		return nil, nil, err
 	}
-	sib := make([]pathx.Sibling, len(entries))
 	for i, e := range entries {
 		if i > 0 && entries[i-1].Name >= e.Name {
 			return nil, nil, fmt.Errorf("%w: directory %q: entries out of order across pages", ErrInvalidTree, path)
 		}
-		sib[i] = pathx.Sibling{Name: e.Name, Dir: e.Type == TypeDir}
-	}
-	if err := pathx.CheckSiblings(sib); err != nil {
-		return nil, nil, fmt.Errorf("%w: directory %q: %v", ErrInvalidTree, path, err)
 	}
 	// The paging must be exactly the canonical one.
 	h, err := layout(entries, w.lim, func(contenthash.Hash, []byte) {})

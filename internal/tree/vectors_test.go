@@ -64,6 +64,11 @@ type vecDoc struct {
 		Name  string `json:"name"`
 		Bytes string `json:"bytes"`
 	} `json:"decode_invalid"`
+	DecodeValidBuildRejects []struct {
+		Name      string `json:"name"`
+		Bytes     string `json:"bytes"`
+		WriteRule string `json:"write_rule"`
+	} `json:"decode_valid_build_rejects"`
 }
 
 func loadTreeVectors(t testing.TB) vecDoc {
@@ -238,6 +243,73 @@ func TestListedNodesDecode(t *testing.T) {
 			}
 			if !bytes.Equal(tree.Encode(node), b) {
 				t.Errorf("%s: re-encoding differs", c.Name)
+			}
+		}
+	}
+}
+
+// TestDecodeValidBuildRejects: the read-time rules accept these nodes (they
+// do not depend on Unicode tables), but the write path never produces them.
+func TestDecodeValidBuildRejects(t *testing.T) {
+	v := loadTreeVectors(t)
+	if len(v.DecodeValidBuildRejects) == 0 {
+		t.Fatal("no decode_valid_build_rejects vectors")
+	}
+	for _, c := range v.DecodeValidBuildRejects {
+		n, err := tree.Decode([]byte(c.Bytes))
+		if err != nil {
+			t.Errorf("%s: read-time rules must accept it: %v", c.Name, err)
+			continue
+		}
+		var names []string
+		var sibs []pathx.Sibling
+		var files []tree.FileEntry
+		filesOnly := n.Kind == tree.KindDir
+		for _, e := range n.Entries {
+			names = append(names, e.Name)
+			sibs = append(sibs, pathx.Sibling{Name: e.Name, Dir: e.Type == tree.TypeDir})
+			filesOnly = filesOnly && e.Type == tree.TypeFile
+			files = append(files, tree.FileEntry{Path: e.Name, Hash: e.Hash, Size: e.Size, Mode: e.Mode})
+		}
+		for _, p := range n.Pages {
+			names = append(names, p.First)
+		}
+		violated := false
+		switch c.WriteRule {
+		case "nfc":
+			for _, name := range names {
+				if norm, err := pathx.NormalizeSegment(name); err == nil && norm != name {
+					violated = true
+				}
+			}
+		case "case_conflict":
+			violated = pathx.KindOf(pathx.CheckSiblings(sibs)) == pathx.KindCaseConflict
+		case "unassigned_char":
+			for _, name := range names {
+				if _, err := pathx.NormalizeSegment(name); pathx.KindOf(err) == pathx.KindUnassignedChar {
+					violated = true
+				}
+			}
+		default:
+			t.Fatalf("%s: unknown write_rule %q", c.Name, c.WriteRule)
+		}
+		if !violated {
+			t.Errorf("%s: write rule %s is not violated", c.Name, c.WriteRule)
+		}
+		if !filesOnly {
+			continue
+		}
+		// For a dir node of files, Build never reproduces these bytes: it
+		// rejects the input or normalizes the names.
+		root, _, err := tree.Build(files)
+		switch c.WriteRule {
+		case "nfc":
+			if err != nil || root == tree.HashOf([]byte(c.Bytes)) {
+				t.Errorf("%s: Build must normalize the name (err %v)", c.Name, err)
+			}
+		default:
+			if string(pathx.KindOf(err)) != c.WriteRule {
+				t.Errorf("%s: Build error = %v, want %s", c.Name, err, c.WriteRule)
 			}
 		}
 	}

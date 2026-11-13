@@ -167,6 +167,20 @@ def normalize_segment(raw):
     return n
 
 
+def check_stored_name(raw):
+    """Read-time rules for a name in a stored node: no Unicode tables involved
+    (no NFC, no case folding, no unassigned check)."""
+    s = _decode(raw)
+    if "/" in s:
+        raise PathError("contains_slash")
+    _check_chars(s, write=False)
+    if s in (".", ".."):
+        raise PathError("dot_segment")
+    if len(s.encode("utf-8")) > MAX_SEGMENT:
+        raise PathError("segment_too_long")
+    return s
+
+
 def fold_key(name):
     return unicodedata.normalize("NFC", name).casefold()
 
@@ -239,6 +253,10 @@ def verify_pathx():
             check(kind == case["error"], "%s: got %r/%r" % (label, got, kind))
         else:
             check(kind is None and got == vector_output(case), "%s: got %r/%r" % (label, got, kind))
+        n += 1
+    for case in v["stored_names"]:
+        _, kind = _run(check_stored_name, vector_input(case))
+        check(kind == case.get("error"), "pathx stored name %s: got %r, want %r" % (case["name"], kind, case.get("error")))
         n += 1
     return n
 
@@ -438,8 +456,7 @@ def _name(v):
     if not isinstance(v, str):
         raise DecodeError("name not a string")
     try:
-        if normalize_segment(v) != v:
-            raise DecodeError("name not NFC")
+        check_stored_name(v)
     except PathError as e:
         raise DecodeError("bad name: " + e.kind)
     return v
@@ -484,10 +501,7 @@ def decode_node(b):
         names = [e["name"] for e in ents]
         if any(utf8key(a) >= utf8key(b) for a, b in zip(names, names[1:])):
             raise DecodeError("entries not strictly sorted")
-        try:
-            check_siblings([(e["name"], e["type"] == "dir") for e in ents])
-        except PathError as e:
-            raise DecodeError("sibling conflict: " + e.kind)
+        # Read time: no NFC or case-fold checks (write-time rules only).
     elif kind == "dir_index":
         if set(obj) != {"format", "kind", "pages"} or not isinstance(obj["pages"], list):
             raise DecodeError("bad keys")
@@ -567,6 +581,25 @@ def tree_files(case):
     return files
 
 
+def node_names(obj):
+    if obj["kind"] == "dir_index":
+        return [p["first"] for p in obj["pages"]]
+    return [e["name"] for e in obj["entries"]]
+
+
+def write_rule_violated(obj, rule):
+    """True if the write path would never produce this (decodable) node."""
+    names = node_names(obj)
+    if rule == "nfc":
+        return any(_run(normalize_segment, n)[1] is None and normalize_segment(n) != n for n in names)
+    if rule == "case_conflict":
+        entries = [(e["name"], e["type"] == "dir") for e in obj.get("entries", [])]
+        return _run(check_siblings, entries)[1] == "case_conflict"
+    if rule == "unassigned_char":
+        return any(_run(normalize_segment, n)[1] == "unassigned_char" for n in names)
+    raise ValueError(rule)
+
+
 CANONICAL_INLINE_LIMIT = 4096  # list canonical bytes only for nodes up to this size
 
 
@@ -617,6 +650,16 @@ def verify_tree(heavy, update=False):
             check(False, "tree decode_invalid %s: accepted" % case["name"])
         except DecodeError:
             pass
+        n += 1
+    for case in v["decode_valid_build_rejects"]:
+        label = "tree decode_valid_build_rejects %s" % case["name"]
+        try:
+            obj = decode_node(case["bytes"].encode("utf-8"))
+        except DecodeError as e:
+            check(False, "%s: rejected by the decoder: %s" % (label, e))
+            n += 1
+            continue
+        check(write_rule_violated(obj, case["write_rule"]), "%s: write rule %s not violated" % (label, case["write_rule"]))
         n += 1
     if update:
         with open(path, "w", encoding="utf-8", newline="\n") as f:
@@ -745,6 +788,15 @@ def review_pathx(lines):
               "| input | result |", "|---|---|"]
     for case in v["branch_names"]:
         lines.append("| %s | %s |" % (show_case_input(case), show_case_result(case)))
+    lines += ["", "### 2.5 Stored names (read-time rules)", "",
+              "Names inside stored tree nodes are checked only with rules that do not depend on Unicode "
+              "tables: valid UTF-8, non-empty, no `/`, then the first offending character (backslash, "
+              "control_char, disallowed_char), not `.`/`..`, at most 255 bytes as stored. No NFC, case-fold "
+              "or unassigned checks, so trees stay readable after a Unicode upgrade.", "",
+              "| name | input | result |", "|---|---|---|"]
+    for case in v["stored_names"]:
+        res = "✗ `%s`" % case["error"] if "error" in case else "✓ accepted"
+        lines.append("| %s | %s | %s |" % (case["name"], show_case_input(case), res))
     lines.append("")
 
 
@@ -797,6 +849,9 @@ def review_tree(lines):
             lines.append("* dir %s · `%s` · `%s` · %d bytes" % (show(n["dir"]) if n["dir"] else "`.` (root)",
                                                                n["kind"], n["hash"], n["size"]))
             lines += ["", "  ```json", "  " + n["canonical"], "  ```", ""]
+            if any(needs_escape(ch) for ch in n["canonical"]):
+                lines += ["  The same bytes with invisible characters shown as code points: " +
+                          show(n["canonical"]), ""]
     lines += ["### 3.3 Large cases (root and selected nodes)", ""]
     for c in v["cases"]:
         if "error" in c or not c.get("generate"):
@@ -812,8 +867,15 @@ def review_tree(lines):
         for n in small:
             lines += ["", "```json", n["canonical"], "```"]
         lines.append("")
-    lines += ["### 3.4 Strict decoding: inputs that must be rejected", "",
-              ", ".join("`%s`" % c["name"] for c in v["decode_invalid"]) + ".", ""]
+    lines += ["### 3.4 Strict decoding: inputs that must be rejected (read-time rules)", "",
+              ", ".join("`%s`" % c["name"] for c in v["decode_invalid"]) + ".", "",
+              "### 3.5 Accepted when reading, never produced when writing", "",
+              "A decoder must accept these nodes (the read-time rules do not use Unicode tables); the write "
+              "path never produces them: `tree.Build` rejects the equivalent input or normalizes the name.", "",
+              "| name | violated write-time rule | node |", "|---|---|---|"]
+    for c in v["decode_valid_build_rejects"]:
+        lines.append("| %s | `%s` | %s |" % (c["name"], c["write_rule"], show(c["bytes"])))
+    lines.append("")
 
 
 REVIEW_COVERAGE = """## 4. Coverage checklist
@@ -856,7 +918,7 @@ REVIEW_COVERAGE = """## 4. Coverage checklist
    code points with the same status in both versions (U+0378, U+40000, U+FFFF, U+FDD0 are
    unassigned in both; the 4,489 characters added in Unicode 15.0 are not used).
 5. **Allowed on purpose**: ZWNJ U+200C and ZWJ U+200D (emoji sequences such as
-   `👨\u200d👩\u200d👧`, Persian and Indic text), fullwidth solidus U+FF0F, private-use
+   `👨\\u200d👩\\u200d👧`, Persian and Indic text), fullwidth solidus U+FF0F, private-use
    characters, names that are reserved on some platforms (`CON`, trailing dots or spaces).
    Platform-specific names are left to a future export layer.
 """
@@ -929,7 +991,31 @@ are upgraded). No root hash or node byte of an existing positive tree case chang
   `windows-reserved-name-allowed`, `trailing-dot-allowed`, `trailing-space-allowed`,
   `private-use-allowed`;
 * branch names: `rel\\u0085`, `main\\u202e`, `\\u0378` rejected; a ZWJ emoji sequence
-  accepted.
+  accepted;
+* new section `stored_names` (27 cases): the read-time rules for names in stored nodes
+  (NFD names, case variants and unassigned code points are accepted; C1 controls, bidi
+  controls and zero-width characters are rejected).
+
+`tree.json`:
+
+* moved from `decode_invalid` to the new section `decode_valid_build_rejects`:
+  `name-not-nfc`, `case-conflict-in-node`, `index-first-not-nfc` — decoders now accept
+  them, the write path never produces them;
+* also new in `decode_valid_build_rejects`: `sharp-s-conflict-in-node`,
+  `file-and-dir-differ-in-case`, `name-unassigned-u0378`, `name-noncharacter-uffff`,
+  `index-first-unassigned-plane4`;
+* new in `decode_invalid` (read-time rejections): `name-with-c1-control-*`,
+  `name-with-bidi-*`, `name-with-arabic-letter-mark-u061c`, `name-with-zero-width-space-u200b`,
+  `name-with-word-joiner-u2060`, `name-with-byte-order-mark-ufeff`,
+  `dir-entry-name-with-bidi-u202b`, `index-first-with-bidi-u202e`,
+  `index-first-with-c1-control`;
+* new Build rejections: `reject-c1-control` (`control_char`), `reject-bidi-override`,
+  `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory` (`disallowed_char`),
+  `reject-unassigned-u0378`, `reject-unassigned-plane4`, `reject-noncharacter`
+  (`unassigned_char`);
+* new positive case `allowed-zwj-zwnj-fullwidth-reserved-names`;
+* all 16 existing positive cases keep their root hash and node bytes; the 9 existing
+  rejections keep their error kinds.
 """
 
 

@@ -1,7 +1,7 @@
 {
   "schema": "mfgraph-test-vectors/pathx/1",
   "review_status": "pending-human-review",
-  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), disallowed_char (bidi controls, zero-width), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1).",
+  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), disallowed_char (bidi controls, zero-width), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. stored_names: the read-time rules applied to names inside stored tree nodes; they do not depend on Unicode tables (no NFC, case-fold or unassigned checks) and give no output, only acceptance or the error kind. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1).",
   "normalize": [
     {"name": "simple", "input": "a.txt", "output": "a.txt"},
     {"name": "nested", "input": "docs/specs/v1/format.md", "output": "docs/specs/v1/format.md"},
@@ -131,5 +131,34 @@
     {"input": "\u0378", "error": "unassigned_char"},
     {"input_hex": "6d61696eff", "error": "invalid_utf8"},
     {"input_gen": {"segments": [{"unit": "a", "repeat": 256}]}, "error": "segment_too_long"}
+  ],
+  "stored_names": [
+    {"name": "plain", "input": "a.txt"},
+    {"name": "nfd-accepted", "input": "cafe\u0301"},
+    {"name": "case-variant-accepted", "input": "Plan.dwg"},
+    {"name": "unassigned-accepted", "input": "x\u0378"},
+    {"name": "noncharacter-accepted", "input": "x\uffff"},
+    {"name": "plane4-accepted", "input": "\ud8c0\udc00"},
+    {"name": "zwj-sequence-accepted", "input": "👨\u200d👩\u200d👧"},
+    {"name": "zwnj-accepted", "input": "a\u200cb"},
+    {"name": "dots-inside-accepted", "input": "..a"},
+    {"name": "max-255-bytes", "input_gen": {"segments": [{"unit": "a", "repeat": 255}]}},
+    {"name": "empty", "input": "", "error": "empty"},
+    {"name": "invalid-utf8", "input_hex": "61ff", "error": "invalid_utf8"},
+    {"name": "slash", "input": "a/b", "error": "contains_slash"},
+    {"name": "backslash", "input": "a\\b", "error": "backslash"},
+    {"name": "c0-control", "input": "a\u0001", "error": "control_char"},
+    {"name": "del", "input": "a\u007f", "error": "control_char"},
+    {"name": "c1-control", "input": "a\u0085", "error": "control_char"},
+    {"name": "bidi-override", "input": "a\u202eb", "error": "disallowed_char"},
+    {"name": "bidi-isolate", "input": "a\u2068b", "error": "disallowed_char"},
+    {"name": "zero-width-space", "input": "a\u200bb", "error": "disallowed_char"},
+    {"name": "byte-order-mark", "input": "\ufeffa", "error": "disallowed_char"},
+    {"name": "dot", "input": ".", "error": "dot_segment"},
+    {"name": "dotdot", "input": "..", "error": "dot_segment"},
+    {"name": "256-bytes", "input_gen": {"segments": [{"unit": "a", "repeat": 256}]}, "error": "segment_too_long"},
+    {"name": "length-counted-as-stored-not-after-nfc", "input_gen": {"segments": [{"unit": "e\u0301", "repeat": 127}]}, "error": "segment_too_long"},
+    {"name": "order-slash-before-characters", "input": "a\u202e/b", "error": "contains_slash"},
+    {"name": "order-first-character-wins", "input": "a\u0085\u202e", "error": "control_char"}
   ]
 }

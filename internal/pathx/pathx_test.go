@@ -93,6 +93,7 @@ type vectorFile struct {
 		Error   string          `json:"error"`
 	} `json:"siblings"`
 	BranchNames []ioCase `json:"branch_names"`
+	StoredNames []ioCase `json:"stored_names"`
 }
 
 func loadVectors(t *testing.T) vectorFile {
@@ -284,6 +285,36 @@ func TestAllowedAndRejectedCharacters(t *testing.T) {
 	for r, want := range rejected {
 		if _, err := pathx.NormalizeSegment("a" + string(r)); pathx.KindOf(err) != want {
 			t.Errorf("%U: got %v, want %s", r, err, want)
+		}
+	}
+}
+
+// TestStoredNameVectors checks the read-time rules for names in stored nodes.
+func TestStoredNameVectors(t *testing.T) {
+	v := loadVectors(t)
+	if len(v.StoredNames) == 0 {
+		t.Fatal("no stored_names vectors")
+	}
+	for _, c := range v.StoredNames {
+		err := pathx.ValidateStoredName(c.input(t))
+		if got := string(pathx.KindOf(err)); got != c.Error || (c.Error == "" && err != nil) {
+			t.Errorf("stored name %s: got %v, want %q", c.Name, err, c.Error)
+		}
+	}
+}
+
+// TestReadTimeIsSubsetOfWriteTime: every name the write path produces is
+// readable.
+func TestReadTimeIsSubsetOfWriteTime(t *testing.T) {
+	v := loadVectors(t)
+	for _, c := range append(v.Normalize, v.BranchNames...) {
+		if c.Error != "" {
+			continue
+		}
+		for _, seg := range strings.Split(c.output(), "/") {
+			if err := pathx.ValidateStoredName(seg); err != nil {
+				t.Errorf("%s: normalized segment %q fails the read-time rules: %v", c.Name, seg, err)
+			}
 		}
 	}
 }

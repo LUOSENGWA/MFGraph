@@ -12,8 +12,8 @@ obtained.
 | file | contents |
 |---|---|
 | `contenthash.json` | content hash inputs (UTF-8 text, hex bytes, or the `sha256-counter` generator) with expected size and `sha256:<hex>`; strict-parsing accept/reject lists |
-| `pathx.json` | path normalization (expected NFC output or error kind), case-fold keys, sibling conflicts, branch names |
-| `tree.json` | tree cases (input files → root hash, node count, nodes in walk order with canonical bytes), conflicting inputs with the expected error kind, and node byte strings a strict decoder must reject |
+| `pathx.json` | write-time path normalization (expected NFC output or error kind), case-fold keys, sibling conflicts, branch names, and `stored_names`: the read-time rules for names inside stored nodes |
+| `tree.json` | tree cases (input files → root hash, node count, nodes in walk order with canonical bytes), inputs that `Build` must reject with the expected error kind, node byte strings a strict decoder must reject (`decode_invalid`), and node byte strings a decoder must accept although the write path never produces them (`decode_valid_build_rejects`) |
 | `REVIEW.md` | generated summary for reviewers |
 
 ## Generators
@@ -34,6 +34,16 @@ Large inputs are described by rules instead of being stored:
 Cases marked `"heavy": true` (over a million entries) are skipped by default;
 run them with `MFGRAPH_HEAVY_VECTORS=1 go test ./internal/tree` and
 `python3 scripts/vectors.py verify --heavy`.
+
+## Write-time and read-time rules
+
+Paths that are uploaded or committed go through the **write-time rules**
+(`pathx.Normalize`, `tree.Build`): NFC, case-fold conflicts, and rejection of
+control, bidi, zero-width and unassigned characters (Unicode 15.0.0). Names
+read back from stored nodes go through the **read-time rules**
+(`pathx.ValidateStoredName`, `tree.Decode`, `tree.Walk`), which never depend on
+Unicode tables, so stored trees stay readable when the tables are upgraded.
+See [the specification](../../docs/spec/content-format.md).
 
 ## Workflow
 

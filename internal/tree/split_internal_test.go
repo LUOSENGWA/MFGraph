@@ -139,3 +139,32 @@ func TestOverheads(t *testing.T) {
 		t.Fatalf("overheads = %d %d %d", overheadDir, overheadDirPage, overheadDirIndex)
 	}
 }
+
+// TestWalkAcceptsCaseConflictAcrossPages: across the pages of a directory the
+// walker only checks strict byte order (read-time rule); a case-fold
+// conflict that Build would reject is still readable.
+func TestWalkAcceptsCaseConflictAcrossPages(t *testing.T) {
+	h := contenthash.SumBytes(nil)
+	entries := []Entry{{Name: "Zz", Type: TypeFile, Hash: h, Mode: ModeRegular}}
+	for i := 0; i < 1023; i++ {
+		entries = append(entries, Entry{Name: fmt.Sprintf("f%05d", i), Type: TypeFile, Hash: h, Mode: ModeRegular})
+	}
+	entries = append(entries, Entry{Name: "zz", Type: TypeFile, Hash: h, Mode: ModeRegular})
+	nodes := map[contenthash.Hash][]byte{}
+	root, err := layout(entries, frozenLimits, func(h contenthash.Hash, b []byte) { nodes[h] = b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("want an index and two pages, got %d nodes", len(nodes))
+	}
+	n := 0
+	if err := Walk(context.Background(), MapGetter(nodes), root, func(string, Entry) error { n++; return nil }); err != nil || n != 1025 {
+		t.Fatalf("walk: %d entries, %v", n, err)
+	}
+	// The write path rejects the same names.
+	files := []FileEntry{{Path: "Zz", Hash: h, Mode: ModeRegular}, {Path: "zz", Hash: h, Mode: ModeRegular}}
+	if _, _, err := Build(files); err == nil {
+		t.Fatal("Build accepted a case-fold conflict")
+	}
+}
