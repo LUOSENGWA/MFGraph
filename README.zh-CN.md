@@ -73,6 +73,24 @@ workflow (外部，可选)
 
 许可：**Apache-2.0**（见 [LICENSE](LICENSE)）。
 
+## 开发
+
+前置条件：Go（版本见 `go.mod`）、`make`、Python 3（仅标准库，用于文档与测试向量脚本）。**只有** MySQL 相关目标需要 Docker，其余都不需要。
+
+```bash
+make build        # 编译全部包；二进制输出到 ./bin
+make test         # 单元测试（不需要数据库和网络）
+make vet          # go vet
+make fmt-check    # gofmt 检查
+```
+
+开发用 MySQL 8.0 通过 Docker 运行（`deploy/docker-compose.dev.yml`，只绑定 `127.0.0.1`，一次性本地口令）：
+
+```bash
+make dev-db-up    # 启动 MySQL 8.0 并等待就绪（需要 Docker）
+make dev-db-down  # 停止（保留数据）；make dev-db-reset 会同时删除数据卷
+```
+
 ## 贡献
 
 见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)（[English](CONTRIBUTING.md)）。安全问题见 [SECURITY.zh-CN.md](SECURITY.zh-CN.md)（[English](SECURITY.md)）。行为准则见 [CODE_OF_CONDUCT.zh-CN.md](CODE_OF_CONDUCT.zh-CN.md)（[English](CODE_OF_CONDUCT.md)）。

@@ -73,6 +73,24 @@ This repository is a **design/specification repository**. Code will follow the c
 
 License: **Apache-2.0** (see [LICENSE](LICENSE)).
 
+## Development
+
+Prerequisites: Go (version in `go.mod`), `make`, Python 3 (stdlib only, for the doc and vector scripts). Docker is needed **only** for the MySQL-backed targets; everything else runs without it.
+
+```bash
+make build        # compile all packages; binaries go to ./bin
+make test         # unit tests (no database, no network)
+make vet          # go vet
+make fmt-check    # gofmt check
+```
+
+MySQL 8.0 for development runs in Docker (`deploy/docker-compose.dev.yml`, bound to `127.0.0.1`, throwaway credentials):
+
+```bash
+make dev-db-up    # start MySQL 8.0 and wait until healthy (requires Docker)
+make dev-db-down  # stop it (data kept); make dev-db-reset also deletes the data volume
+```
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) · [中文](CONTRIBUTING.zh-CN.md). Security issues: see [SECURITY.md](SECURITY.md) · [中文](SECURITY.zh-CN.md). Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · [中文](CODE_OF_CONDUCT.zh-CN.md).
