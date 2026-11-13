@@ -53,9 +53,14 @@ step that fails determines the error kind.
    * `\` (`backslash`);
    * a control character U+0000–U+001F or U+007F–U+009F, that is C0, DEL
      and C1 (`control_char`);
-   * a bidirectional formatting character U+061C, U+200E, U+200F,
-     U+202A–U+202E, U+2066–U+2069, or an invisible zero-width character
-     U+200B, U+2060, U+FEFF (`disallowed_char`);
+   * a character of the fixed disallowed list (`disallowed_char`): the
+     bidirectional formatting characters U+061C, U+200E, U+200F,
+     U+202A–U+202E, U+2066–U+2069, and the invisible or layout-breaking
+     characters U+00AD (soft hyphen), U+180E (Mongolian vowel separator),
+     U+200B (zero width space), U+2028 and U+2029 (line and paragraph
+     separators), U+2060 (word joiner), U+2061–U+2064 (invisible
+     mathematical operators), U+FEFF (zero width no-break space) and
+     U+FFF9–U+FFFB (interlinear annotation controls);
    * a code point that is unassigned (general category Cn) in Unicode version
      V, including the noncharacters U+FDD0–U+FDEF and U+xxFFFE/U+xxFFFF
      (`unassigned_char`; see 2.4).
@@ -72,14 +77,22 @@ not `dot_segment`. The result of step 3 is the canonical path.
 
 Why: control characters and the bidirectional formatting characters can make
 a name display differently from what it is (spoofing, "Trojan Source");
-zero-width characters make different names look identical; unassigned code
-points have no defined normalization or case folding yet (see 2.4).
+invisible characters make different names look identical, and line or
+paragraph separators break listings; unassigned code points have no defined
+normalization or case folding yet (see 2.4). The disallowed list is fixed:
+other format characters (category Cf) are not rejected as a class. Because
+it consists of fixed code points, it is checked at read time as well (2.5).
 
 No other rule applies. In particular these are **allowed**:
 
 * ZWNJ U+200C and ZWJ U+200D — emoji sequences (for example
   U+1F468 U+200D U+1F469 U+200D U+1F467) and Persian, Indic and other
   scripts need them;
+* the variation selectors U+FE00–U+FE0F — emoji presentation needs them (for
+  example U+2764 U+FE0F);
+* the tag characters U+E0020–U+E007F — subdivision flags need them (the flag
+  of Scotland is U+1F3F4 followed by the tags for `gbsct` and U+E007F);
+* U+034F COMBINING GRAPHEME JOINER;
 * the fullwidth solidus U+FF0F — it is not a separator;
 * private-use characters — they are assigned (category Co);
 * names that are reserved or awkward on some operating systems (`CON`, names
@@ -134,7 +147,7 @@ golang.org/x/text, which provides NFC and case folding). Today **V =
 | valid UTF-8, non-empty | ✓ | ✓ |
 | no `/` in a name; no `\` | ✓ | ✓ |
 | no control characters (C0, DEL, C1) | ✓ | ✓ |
-| no bidi formatting or zero-width characters (2.1) | ✓ | ✓ |
+| no character of the fixed disallowed list (2.1) | ✓ | ✓ |
 | not `.` or `..` | ✓ | ✓ |
 | at most 255 bytes per name | ✓ (after NFC) | ✓ (as stored) |
 | at most 4096 bytes per path | ✓ | — |

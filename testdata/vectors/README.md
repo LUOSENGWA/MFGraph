@@ -39,7 +39,8 @@ run them with `MFGRAPH_HEAVY_VECTORS=1 go test ./internal/tree` and
 
 Paths that are uploaded or committed go through the **write-time rules**
 (`pathx.Normalize`, `tree.Build`): NFC, case-fold conflicts, and rejection of
-control, bidi, zero-width and unassigned characters (Unicode 15.0.0). Names
+control characters, a fixed list of bidi and invisible characters, and code
+points unassigned in Unicode 15.0.0. Names
 read back from stored nodes go through the **read-time rules**
 (`pathx.ValidateStoredName`, `tree.Decode`, `tree.Walk`), which never depend on
 Unicode tables, so stored trees stay readable when the tables are upgraded.

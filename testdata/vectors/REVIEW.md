@@ -31,7 +31,7 @@ are upgraded). No root hash or node byte of an existing positive tree case chang
   `private-use-allowed`;
 * branch names: `rel\u0085`, `main\u202e`, `\u0378` rejected; a ZWJ emoji sequence
   accepted;
-* new section `stored_names` (27 cases): the read-time rules for names in stored nodes
+* new section `stored_names`: the read-time rules for names in stored nodes
   (NFD names, case variants and unassigned code points are accepted; C1 controls, bidi
   controls and zero-width characters are rejected).
 
@@ -55,6 +55,27 @@ are upgraded). No root hash or node byte of an existing positive tree case chang
 * new positive case `allowed-zwj-zwnj-fullwidth-reserved-names`;
 * all 16 existing positive cases keep their root hash and node bytes; the 9 existing
   rejections keep their error kinds.
+
+Added later in this revision — a fixed list of further invisible characters (not the whole
+category Cf) is rejected at write time and at read time with `disallowed_char`: U+00AD
+SOFT HYPHEN, U+180E MONGOLIAN VOWEL SEPARATOR, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH
+SEPARATOR, U+2061–U+2064 invisible mathematical operators, U+FFF9–U+FFFB interlinear
+annotation controls.
+
+* `pathx.json`: one write-time rejection per character (`soft-hyphen-u00ad`,
+  `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`,
+  `function-application-u2061`, `invisible-times-u2062`, `invisible-separator-u2063`,
+  `invisible-plus-u2064`, `interlinear-annotation-*-ufff9/ufffa/ufffb`), the same eleven in
+  `stored_names` (read time), and the branch name `release\u00ad1`;
+* still allowed, with new cases: variation selectors (`emoji-with-variation-selector-ufe0f-allowed`,
+  `text-variation-selector-ufe0e-allowed`), tag characters (`tag-sequence-flag-of-scotland-allowed`,
+  the flag of Scotland), U+034F (`combining-grapheme-joiner-u034f-allowed`), and the same in
+  `stored_names`;
+* `tree.json`: eleven `decode_invalid` cases `name-with-<character>`; Build rejections
+  `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`,
+  `reject-interlinear-annotation`; new positive case `allowed-variation-selectors-tags-cgj`;
+* all 17 existing positive cases (including `allowed-zwj-zwnj-fullwidth-reserved-names`) keep
+  their root hash and node bytes.
 
 ## How the expected values were produced
 
@@ -107,7 +128,7 @@ Parse rejects (must all fail): empty, missing sha256: prefix, uppercase prefix, 
 
 ## 2. pathx
 
-Rule order: UTF-8 + non-empty → absolute → first offending character from left to right (backslash; control_char = U+0000–U+001F, U+007F–U+009F; disallowed_char = bidi controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and zero-width U+200B, U+2060, U+FEFF; unassigned_char = general category Cn in Unicode 15.0.0) → NFC → empty / `.` / `..` segments → segment ≤ 255 B and path ≤ 4096 B (NFC bytes). First failure wins.
+Rule order: UTF-8 + non-empty → absolute → first offending character from left to right (backslash; control_char = U+0000–U+001F, U+007F–U+009F; disallowed_char = the fixed list: bidi controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and invisible characters U+00AD, U+180E, U+200B, U+2028, U+2029, U+2060, U+2061–U+2064, U+FEFF, U+FFF9–U+FFFB; unassigned_char = general category Cn in Unicode 15.0.0) → NFC → empty / `.` / `..` segments → segment ≤ 255 B and path ≤ 4096 B (NFC bytes). First failure wins.
 
 ### 2.1 Normalize
 
@@ -134,6 +155,10 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | trailing-dot-allowed | `notes.` | ✓ `notes.` |
 | trailing-space-allowed | `notes ` | ✓ `notes ` |
 | private-use-allowed | `\ue000.txt` | ✓ `\ue000.txt` |
+| emoji-with-variation-selector-ufe0f-allowed | `❤\ufe0f.txt` | ✓ `❤\ufe0f.txt` |
+| text-variation-selector-ufe0e-allowed | `☎\ufe0e.txt` | ✓ `☎\ufe0e.txt` |
+| tag-sequence-flag-of-scotland-allowed | `🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f.txt` | ✓ `🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f.txt` |
+| combining-grapheme-joiner-u034f-allowed | `a\u034fb` | ✓ `a\u034fb` |
 | segment-255-bytes | `a`×255 (255 bytes) | ✓ `a`×255 (255 bytes) |
 | segment-255-bytes-cjk | `中`×85 (255 bytes) | ✓ `中`×85 (255 bytes) |
 | nfd-381-bytes-is-254-after-nfc | `e\u0301`×127 (381 bytes) | ✓ `é`×127 (254 bytes) |
@@ -165,6 +190,17 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | zero-width-space-u200b | `a\u200bb` | ✗ `disallowed_char` |
 | word-joiner-u2060 | `a\u2060b` | ✗ `disallowed_char` |
 | byte-order-mark-ufeff | `\ufeffa.txt` | ✗ `disallowed_char` |
+| soft-hyphen-u00ad | `co\u00adop.txt` | ✗ `disallowed_char` |
+| mongolian-vowel-separator-u180e | `a\u180eb` | ✗ `disallowed_char` |
+| line-separator-u2028 | `a\u2028b` | ✗ `disallowed_char` |
+| paragraph-separator-u2029 | `a\u2029b` | ✗ `disallowed_char` |
+| function-application-u2061 | `f\u2061x` | ✗ `disallowed_char` |
+| invisible-times-u2062 | `2\u2062x` | ✗ `disallowed_char` |
+| invisible-separator-u2063 | `a\u2063b` | ✗ `disallowed_char` |
+| invisible-plus-u2064 | `1\u20642` | ✗ `disallowed_char` |
+| interlinear-annotation-anchor-ufff9 | `a\ufff9b` | ✗ `disallowed_char` |
+| interlinear-annotation-separator-ufffa | `a\ufffab` | ✗ `disallowed_char` |
+| interlinear-annotation-terminator-ufffb | `a\ufffbb` | ✗ `disallowed_char` |
 | unassigned-u0378 | `a\u0378` | ✗ `unassigned_char` |
 | unassigned-plane4-u40000 | `a\U00040000` | ✗ `unassigned_char` |
 | noncharacter-uffff | `a\uffff` | ✗ `unassigned_char` |
@@ -248,6 +284,8 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | `tab\u0009` | ✗ `control_char` |
 | `rel\u0085` | ✗ `control_char` |
 | `main\u202e` | ✗ `disallowed_char` |
+| `release\u00ad1` | ✗ `disallowed_char` |
+| `❤\ufe0f` | ✓ `❤\ufe0f` |
 | `\u0378` | ✗ `unassigned_char` |
 | bytes `6d61696eff` | ✗ `invalid_utf8` |
 | `a`×256 (256 bytes) | ✗ `segment_too_long` |
@@ -279,6 +317,21 @@ Names inside stored tree nodes are checked only with rules that do not depend on
 | bidi-isolate | `a\u2068b` | ✗ `disallowed_char` |
 | zero-width-space | `a\u200bb` | ✗ `disallowed_char` |
 | byte-order-mark | `\ufeffa` | ✗ `disallowed_char` |
+| soft-hyphen-u00ad | `co\u00adop.txt` | ✗ `disallowed_char` |
+| mongolian-vowel-separator-u180e | `a\u180eb` | ✗ `disallowed_char` |
+| line-separator-u2028 | `a\u2028b` | ✗ `disallowed_char` |
+| paragraph-separator-u2029 | `a\u2029b` | ✗ `disallowed_char` |
+| function-application-u2061 | `f\u2061x` | ✗ `disallowed_char` |
+| invisible-times-u2062 | `2\u2062x` | ✗ `disallowed_char` |
+| invisible-separator-u2063 | `a\u2063b` | ✗ `disallowed_char` |
+| invisible-plus-u2064 | `1\u20642` | ✗ `disallowed_char` |
+| interlinear-annotation-anchor-ufff9 | `a\ufff9b` | ✗ `disallowed_char` |
+| interlinear-annotation-separator-ufffa | `a\ufffab` | ✗ `disallowed_char` |
+| interlinear-annotation-terminator-ufffb | `a\ufffbb` | ✗ `disallowed_char` |
+| emoji-with-variation-selector-ufe0f-accepted | `❤\ufe0f.txt` | ✓ accepted |
+| text-variation-selector-ufe0e-accepted | `☎\ufe0e.txt` | ✓ accepted |
+| tag-sequence-flag-of-scotland-accepted | `🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f.txt` | ✓ accepted |
+| combining-grapheme-joiner-u034f-accepted | `a\u034fb` | ✓ accepted |
 | dot | `.` | ✗ `dot_segment` |
 | dotdot | `..` | ✗ `dot_segment` |
 | 256-bytes | `a`×256 (256 bytes) | ✗ `segment_too_long` |
@@ -311,6 +364,7 @@ Rules checked by these vectors:
 | deep-path | 1 file(s) | root `sha256:8a797cbf3e0a…`, 10 node(s) |
 | shared-subtree | 2 file(s) | root `sha256:b73fb86088a2…`, 2 node(s) |
 | allowed-zwj-zwnj-fullwidth-reserved-names | 7 file(s) | root `sha256:f0a0a8007714…`, 1 node(s) |
+| allowed-variation-selectors-tags-cgj | 4 file(s) | root `sha256:dff2084c04f5…`, 1 node(s) |
 | dir-1024-entries-one-node | generated `f` + 5-digit index, 0…1023 | root `sha256:84d212b37a4d…`, 1 node(s) |
 | dir-1025-entries-two-pages | generated `f` + 5-digit index, 0…1024 | root `sha256:bc1eec93a002…`, 3 node(s) |
 | subdir-3000-entries-three-pages | 1 file(s); generated `big`/`f` + 5-digit index, 0…2999 | root `sha256:43b5f3318a5b…`, 5 node(s) |
@@ -332,6 +386,10 @@ Rules checked by these vectors:
 | reject-unassigned-u0378 | 1 file(s) | ✗ `unassigned_char` |
 | reject-unassigned-plane4 | 1 file(s) | ✗ `unassigned_char` |
 | reject-noncharacter | 1 file(s) | ✗ `unassigned_char` |
+| reject-soft-hyphen | 1 file(s) | ✗ `disallowed_char` |
+| reject-line-separator | 1 file(s) | ✗ `disallowed_char` |
+| reject-invisible-times | 1 file(s) | ✗ `disallowed_char` |
+| reject-interlinear-annotation | 1 file(s) | ✗ `disallowed_char` |
 
 ### 3.2 Small cases in full
 
@@ -656,6 +714,25 @@ root: `sha256:f0a0a8007714d2422542ba1629e4a609056246bcc023b7be85a80d06b47a19ed`
 
   The same bytes with invisible characters shown as code points: `{"entries":[{"hash":"sha256:ad51f9117452359de18de6c4423fddbaf2bb5a8be6643d544b527cf407dd48ad","mode":420,"name":"CON","size":27,"type":"file"},{"hash":"sha256:c77b8e1f613cc3d9bc6d6cb4e79900945c193de22d13650bf63861be994633db","mode":420,"name":"a\uff0fb.txt","size":18,"type":"file"},{"hash":"sha256:e3e3784c80358d913628e6a03c4a450ca2c4257cf6500e08a026d4f2fd4d6766","mode":420,"name":"notes ","size":15,"type":"file"},{"hash":"sha256:7445baaf4414cda35778e4a8f323ee8cf800c050a714ce4fd1c0fb0751c882a8","mode":420,"name":"notes.","size":13,"type":"file"},{"hash":"sha256:397a36acd9cec2df5d6079b1f8994ba845ea266d63a674cd4c0028e7f7dd593e","mode":420,"name":"می\u200cخواهم.txt","size":5,"type":"file"},{"hash":"sha256:e563ce06518cec1684fe643aa6cedffa2c5ec5f260d4be349fd478fcecc19ced","mode":420,"name":"\ue000.txt","size":12,"type":"file"},{"hash":"sha256:f886996f4c6cb40ca5a3d35302de098a535b876265d7c2c3025aaf253196f725","mode":420,"name":"👨\u200d👩\u200d👧.txt","size":7,"type":"file"}],"format":1,"kind":"dir"}`
 
+#### `allowed-variation-selectors-tags-cgj`
+
+| path | content | mode |
+|---|---|---:|
+| `❤\ufe0f.txt` | `heart with emoji presentation\u000a` | 420 |
+| `☎\ufe0e.txt` | `telephone with text presentation\u000a` | 420 |
+| `🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f.txt` | `flag of Scotland\u000a` | 420 |
+| `a\u034fb.txt` | `combining grapheme joiner\u000a` | 420 |
+
+root: `sha256:dff2084c04f5d18640cb1e56effe73f8516efa068fb9b3c6c120786473ba5710`
+
+* dir `.` (root) · `dir` · `sha256:dff2084c04f5d18640cb1e56effe73f8516efa068fb9b3c6c120786473ba5710` · 609 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:6b0f7f0ec1ba5c3ca08b69f9e166dc10760e6bbac04cc193bd4fbcb3c7fc4426","mode":420,"name":"a͏b.txt","size":26,"type":"file"},{"hash":"sha256:3650533e698039a823cc86dfb3efbd4b3b918763f15e117f5f50f980a4863d9a","mode":420,"name":"☎︎.txt","size":33,"type":"file"},{"hash":"sha256:ddb924940a181d1fb9a3a33e8c66f2a760aa0aa5053a4febf93ac6c29587361b","mode":420,"name":"❤️.txt","size":30,"type":"file"},{"hash":"sha256:74738303aa4d69c55f4ef506f9090f04dca92f744d26466055b14c351ca11494","mode":420,"name":"🏴󠁧󠁢󠁳󠁣󠁴󠁿.txt","size":17,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+  The same bytes with invisible characters shown as code points: `{"entries":[{"hash":"sha256:6b0f7f0ec1ba5c3ca08b69f9e166dc10760e6bbac04cc193bd4fbcb3c7fc4426","mode":420,"name":"a\u034fb.txt","size":26,"type":"file"},{"hash":"sha256:3650533e698039a823cc86dfb3efbd4b3b918763f15e117f5f50f980a4863d9a","mode":420,"name":"☎\ufe0e.txt","size":33,"type":"file"},{"hash":"sha256:ddb924940a181d1fb9a3a33e8c66f2a760aa0aa5053a4febf93ac6c29587361b","mode":420,"name":"❤\ufe0f.txt","size":30,"type":"file"},{"hash":"sha256:74738303aa4d69c55f4ef506f9090f04dca92f744d26466055b14c351ca11494","mode":420,"name":"🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f.txt","size":17,"type":"file"}],"format":1,"kind":"dir"}`
+
 ### 3.3 Large cases (root and selected nodes)
 
 #### `dir-1024-entries-one-node`
@@ -736,7 +813,7 @@ root `sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c`; 
 
 ### 3.4 Strict decoding: inputs that must be rejected (read-time rules)
 
-`trailing-newline`, `leading-space`, `byte-order-mark`, `space-after-colon`, `whitespace-inside-array`, `keys-out-of-order`, `unknown-key`, `duplicate-key`, `format-2`, `format-as-string`, `format-as-float`, `unknown-kind`, `null-entries`, `not-an-object`, `truncated`, `empty-dir-page`, `empty-dir-index`, `dir-with-pages-key`, `index-with-entries-key`, `escaped-ascii-in-name`, `escaped-non-ascii-in-name`, `escaped-solidus-in-name`, `name-dotdot`, `name-with-slash`, `name-with-control-char`, `name-with-backslash`, `empty-name`, `uppercase-hash`, `hash-without-prefix`, `entries-not-sorted`, `duplicate-names`, `mode-0666`, `mode-as-string`, `file-without-mode`, `file-without-size`, `size-negative`, `size-leading-zero`, `size-plus-sign`, `size-exponent`, `size-above-2^53-1`, `dir-entry-with-size`, `dir-entry-with-mode`, `type-symlink`, `index-count-zero`, `index-pages-not-sorted`, `name-with-c1-control-u0085`, `name-with-c1-control-u009f`, `name-with-bidi-override-u202e`, `name-with-bidi-isolate-u2066`, `name-with-bidi-mark-u200e`, `name-with-arabic-letter-mark-u061c`, `name-with-zero-width-space-u200b`, `name-with-word-joiner-u2060`, `name-with-byte-order-mark-ufeff`, `dir-entry-name-with-bidi-u202b`, `index-first-with-bidi-u202e`, `index-first-with-c1-control`.
+`trailing-newline`, `leading-space`, `byte-order-mark`, `space-after-colon`, `whitespace-inside-array`, `keys-out-of-order`, `unknown-key`, `duplicate-key`, `format-2`, `format-as-string`, `format-as-float`, `unknown-kind`, `null-entries`, `not-an-object`, `truncated`, `empty-dir-page`, `empty-dir-index`, `dir-with-pages-key`, `index-with-entries-key`, `escaped-ascii-in-name`, `escaped-non-ascii-in-name`, `escaped-solidus-in-name`, `name-dotdot`, `name-with-slash`, `name-with-control-char`, `name-with-backslash`, `empty-name`, `uppercase-hash`, `hash-without-prefix`, `entries-not-sorted`, `duplicate-names`, `mode-0666`, `mode-as-string`, `file-without-mode`, `file-without-size`, `size-negative`, `size-leading-zero`, `size-plus-sign`, `size-exponent`, `size-above-2^53-1`, `dir-entry-with-size`, `dir-entry-with-mode`, `type-symlink`, `index-count-zero`, `index-pages-not-sorted`, `name-with-c1-control-u0085`, `name-with-c1-control-u009f`, `name-with-bidi-override-u202e`, `name-with-bidi-isolate-u2066`, `name-with-bidi-mark-u200e`, `name-with-arabic-letter-mark-u061c`, `name-with-zero-width-space-u200b`, `name-with-word-joiner-u2060`, `name-with-byte-order-mark-ufeff`, `dir-entry-name-with-bidi-u202b`, `index-first-with-bidi-u202e`, `index-first-with-c1-control`, `name-with-soft-hyphen-u00ad`, `name-with-mongolian-vowel-separator-u180e`, `name-with-line-separator-u2028`, `name-with-paragraph-separator-u2029`, `name-with-function-application-u2061`, `name-with-invisible-times-u2062`, `name-with-invisible-separator-u2063`, `name-with-invisible-plus-u2064`, `name-with-interlinear-annotation-anchor-ufff9`, `name-with-interlinear-annotation-separator-ufffa`, `name-with-interlinear-annotation-terminator-ufffb`.
 
 ### 3.5 Accepted when reading, never produced when writing
 
@@ -770,7 +847,7 @@ A decoder must accept these nodes (the read-time rules do not use Unicode tables
 | tree: input order does not change the root; a change rewrites only the path to the root | `internal/tree/property_test.go` |
 | tree: Build → Walk restores the input | every case in `TestTreeVectors` |
 | tree: strict decoding (read-time rules) | `decode_invalid`, `FuzzDecode` |
-| path, write time: C1 controls, bidi controls, zero-width, unassigned code points; allowed ZWJ/ZWNJ | `pathx.json` → `c1-control-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `unassigned-*`, `noncharacter-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-noncharacter`, `allowed-zwj-zwnj-fullwidth-reserved-names` |
+| path, write time: C1 controls, the fixed disallowed list, unassigned code points; allowed ZWJ/ZWNJ, variation selectors, tag characters, CGJ | `pathx.json` → `c1-control-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `soft-hyphen-u00ad`, `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`, `function-application-u2061`, `invisible-*`, `interlinear-annotation-*`, `unassigned-*`, `noncharacter-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-noncharacter`, `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`, `reject-interlinear-annotation`, `allowed-zwj-zwnj-fullwidth-reserved-names`, `allowed-variation-selectors-tags-cgj` |
 | read time: Unicode-independent rules; NFD, case variants and unassigned code points readable | `pathx.json` → `stored_names`; `tree.json` → `decode_valid_build_rejects`, `decode_invalid` → `name-with-*`, `index-first-with-*` |
 
 ## 5. Notes for the reviewer
@@ -796,6 +873,8 @@ A decoder must accept these nodes (the read-time rules do not use Unicode tables
    code points with the same status in both versions (U+0378, U+40000, U+FFFF, U+FDD0 are
    unassigned in both; the 4,489 characters added in Unicode 15.0 are not used).
 5. **Allowed on purpose**: ZWNJ U+200C and ZWJ U+200D (emoji sequences such as
-   `👨\u200d👩\u200d👧`, Persian and Indic text), fullwidth solidus U+FF0F, private-use
+   `👨\u200d👩\u200d👧`, Persian and Indic text), variation selectors U+FE00–U+FE0F
+   (emoji presentation), tag characters U+E0020–U+E007F (subdivision flags such as the flag
+   of Scotland), U+034F COMBINING GRAPHEME JOINER, fullwidth solidus U+FF0F, private-use
    characters, names that are reserved on some platforms (`CON`, trailing dots or spaces).
    Platform-specific names are left to a future export layer.

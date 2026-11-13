@@ -31,7 +31,7 @@ const (
 	KindAbsolute        Kind = "absolute"          // starts with '/'
 	KindBackslash       Kind = "backslash"         // contains '\'
 	KindControlChar     Kind = "control_char"      // contains a control character: U+0000-U+001F, U+007F-U+009F
-	KindDisallowedChar  Kind = "disallowed_char"   // contains a bidi control or an invisible zero-width character
+	KindDisallowedChar  Kind = "disallowed_char"   // contains a character of the fixed disallowed list (bidi controls, invisible characters)
 	KindUnassignedChar  Kind = "unassigned_char"   // contains a code point unassigned in UnicodeVersion (write time only)
 	KindEmptySegment    Kind = "empty_segment"     // "a//b" or trailing '/'
 	KindDotSegment      Kind = "dot_segment"       // a segment equal to "." or ".."
@@ -88,21 +88,39 @@ var UnicodeVersion = unicode.Version
 // isControl reports C0 controls, DEL and C1 controls (general category Cc).
 func isControl(r rune) bool { return r < 0x20 || 0x7f <= r && r <= 0x9f }
 
-// isDisallowed reports the fixed set of bidirectional formatting characters
-// (spoofing, "Trojan Source") and invisible zero-width characters rejected in
-// names. U+200C (ZWNJ) and U+200D (ZWJ) are deliberately allowed: emoji
-// sequences and several scripts need them.
+// isDisallowed reports the fixed list of characters rejected in names, at
+// write time and at read time (they are fixed code points, so the check does
+// not depend on Unicode tables):
+//
+//   - bidirectional formatting characters (spoofing, "Trojan Source"):
+//     U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069;
+//   - invisible or layout-breaking characters: U+00AD SOFT HYPHEN, U+180E
+//     MONGOLIAN VOWEL SEPARATOR, U+200B ZERO WIDTH SPACE, U+2028 LINE
+//     SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+2060 WORD JOINER,
+//     U+2061-U+2064 invisible mathematical operators, U+FEFF ZERO WIDTH
+//     NO-BREAK SPACE, U+FFF9-U+FFFB interlinear annotation controls.
+//
+// It is a fixed list, not the whole format category Cf. Deliberately allowed:
+// U+200C ZWNJ and U+200D ZWJ (emoji sequences, several scripts), the
+// variation selectors U+FE00-U+FE0F and the tag characters U+E0020-U+E007F
+// (emoji presentation and subdivision flags), and U+034F COMBINING GRAPHEME
+// JOINER.
 func isDisallowed(r rune) bool {
 	switch r {
-	case 0x061c, // ARABIC LETTER MARK
+	case 0x00ad, // SOFT HYPHEN
+		0x061c,         // ARABIC LETTER MARK
+		0x180e,         // MONGOLIAN VOWEL SEPARATOR
+		0x200b,         // ZERO WIDTH SPACE
 		0x200e, 0x200f, // LEFT-TO-RIGHT / RIGHT-TO-LEFT MARK
-		0x200b, // ZERO WIDTH SPACE
+		0x2028, 0x2029, // LINE / PARAGRAPH SEPARATOR
 		0x2060, // WORD JOINER
 		0xfeff: // ZERO WIDTH NO-BREAK SPACE (byte order mark)
 		return true
 	}
 	return 0x202a <= r && r <= 0x202e || // embeddings and overrides LRE..RLO
-		0x2066 <= r && r <= 0x2069 // isolates LRI..PDI
+		0x2061 <= r && r <= 0x2064 || // invisible mathematical operators
+		0x2066 <= r && r <= 0x2069 || // isolates LRI..PDI
+		0xfff9 <= r && r <= 0xfffb // interlinear annotation controls
 }
 
 // isUnassigned reports code points of general category Cn in UnicodeVersion,
@@ -117,16 +135,17 @@ func isUnassigned(r rune) bool { return unicode.Is(unicode.Cn, r) }
 //  1. valid UTF-8 and non-empty;
 //  2. no leading '/'; then the characters are scanned from left to right and
 //     the first offending one decides: '\' (backslash), a control character
-//     U+0000-U+001F or U+007F-U+009F (control_char), a bidi control or
-//     zero-width character (disallowed_char), a code point unassigned in
-//     UnicodeVersion (unassigned_char);
+//     U+0000-U+001F or U+007F-U+009F (control_char), a character of the
+//     fixed disallowed list: bidi controls and invisible characters
+//     (disallowed_char), a code point unassigned in UnicodeVersion
+//     (unassigned_char);
 //  3. NFC normalization;
 //  4. split on '/': no empty segments ("a//b", trailing '/'), no "." or "..";
 //  5. every segment <= MaxSegmentBytes and the whole path <= MaxPathBytes,
 //     counted in bytes of the NFC form.
 //
-// No other rules apply (in particular no platform-specific reserved names,
-// and ZWNJ U+200C / ZWJ U+200D are allowed).
+// No other rules apply (in particular no platform-specific reserved names;
+// ZWNJ, ZWJ, variation selectors, tag characters and U+034F are allowed).
 func Normalize(p string) (string, error) {
 	if p == "" {
 		return "", fail(KindEmpty, p, "")
@@ -214,8 +233,8 @@ func NormalizeSegment(s string) (string, error) {
 //  1. valid UTF-8 (invalid_utf8) and non-empty (empty);
 //  2. no '/' (contains_slash);
 //  3. scanning from left to right, no '\' (backslash), no control character
-//     U+0000-U+001F or U+007F-U+009F (control_char), no bidi control or
-//     zero-width character (disallowed_char);
+//     U+0000-U+001F or U+007F-U+009F (control_char), no character of the
+//     fixed disallowed list (disallowed_char);
 //  4. not "." or ".." (dot_segment);
 //  5. at most MaxSegmentBytes bytes as stored (segment_too_long).
 //

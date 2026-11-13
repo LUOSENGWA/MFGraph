@@ -106,9 +106,15 @@ def _decode(raw):
         raise PathError("invalid_utf8")
 
 
-# Bidirectional formatting characters and invisible zero-width characters.
-# ZWNJ U+200C and ZWJ U+200D are allowed (emoji sequences, several scripts).
-DISALLOWED = {0x061C, 0x200E, 0x200F, 0x200B, 0x2060, 0xFEFF} | set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A))
+# Fixed list (not the whole category Cf), checked at write and read time:
+# bidirectional formatting characters U+061C, U+200E, U+200F, U+202A-U+202E,
+# U+2066-U+2069, and invisible or layout-breaking characters U+00AD, U+180E,
+# U+200B, U+2028, U+2029, U+2060, U+2061-U+2064, U+FEFF, U+FFF9-U+FFFB.
+# Allowed on purpose: ZWNJ U+200C, ZWJ U+200D, variation selectors
+# U+FE00-U+FE0F, tag characters U+E0020-U+E007F, CGJ U+034F.
+DISALLOWED = ({0x00AD, 0x061C, 0x180E, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0x2060, 0xFEFF}
+              | set(range(0x202A, 0x202F)) | set(range(0x2061, 0x2065))
+              | set(range(0x2066, 0x206A)) | set(range(0xFFF9, 0xFFFC)))
 
 
 def char_problem(ch, write):
@@ -768,8 +774,9 @@ def review_pathx(lines):
     v = load("pathx.json")
     lines += ["## 2. pathx", "",
               "Rule order: UTF-8 + non-empty → absolute → first offending character from left to right "
-              "(backslash; control_char = U+0000–U+001F, U+007F–U+009F; disallowed_char = bidi controls "
-              "U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and zero-width U+200B, U+2060, U+FEFF; "
+              "(backslash; control_char = U+0000–U+001F, U+007F–U+009F; disallowed_char = the fixed list: bidi "
+              "controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and invisible characters U+00AD, "
+              "U+180E, U+200B, U+2028, U+2029, U+2060, U+2061–U+2064, U+FEFF, U+FFF9–U+FFFB; "
               "unassigned_char = general category Cn in Unicode 15.0.0) → NFC → "
               "empty / `.` / `..` segments → segment ≤ 255 B and path ≤ 4096 B (NFC bytes). First failure wins.", "",
               "### 2.1 Normalize", "", "| name | input | result |", "|---|---|---|"]
@@ -895,7 +902,7 @@ REVIEW_COVERAGE = """## 4. Coverage checklist
 | tree: input order does not change the root; a change rewrites only the path to the root | `internal/tree/property_test.go` |
 | tree: Build → Walk restores the input | every case in `TestTreeVectors` |
 | tree: strict decoding (read-time rules) | `decode_invalid`, `FuzzDecode` |
-| path, write time: C1 controls, bidi controls, zero-width, unassigned code points; allowed ZWJ/ZWNJ | `pathx.json` → `c1-control-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `unassigned-*`, `noncharacter-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-noncharacter`, `allowed-zwj-zwnj-fullwidth-reserved-names` |
+| path, write time: C1 controls, the fixed disallowed list, unassigned code points; allowed ZWJ/ZWNJ, variation selectors, tag characters, CGJ | `pathx.json` → `c1-control-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `soft-hyphen-u00ad`, `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`, `function-application-u2061`, `invisible-*`, `interlinear-annotation-*`, `unassigned-*`, `noncharacter-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-noncharacter`, `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`, `reject-interlinear-annotation`, `allowed-zwj-zwnj-fullwidth-reserved-names`, `allowed-variation-selectors-tags-cgj` |
 | read time: Unicode-independent rules; NFD, case variants and unassigned code points readable | `pathx.json` → `stored_names`; `tree.json` → `decode_valid_build_rejects`, `decode_invalid` → `name-with-*`, `index-first-with-*` |
 
 ## 5. Notes for the reviewer
@@ -921,7 +928,9 @@ REVIEW_COVERAGE = """## 4. Coverage checklist
    code points with the same status in both versions (U+0378, U+40000, U+FFFF, U+FDD0 are
    unassigned in both; the 4,489 characters added in Unicode 15.0 are not used).
 5. **Allowed on purpose**: ZWNJ U+200C and ZWJ U+200D (emoji sequences such as
-   `👨\\u200d👩\\u200d👧`, Persian and Indic text), fullwidth solidus U+FF0F, private-use
+   `👨\\u200d👩\\u200d👧`, Persian and Indic text), variation selectors U+FE00–U+FE0F
+   (emoji presentation), tag characters U+E0020–U+E007F (subdivision flags such as the flag
+   of Scotland), U+034F COMBINING GRAPHEME JOINER, fullwidth solidus U+FF0F, private-use
    characters, names that are reserved on some platforms (`CON`, trailing dots or spaces).
    Platform-specific names are left to a future export layer.
 """
@@ -995,7 +1004,7 @@ are upgraded). No root hash or node byte of an existing positive tree case chang
   `private-use-allowed`;
 * branch names: `rel\\u0085`, `main\\u202e`, `\\u0378` rejected; a ZWJ emoji sequence
   accepted;
-* new section `stored_names` (27 cases): the read-time rules for names in stored nodes
+* new section `stored_names`: the read-time rules for names in stored nodes
   (NFD names, case variants and unassigned code points are accepted; C1 controls, bidi
   controls and zero-width characters are rejected).
 
@@ -1019,6 +1028,27 @@ are upgraded). No root hash or node byte of an existing positive tree case chang
 * new positive case `allowed-zwj-zwnj-fullwidth-reserved-names`;
 * all 16 existing positive cases keep their root hash and node bytes; the 9 existing
   rejections keep their error kinds.
+
+Added later in this revision — a fixed list of further invisible characters (not the whole
+category Cf) is rejected at write time and at read time with `disallowed_char`: U+00AD
+SOFT HYPHEN, U+180E MONGOLIAN VOWEL SEPARATOR, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH
+SEPARATOR, U+2061–U+2064 invisible mathematical operators, U+FFF9–U+FFFB interlinear
+annotation controls.
+
+* `pathx.json`: one write-time rejection per character (`soft-hyphen-u00ad`,
+  `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`,
+  `function-application-u2061`, `invisible-times-u2062`, `invisible-separator-u2063`,
+  `invisible-plus-u2064`, `interlinear-annotation-*-ufff9/ufffa/ufffb`), the same eleven in
+  `stored_names` (read time), and the branch name `release\\u00ad1`;
+* still allowed, with new cases: variation selectors (`emoji-with-variation-selector-ufe0f-allowed`,
+  `text-variation-selector-ufe0e-allowed`), tag characters (`tag-sequence-flag-of-scotland-allowed`,
+  the flag of Scotland), U+034F (`combining-grapheme-joiner-u034f-allowed`), and the same in
+  `stored_names`;
+* `tree.json`: eleven `decode_invalid` cases `name-with-<character>`; Build rejections
+  `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`,
+  `reject-interlinear-annotation`; new positive case `allowed-variation-selectors-tags-cgj`;
+* all 17 existing positive cases (including `allowed-zwj-zwnj-fullwidth-reserved-names`) keep
+  their root hash and node bytes.
 """
 
 

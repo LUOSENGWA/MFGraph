@@ -268,7 +268,7 @@ func TestUnicodeVersionV(t *testing.T) {
 }
 
 func TestAllowedAndRejectedCharacters(t *testing.T) {
-	allowed := []rune{0x200c, 0x200d, 0xff0f, 0xe000, 0x00a0, 0x2028}
+	allowed := []rune{0x200c, 0x200d, 0xff0f, 0xe000, 0x00a0, 0xfe00, 0xfe0e, 0xfe0f, 0xe0020, 0xe0067, 0xe007f, 0x034f}
 	for _, r := range allowed {
 		if _, err := pathx.NormalizeSegment("a" + string(r) + "b"); err != nil {
 			t.Errorf("%U must be allowed: %v", r, err)
@@ -279,12 +279,29 @@ func TestAllowedAndRejectedCharacters(t *testing.T) {
 		0x061c: pathx.KindDisallowedChar, 0x200e: pathx.KindDisallowedChar, 0x200f: pathx.KindDisallowedChar,
 		0x202a: pathx.KindDisallowedChar, 0x202e: pathx.KindDisallowedChar, 0x2066: pathx.KindDisallowedChar,
 		0x2069: pathx.KindDisallowedChar, 0x200b: pathx.KindDisallowedChar, 0x2060: pathx.KindDisallowedChar,
-		0xfeff: pathx.KindDisallowedChar, 0x0378: pathx.KindUnassignedChar, 0xfffe: pathx.KindUnassignedChar,
+		0xfeff: pathx.KindDisallowedChar, 0x00ad: pathx.KindDisallowedChar, 0x180e: pathx.KindDisallowedChar,
+		0x2028: pathx.KindDisallowedChar, 0x2029: pathx.KindDisallowedChar, 0x2061: pathx.KindDisallowedChar,
+		0x2062: pathx.KindDisallowedChar, 0x2063: pathx.KindDisallowedChar, 0x2064: pathx.KindDisallowedChar,
+		0xfff9: pathx.KindDisallowedChar, 0xfffa: pathx.KindDisallowedChar, 0xfffb: pathx.KindDisallowedChar,
+		0x0378: pathx.KindUnassignedChar, 0xfffe: pathx.KindUnassignedChar,
 		0x10ffff: pathx.KindUnassignedChar,
 	}
 	for r, want := range rejected {
 		if _, err := pathx.NormalizeSegment("a" + string(r)); pathx.KindOf(err) != want {
 			t.Errorf("%U: got %v, want %s", r, err, want)
+		}
+		// Fixed code points are rejected at read time too; unassigned ones are not.
+		readWant := want
+		if want == pathx.KindUnassignedChar {
+			readWant = ""
+		}
+		if err := pathx.ValidateStoredName("a" + string(r)); pathx.KindOf(err) != readWant {
+			t.Errorf("%U at read time: got %v, want %q", r, err, readWant)
+		}
+	}
+	for _, r := range allowed {
+		if err := pathx.ValidateStoredName("a" + string(r) + "b"); err != nil {
+			t.Errorf("%U must be readable: %v", r, err)
 		}
 	}
 }

@@ -485,6 +485,38 @@
    ]
   },
   {
+   "name": "allowed-variation-selectors-tags-cgj",
+   "files": [
+    {
+     "path": "❤\ufe0f.txt",
+     "content": "heart with emoji presentation\n"
+    },
+    {
+     "path": "☎\ufe0e.txt",
+     "content": "telephone with text presentation\n"
+    },
+    {
+     "path": "🏴\udb40\udc67\udb40\udc62\udb40\udc73\udb40\udc63\udb40\udc74\udb40\udc7f.txt",
+     "content": "flag of Scotland\n"
+    },
+    {
+     "path": "a\u034fb.txt",
+     "content": "combining grapheme joiner\n"
+    }
+   ],
+   "root": "sha256:dff2084c04f5d18640cb1e56effe73f8516efa068fb9b3c6c120786473ba5710",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:dff2084c04f5d18640cb1e56effe73f8516efa068fb9b3c6c120786473ba5710",
+     "size": 609,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:6b0f7f0ec1ba5c3ca08b69f9e166dc10760e6bbac04cc193bd4fbcb3c7fc4426\",\"mode\":420,\"name\":\"a\u034fb.txt\",\"size\":26,\"type\":\"file\"},{\"hash\":\"sha256:3650533e698039a823cc86dfb3efbd4b3b918763f15e117f5f50f980a4863d9a\",\"mode\":420,\"name\":\"☎\ufe0e.txt\",\"size\":33,\"type\":\"file\"},{\"hash\":\"sha256:ddb924940a181d1fb9a3a33e8c66f2a760aa0aa5053a4febf93ac6c29587361b\",\"mode\":420,\"name\":\"❤\ufe0f.txt\",\"size\":30,\"type\":\"file\"},{\"hash\":\"sha256:74738303aa4d69c55f4ef506f9090f04dca92f744d26466055b14c351ca11494\",\"mode\":420,\"name\":\"🏴\udb40\udc67\udb40\udc62\udb40\udc73\udb40\udc63\udb40\udc74\udb40\udc7f.txt\",\"size\":17,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
    "name": "dir-1024-entries-one-node",
    "generate": [
     {
@@ -853,6 +885,46 @@
     }
    ],
    "error": "unassigned_char"
+  },
+  {
+   "name": "reject-soft-hyphen",
+   "files": [
+    {
+     "path": "co\u00adop.txt",
+     "content": "a"
+    }
+   ],
+   "error": "disallowed_char"
+  },
+  {
+   "name": "reject-line-separator",
+   "files": [
+    {
+     "path": "docs/a\u2028b.txt",
+     "content": "a"
+    }
+   ],
+   "error": "disallowed_char"
+  },
+  {
+   "name": "reject-invisible-times",
+   "files": [
+    {
+     "path": "2\u2062x.txt",
+     "content": "a"
+    }
+   ],
+   "error": "disallowed_char"
+  },
+  {
+   "name": "reject-interlinear-annotation",
+   "files": [
+    {
+     "path": "a\ufff9b\ufffac\ufffb.txt",
+     "content": "a"
+    }
+   ],
+   "error": "disallowed_char"
   }
  ],
  "decode_invalid": [
@@ -1083,6 +1155,50 @@
   {
    "name": "index-first-with-c1-control",
    "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"a\u0085\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"b\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+  },
+  {
+   "name": "name-with-soft-hyphen-u00ad",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u00adb\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-mongolian-vowel-separator-u180e",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u180eb\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-line-separator-u2028",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2028b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-paragraph-separator-u2029",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2029b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-function-application-u2061",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2061b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-invisible-times-u2062",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2062b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-invisible-separator-u2063",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2063b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-invisible-plus-u2064",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\u2064b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-interlinear-annotation-anchor-ufff9",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\ufff9b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-interlinear-annotation-separator-ufffa",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\ufffab\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-interlinear-annotation-terminator-ufffb",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\ufffbb\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
   }
  ],
  "decode_valid_build_rejects": [
