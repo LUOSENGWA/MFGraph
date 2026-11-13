@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/go-sql-driver/mysql v1.10.1
+	github.com/klauspost/compress v1.20.4
 	github.com/oapi-codegen/runtime v1.9.0
 	github.com/oklog/ulid/v2 v2.1.2
 	golang.org/x/text v0.44.0
