@@ -10,7 +10,7 @@ MYSQL_TEST_DSN ?= root:mfgraph@tcp(127.0.0.1:3306)/
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build test test-heavy test-mysql generate generate-check openapi-check run vet fmt fmt-check clean \
+.PHONY: all build test test-e2e e2e-compile test-heavy test-mysql generate generate-check openapi-check run vet fmt fmt-check clean \
 	dev-db-up dev-db-down dev-db-reset \
 	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review
 
@@ -25,6 +25,15 @@ build:
 ## test: unit tests (no database, no network)
 test:
 	$(GO) test ./...
+
+## test-e2e: black-box acceptance tests against the real server binary (build tag e2e).
+## Expected to FAIL with 501 not_implemented until the first core slice is implemented.
+test-e2e:
+	$(GO) test -tags e2e -count=1 -v ./test/e2e/...
+
+## e2e-compile: make sure the e2e tests compile (used by CI)
+e2e-compile:
+	$(GO) vet -tags e2e ./test/e2e/...
 
 ## test-heavy: also run the multi-million-entry tree vectors (~10 s)
 test-heavy:
