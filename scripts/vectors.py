@@ -7,8 +7,11 @@ library (hashlib, unicodedata, json). It shares no code with the Go
 implementation, so agreement between the two is a cross-check.
 
 Usage:
-  python3 scripts/vectors.py verify             # check all vector files
-  python3 scripts/vectors.py verify --heavy     # also the multi-million-entry cases
+  python3 scripts/vectors.py verify [--heavy]      # check all vector files
+  python3 scripts/vectors.py generate              # recompute expected values in tree.json
+  python3 scripts/vectors.py review                # regenerate testdata/vectors/REVIEW.md
+  python3 scripts/vectors.py materialize CASE DIR  # write a tree case's files into DIR
+  python3 scripts/vectors.py crosscheck [--heavy]  # Go CLI + shasum on every tree case
 
 Exit code: 0 = all vectors agree, 1 = mismatch.
 """
@@ -220,6 +223,412 @@ def verify_pathx():
     return n
 
 
+# ----------------------------------------------------------------------- tree
+#
+# Written from the format specification, not from the Go code:
+#   * nodes are RFC 8785 (JCS) JSON: keys sorted, no whitespace, strings escape
+#     only '"', '\\' and U+0000-U+001F (\b \t \n \f \r short forms, others
+#     \u00xx lowercase), everything else raw UTF-8; integers in plain decimal;
+#   * "entries" sorted by the UTF-8 bytes of "name";
+#   * a directory is one "dir" node if it has <= 1024 entries and encodes to
+#     <= 1 MiB; otherwise entries are packed greedily into "dir_page" nodes
+#     (a page is closed when one more entry would exceed 1024 entries or
+#     1 MiB), pages are referenced by a "dir_index" node, and while there are
+#     more than 1024 references (or the index would exceed 1 MiB) the
+#     references are packed into "dir_index" nodes by the same greedy rule;
+#   * a reference is {"count","first","hash"}: count = number of directory
+#     entries under it, first = name of its first entry;
+#   * node hash = sha256 of the uncompressed canonical bytes.
+
+MAX_ENTRIES = 1024
+MAX_NODE_BYTES = 1 << 20
+MAX_SAFE_INTEGER = 2 ** 53 - 1
+SHORT_ESCAPES = {0x08: "\\b", 0x09: "\\t", 0x0A: "\\n", 0x0C: "\\f", 0x0D: "\\r"}
+
+
+def jcs_string(s):
+    out = ['"']
+    for ch in s:
+        o = ord(ch)
+        if ch == '"':
+            out.append('\\"')
+        elif ch == "\\":
+            out.append("\\\\")
+        elif o < 0x20:
+            out.append(SHORT_ESCAPES.get(o, "\\u%04x" % o))
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def jcs(obj):
+    """Minimal JCS serializer for the value types used by tree nodes."""
+    if isinstance(obj, dict):
+        # JCS sorts keys by UTF-16 code units; all keys here are ASCII.
+        return "{" + ",".join(jcs_string(k) + ":" + jcs(obj[k]) for k in sorted(obj)) + "}"
+    if isinstance(obj, list):
+        return "[" + ",".join(jcs(x) for x in obj) + "]"
+    if isinstance(obj, bool) or obj is None:
+        raise TypeError("unexpected value in a tree node")
+    if isinstance(obj, int):
+        if obj < 0 or obj > MAX_SAFE_INTEGER:
+            raise ValueError("integer out of range")
+        return str(obj)
+    if isinstance(obj, str):
+        return jcs_string(obj)
+    raise TypeError(type(obj))
+
+
+def canonical(obj):
+    text = jcs(obj)
+    # Second, independent serializer: the stdlib json module produces the same
+    # bytes for this restricted value set.
+    other = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if text != other:
+        raise AssertionError("jcs/json.dumps disagree:\n%s\n%s" % (text, other))
+    return text.encode("utf-8")
+
+
+def entry_obj(e):
+    if e["type"] == "file":
+        return {"hash": e["hash"], "mode": e["mode"], "name": e["name"], "size": e["size"], "type": "file"}
+    return {"hash": e["hash"], "name": e["name"], "type": "dir"}
+
+
+def node_obj(kind, items):
+    if kind == "dir_index":
+        return {"format": 1, "kind": kind, "pages": items}
+    return {"entries": items, "format": 1, "kind": kind}
+
+
+def greedy(sizes, overhead, max_items, max_bytes):
+    """Split item sizes into [start, end) groups by the greedy rule."""
+    groups, start, size = [], 0, overhead
+    for i, n in enumerate(sizes):
+        add = n + (1 if i > start else 0)
+        if i > start and (i - start + 1 > max_items or size + add > max_bytes):
+            groups.append((start, i))
+            start, size, add = i, overhead, n
+        if size + add > max_bytes:
+            raise ValueError("single item exceeds node limit")
+        size += add
+    groups.append((start, len(sizes)))
+    return groups
+
+
+def node_size(overhead, sizes):
+    return overhead + sum(sizes) + max(0, len(sizes) - 1)
+
+
+def layout(entries, store, max_items=MAX_ENTRIES, max_bytes=MAX_NODE_BYTES):
+    """Store the nodes of one directory; return the directory's reference hash."""
+    def put(obj):
+        b = canonical(obj)
+        h = content_hash(b)
+        store[h] = b
+        return h
+
+    objs = [entry_obj(e) for e in entries]
+    sizes = [len(canonical(o)) for o in objs]
+    if len(objs) <= max_items and node_size(len(canonical(node_obj("dir", []))), sizes) <= max_bytes:
+        return put(node_obj("dir", objs))
+    refs = []
+    for a, b in greedy(sizes, len(canonical(node_obj("dir_page", []))), max_items, max_bytes):
+        h = put(node_obj("dir_page", objs[a:b]))
+        refs.append({"count": b - a, "first": entries[a]["name"], "hash": h})
+    index_overhead = len(canonical(node_obj("dir_index", [])))
+    while True:
+        rsizes = [len(canonical(r)) for r in refs]
+        if len(refs) <= max_items and node_size(index_overhead, rsizes) <= max_bytes:
+            return put(node_obj("dir_index", refs))
+        nxt = []
+        for a, b in greedy(rsizes, index_overhead, max_items, max_bytes):
+            h = put(node_obj("dir_index", refs[a:b]))
+            nxt.append({"count": sum(r["count"] for r in refs[a:b]), "first": refs[a]["first"], "hash": h})
+        refs = nxt
+
+
+def utf8key(s):
+    return s.encode("utf-8")
+
+
+def build_tree(files, max_items=MAX_ENTRIES, max_bytes=MAX_NODE_BYTES):
+    """files: list of dicts {path, hash, size, mode}. Returns (root, store).
+    Raises PathError for invalid or conflicting paths."""
+    norm = sorted(((normalize_path(f["path"]), f) for f in files), key=lambda t: utf8key(t[0]))
+    root = {}
+    for path, f in norm:
+        segs = path.split("/")
+        d = root
+        for s in segs[:-1]:
+            if s in d and isinstance(d[s], tuple):
+                raise PathError("file_dir_conflict")
+            d = d.setdefault(s, {})
+        last = segs[-1]
+        if last in d:
+            raise PathError("file_dir_conflict" if isinstance(d[last], dict) else "duplicate")
+        if f["mode"] not in (420, 493) or not (0 <= f["size"] <= MAX_SAFE_INTEGER):
+            raise ValueError("invalid file entry")
+        d[last] = ("file", f["hash"], f["size"], f["mode"])  # files are tuples, dirs are dicts
+
+    def check(d):
+        check_siblings([(name, isinstance(v, dict)) for name, v in d.items()])
+        for v in d.values():
+            if isinstance(v, dict):
+                check(v)
+
+    check(root)
+    store = {}
+
+    def encode(d):
+        entries = []
+        for name in sorted(d, key=utf8key):
+            v = d[name]
+            if isinstance(v, tuple):
+                entries.append({"type": "file", "name": name, "hash": v[1], "size": v[2], "mode": v[3]})
+            else:
+                entries.append({"type": "dir", "name": name, "hash": encode(v)})
+        return layout(entries, store, max_items, max_bytes)
+
+    return encode(root), store
+
+
+# A strict decoder, used to (a) list nodes in walk order and (b) check that the
+# decode_invalid vectors are rejected.
+
+class DecodeError(Exception):
+    pass
+
+
+def _pairs(pairs):
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise DecodeError("duplicate key")
+    return dict(pairs)
+
+
+def _int(v, lo):
+    if not isinstance(v, int) or isinstance(v, bool) or v < lo or v > MAX_SAFE_INTEGER:
+        raise DecodeError("bad integer")
+    return v
+
+
+def _name(v):
+    if not isinstance(v, str):
+        raise DecodeError("name not a string")
+    try:
+        if normalize_segment(v) != v:
+            raise DecodeError("name not NFC")
+    except PathError as e:
+        raise DecodeError("bad name: " + e.kind)
+    return v
+
+
+def decode_node(b):
+    if len(b) > MAX_NODE_BYTES:
+        raise DecodeError("node too large")
+    try:
+        text = b.decode("utf-8", errors="strict")
+        obj = json.loads(text, object_pairs_hook=_pairs, parse_float=lambda s: float("nan"),
+                         parse_constant=lambda s: None)
+    except (UnicodeDecodeError, ValueError) as e:
+        raise DecodeError("not JSON: %s" % e)
+    if not isinstance(obj, dict):
+        raise DecodeError("not an object")
+    kind = obj.get("kind")
+    if obj.get("format") != 1 or isinstance(obj.get("format"), bool):
+        raise DecodeError("bad format")
+    if kind in ("dir", "dir_page"):
+        if set(obj) != {"entries", "format", "kind"} or not isinstance(obj["entries"], list):
+            raise DecodeError("bad keys")
+        ents = obj["entries"]
+        if len(ents) > MAX_ENTRIES or (kind == "dir_page" and not ents):
+            raise DecodeError("bad entry count")
+        for e in ents:
+            if not isinstance(e, dict):
+                raise DecodeError("entry not an object")
+            if e.get("type") == "file":
+                if set(e) != {"hash", "mode", "name", "size", "type"} or e["mode"] not in (420, 493) \
+                        or isinstance(e["mode"], bool):
+                    raise DecodeError("bad file entry")
+                _int(e["size"], 0)
+            elif e.get("type") == "dir":
+                if set(e) != {"hash", "name", "type"}:
+                    raise DecodeError("bad dir entry")
+            else:
+                raise DecodeError("bad entry type")
+            _name(e["name"])
+            if not (isinstance(e["hash"], str) and parse_hash_ok(e["hash"])):
+                raise DecodeError("bad hash")
+        names = [e["name"] for e in ents]
+        if any(utf8key(a) >= utf8key(b) for a, b in zip(names, names[1:])):
+            raise DecodeError("entries not strictly sorted")
+        try:
+            check_siblings([(e["name"], e["type"] == "dir") for e in ents])
+        except PathError as e:
+            raise DecodeError("sibling conflict: " + e.kind)
+    elif kind == "dir_index":
+        if set(obj) != {"format", "kind", "pages"} or not isinstance(obj["pages"], list):
+            raise DecodeError("bad keys")
+        pages = obj["pages"]
+        if not pages or len(pages) > MAX_ENTRIES:
+            raise DecodeError("bad page count")
+        for p in pages:
+            if not isinstance(p, dict) or set(p) != {"count", "first", "hash"}:
+                raise DecodeError("bad page ref")
+            _int(p["count"], 1)
+            _name(p["first"])
+            if not (isinstance(p["hash"], str) and parse_hash_ok(p["hash"])):
+                raise DecodeError("bad hash")
+        firsts = [p["first"] for p in pages]
+        if any(utf8key(a) >= utf8key(b) for a, b in zip(firsts, firsts[1:])):
+            raise DecodeError("pages not strictly sorted")
+    else:
+        raise DecodeError("bad kind")
+    if canonical(obj) != b:
+        raise DecodeError("not canonical")
+    return obj
+
+
+def walk_nodes(store, root):
+    """Yield (dir, kind, hash, bytes) in pre-order: a directory's own nodes
+    (index first, then its pages in order), then its subdirectories by name."""
+    out = []
+
+    def fetch(h):
+        b = store[h]
+        if content_hash(b) != h:
+            raise DecodeError("hash mismatch")
+        return decode_node(b), b
+
+    def expand(path, h, top):
+        obj, b = fetch(h)
+        if top and obj["kind"] == "dir_page":
+            raise DecodeError("directory points to a dir_page")
+        if not top and obj["kind"] == "dir":
+            raise DecodeError("index points to a dir node")
+        out.append((path, obj["kind"], h, b))
+        if obj["kind"] == "dir_index":
+            ents = []
+            for p in obj["pages"]:
+                sub = expand(path, p["hash"], False)
+                if len(sub) != p["count"] or sub[0]["name"] != p["first"]:
+                    raise DecodeError("page ref count/first mismatch")
+                ents += sub
+            return ents
+        return obj["entries"]
+
+    def visit(path, h, is_root):
+        ents = expand(path, h, True)
+        if not ents and not is_root:
+            raise DecodeError("empty non-root directory")
+        for e in ents:
+            if e["type"] == "dir":
+                visit(e["name"] if not path else path + "/" + e["name"], e["hash"], False)
+
+    visit("", root, True)
+    return out
+
+
+def tree_files(case):
+    files = []
+    for f in case.get("files", []):
+        content = f["content"].encode("utf-8")
+        files.append({"path": f["path"], "hash": content_hash(content), "size": len(content),
+                      "mode": f.get("mode", 420)})
+    for g in case.get("generate", []):
+        prefix = g["prefix"] * g.get("prefix_repeat", 1)
+        for i in range(g["start"], g["start"] + g["count"]):
+            name = prefix + str(i).zfill(g["digits"])
+            path = g["dir"] + "/" + name if g.get("dir") else name
+            content = path.encode("utf-8")
+            files.append({"path": path, "hash": content_hash(content), "size": len(content), "mode": 420})
+    return files
+
+
+CANONICAL_INLINE_LIMIT = 4096  # list canonical bytes only for nodes up to this size
+
+
+def expected_tree(case):
+    """Compute the expected section of a tree case."""
+    try:
+        root, store = build_tree(tree_files(case))
+    except PathError as e:
+        return {"error": e.kind}
+    listing = walk_nodes(store, root)
+    nodes = []
+    for path, kind, h, b in listing:
+        n = {"dir": path, "kind": kind, "hash": h, "size": len(b)}
+        if len(b) <= CANONICAL_INLINE_LIMIT:
+            n["canonical"] = b.decode("utf-8")
+        nodes.append(n)
+    exp = {"root": root, "node_count": len(store)}
+    if "list_nodes" in case:
+        # Large cases list only selected positions of the walk order.
+        exp["walk_length"] = len(nodes)
+        nodes = [dict(nodes[i], position=i % len(nodes)) for i in case["list_nodes"]]
+    exp["nodes"] = nodes
+    return exp
+
+
+EXPECTED_KEYS = ("root", "node_count", "walk_length", "nodes", "error")
+
+
+def verify_tree(heavy, update=False):
+    path = os.path.join(VECTORS, "tree.json")
+    v = load("tree.json")
+    n = 0
+    for case in v["cases"]:
+        if case.get("heavy") and not heavy:
+            continue
+        exp = expected_tree(case)
+        if update:
+            for k in EXPECTED_KEYS:
+                case.pop(k, None)
+            case.update(exp)
+        else:
+            for k in EXPECTED_KEYS:
+                check(case.get(k) == exp.get(k), "tree %s: %s differs" % (case["name"], k))
+        n += 1
+    for case in v["decode_invalid"]:
+        try:
+            decode_node(case["bytes"].encode("utf-8"))
+            check(False, "tree decode_invalid %s: accepted" % case["name"])
+        except DecodeError:
+            pass
+        n += 1
+    if update:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(dump_vectors(v))
+        print("updated", os.path.relpath(path, ROOT))
+    return n
+
+
+def needs_escape(ch):
+    cat = unicodedata.category(ch)
+    invisible = cat[0] in "MC" or cat in ("Zl", "Zp") or (cat == "Zs" and ch != " ")
+    lookalike = unicodedata.normalize("NFKC", ch) != ch or 0x1100 <= ord(ch) <= 0x11FF
+    return (invisible or lookalike) and ord(ch) >= 0x80
+
+
+def json_escape_char(ch):
+    o = ord(ch)
+    if o <= 0xFFFF:
+        return "\\u%04x" % o
+    o -= 0x10000
+    return "\\u%04x\\u%04x" % (0xD800 + (o >> 10), 0xDC00 + (o & 0x3FF))
+
+
+def dump_vectors(v):
+    """Pretty-print a vector file. Invisible and look-alike non-ASCII
+    characters (combining marks, compatibility characters, ...) are written
+    as \\u escapes so that NFC/NFD inputs stay readable; the decoded values
+    are unchanged."""
+    text = json.dumps(v, ensure_ascii=False, indent=1)
+    return "".join(json_escape_char(c) if needs_escape(c) else c for c in text) + "\n"
+
+
 # --------------------------------------------------------------------- review
 
 def show(s):
@@ -316,6 +725,115 @@ def review_pathx(lines):
     lines.append("")
 
 
+def review_tree(lines):
+    v = load("tree.json")
+    lines += ["## 3. tree (format 1)", "",
+              "Rules checked by these vectors:", "",
+              "* node = RFC 8785 (JCS) JSON, keys sorted, no whitespace; strings escape only `\"`, `\\` and "
+              "U+0000–U+001F; everything else is raw UTF-8; node hash = SHA-256 of the uncompressed bytes;",
+              "* `entries` sorted by UTF-8 bytes of `name`; file entry `{hash,mode,name,size,type}`, "
+              "directory entry `{hash,name,type}`; mode is 420 or 493; no mtime;",
+              "* a directory is one `dir` node when it has ≤ 1024 entries and encodes to ≤ 1 MiB; otherwise "
+              "greedy `dir_page` nodes + `dir_index` (levels added while > 1024 references); a reference is "
+              "`{count,first,hash}` where count = number of directory entries below it;",
+              "* only the root may be empty; directories are implicit.", "",
+              "### 3.1 Cases", "",
+              "| case | input | expected |", "|---|---|---|"]
+    for c in v["cases"]:
+        parts = []
+        if c.get("files"):
+            parts.append("%d file(s)" % len(c["files"]))
+        for g in c.get("generate", []):
+            pre = g["prefix"] * g.get("prefix_repeat", 1)
+            pre_s = show(g["prefix"]) + ("×%d" % g["prefix_repeat"] if g.get("prefix_repeat", 1) != 1 else "")
+            parts.append("generated %s%s + %d-digit index, %d…%d" % (
+                (show(g["dir"]) + "/") if g.get("dir") else "", pre_s, g["digits"], g["start"], g["start"] + g["count"] - 1))
+        if "error" in c:
+            exp = "✗ `%s`" % c["error"]
+        else:
+            exp = "root `%s…`, %d node(s)" % (c["root"][:19], c["node_count"])
+            if c.get("heavy"):
+                exp += " (heavy, opt-in)"
+        lines.append("| %s | %s | %s |" % (c["name"], "; ".join(parts) or "no files", exp))
+    lines += ["", "### 3.2 Small cases in full", "",
+              "Inputs and every node (directory, kind, hash, canonical bytes exactly as hashed)."
+              " File hashes are SHA-256 of the given content.", ""]
+    for c in v["cases"]:
+        if "error" in c or c.get("generate"):
+            continue
+        lines.append("#### `%s`" % c["name"])
+        lines.append("")
+        if c["files"]:
+            lines += ["| path | content | mode |", "|---|---|---:|"]
+            for f in c["files"]:
+                lines.append("| %s | %s | %d |" % (show(f["path"]), show(f["content"]), f.get("mode", 420)))
+        else:
+            lines.append("(no files)")
+        lines += ["", "root: `%s`" % c["root"], ""]
+        for n in c["nodes"]:
+            lines.append("* dir %s · `%s` · `%s` · %d bytes" % (show(n["dir"]) if n["dir"] else "`.` (root)",
+                                                               n["kind"], n["hash"], n["size"]))
+            lines += ["", "  ```json", "  " + n["canonical"], "  ```", ""]
+    lines += ["### 3.3 Large cases (root and selected nodes)", ""]
+    for c in v["cases"]:
+        if "error" in c or not c.get("generate"):
+            continue
+        lines += ["#### `%s`" % c["name"], "",
+                  "root `%s`; %d distinct node(s)%s." % (c["root"], c["node_count"],
+                   "; walk visits %d" % c["walk_length"] if "walk_length" in c else ""), ""]
+        lines += ["| position | dir | kind | bytes | hash |", "|---:|---|---|---:|---|"]
+        for i, n in enumerate(c["nodes"]):
+            lines.append("| %d | %s | %s | %d | `%s` |" % (n.get("position", i), show(n["dir"]) if n["dir"] else ".",
+                                                         n["kind"], n["size"], n["hash"]))
+        small = [n for n in c["nodes"] if "canonical" in n]
+        for n in small:
+            lines += ["", "```json", n["canonical"], "```"]
+        lines.append("")
+    lines += ["### 3.4 Strict decoding: inputs that must be rejected", "",
+              ", ".join("`%s`" % c["name"] for c in v["decode_invalid"]) + ".", ""]
+
+
+REVIEW_COVERAGE = """## 4. Coverage checklist
+
+| requirement | where |
+|---|---|
+| contenthash: empty, `hello`, `hello\\n`, non-ASCII, 1 MiB deterministic pseudo-random | `contenthash.json` (+ NFC/NFD content, bytes 00–ff) |
+| contenthash: strict parsing | `contenthash.json` → `parse` |
+| path: NFC and NFD `café`; `Plan.dwg` vs `plan.dwg`; `ß` vs `SS` | `pathx.json` → `cafe-*`, `case-conflict`, `sharp-s-vs-ss` |
+| path: `..`, `a//b`, trailing `/`, absolute, backslash, control characters | `pathx.json` → `dot*`, `double-slash`, `trailing-slash`, `absolute`, `backslash*`, `nul`/`newline`/`tab`/`del` |
+| path: 256-byte segment, over-long path, emoji, Chinese | `segment-256-bytes`, `path-4097-bytes` (+ 255/4096 boundaries), `emoji`, `chinese` |
+| tree: empty tree, single file, nested, Chinese/emoji/`<&>`/`"` names, executable | `empty-root`, `single-file`, `nested`, `deep-path`, `special-names`, `executable-mode` |
+| tree: exactly 1024 entries (no split), 1025 entries (2 pages) | `dir-1024-entries-one-node`, `dir-1025-entries-two-pages`, `subdir-3000-entries-three-pages` |
+| tree: page split caused by the 1 MiB limit | **not constructible with valid names** — see note 1; covered by `TestSplitByBytesGreedy` with reduced limits and by `longest-names-1024-entries-still-one-node` |
+| tree: conflicting input rejected | `reject-*` |
+| tree: multi-level index | `two-level-index-1048577-entries` (heavy) and `TestSplitByCountMultiLevel` |
+| tree: input order does not change the root; a change rewrites only the path to the root | `internal/tree/property_test.go` |
+| tree: Build → Walk restores the input | every case in `TestTreeVectors` |
+| tree: strict decoding | `decode_invalid`, `FuzzDecode` |
+
+## 5. Notes for the reviewer
+
+1. **The 1 MiB rule cannot trigger with valid paths.** A file entry is at most 651 bytes
+   (255-byte name made of `"` escapes to 510 bytes, plus a 16-digit size), so 1024 entries
+   encode to at most ~667 KB, and 1024 index references to at most ~644 KB. The splitting
+   therefore always happens at the 1024-entry limit. The byte rule stays in the format as a
+   guard; `longest-names-1024-entries-still-one-node` shows the largest single node
+   (649,253 bytes) that real names produce.
+2. **`count` in a `dir_index` reference** is the number of directory entries below the
+   referenced node (for a lower-level index: the sum), and `first` is the first entry name
+   below it. The specification did not say which count to use for nested indexes; this
+   choice keeps one meaning at every level.
+3. **Integers are limited to 0…2^53−1** so that any RFC 8785 implementation reproduces the
+   bytes (JCS serializes numbers as IEEE-754 doubles).
+4. **Unicode version.** NFC and case folding depend on the Unicode tables. The Go code uses
+   Unicode 17.0.0 (`golang.org/x/text`), the Python check Unicode %(pyuni)s. Only characters with
+   identical behavior in both are used here.
+5. **Not rejected on purpose** (the path rules are frozen and nothing was added):
+   C1 controls such as U+0085, bidi and zero-width characters, fullwidth solidus U+FF0F,
+   names that are reserved on some platforms (`CON`, trailing dots or spaces).
+"""
+
+
 REVIEW_HEADER = """# Test vector review summary
 
 > **Status: pending human review.** Every vector file in this directory carries
@@ -332,29 +850,93 @@ REVIEW_HEADER = """# Test vector review summary
 * **pathx** — expected results are written by hand from the rules, and checked by
   an independent Python implementation (`scripts/vectors.py`, stdlib
   `unicodedata`) as well as by the Go tests.
-* Unicode data: the Go implementation uses `golang.org/x/text` (Unicode 17.0.0);
-  the Python check ran with Python's `unicodedata` (Unicode %(pyuni)s). The vectors
-  only use characters whose NFC and case-fold behavior is the same in both versions.
+* **tree** — inputs are written by hand (`tree.json`); the expected roots, node
+  lists and canonical bytes are computed by the independent Python
+  implementation in `scripts/vectors.py` (written from the specification, two
+  serializers — a hand-written JCS writer and `json.dumps` — must agree). The Go
+  implementation is then checked against them, and `crosscheck` runs the Go CLI on
+  materialized inputs and verifies every node file with `shasum -a 256`.
 
-Re-run all checks:
+Check it yourself (three commands; needs Go, Python 3 and `shasum`):
 
 ```bash
-python3 scripts/vectors.py verify
-go test ./internal/contenthash ./internal/pathx
-printf 'hello\\n' | shasum -a 256   # 5891b5b5…6be03, see table below
+d=$(mktemp -d) && python3 scripts/vectors.py materialize nested "$d/in"
+go run ./cmd/mfgraph debug tree "$d/in" --out "$d/nodes"   # last line: root sha256:99f1d781…; compare with tree.json
+(cd "$d/nodes" && for f in *.json; do echo "${f%.json}  $f"; done | shasum -a 256 -c -)
+```
+
+Re-run everything:
+
+```bash
+python3 scripts/vectors.py verify [--heavy]   # Python reference vs. vector files
+python3 scripts/vectors.py crosscheck         # Go CLI + shasum on every small/large case
+go test ./internal/contenthash ./internal/pathx ./internal/tree   # MFGRAPH_HEAVY_VECTORS=1 for the heavy case
 ```
 
 """
 
 
 def write_review():
-    lines = [REVIEW_HEADER % {"pyuni": unicodedata.unidata_version}]
+    lines = [REVIEW_HEADER]
     review_contenthash(lines)
     review_pathx(lines)
+    review_tree(lines)
+    lines.append(REVIEW_COVERAGE % {"pyuni": unicodedata.unidata_version})
     path = os.path.join(VECTORS, "REVIEW.md")
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines).rstrip("\n") + "\n")
     print("wrote", os.path.relpath(path, ROOT))
+
+
+# ------------------------------------------------------- materialize / crosscheck
+
+def materialize(case, dest):
+    """Write the files of a tree case below dest (content and mode)."""
+    files = tree_files(case)
+    contents = {f["path"]: f["content"].encode("utf-8") for f in case.get("files", [])}
+    for f in files:
+        target = os.path.join(dest, *f["path"].split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as fh:
+            fh.write(contents.get(f["path"], f["path"].encode("utf-8")))
+        os.chmod(target, 0o755 if f["mode"] == 493 else 0o644)
+    os.makedirs(dest, exist_ok=True)
+
+
+def find_case(name):
+    for c in load("tree.json")["cases"]:
+        if c["name"] == name:
+            return c
+    raise SystemExit("unknown case %r" % name)
+
+
+def crosscheck(heavy):
+    import subprocess
+    import tempfile
+    exe = os.path.join(tempfile.mkdtemp(prefix="mfgraph-xc-"), "mfgraph")
+    subprocess.run(["go", "build", "-o", exe, "./cmd/mfgraph"], cwd=ROOT, check=True)
+    checked = 0
+    for c in load("tree.json")["cases"]:
+        if "error" in c or (c.get("heavy") and not heavy):
+            continue
+        work = tempfile.mkdtemp(prefix="mfgraph-xc-")
+        src, out = os.path.join(work, "in"), os.path.join(work, "nodes")
+        materialize(c, src)
+        res = subprocess.run([exe, "debug", "tree", src, "--out", out], capture_output=True, check=True)
+        root = res.stdout.decode("utf-8").strip().splitlines()[-1].split()[-1]
+        check(root == c["root"], "crosscheck %s: CLI root %s != %s" % (c["name"], root, c["root"]))
+        names = sorted(os.listdir(out))
+        check(len(names) == c["node_count"], "crosscheck %s: %d node files, want %d" % (c["name"], len(names), c["node_count"]))
+        # Independent hash tool over every written node file.
+        for i in range(0, len(names), 256):
+            batch = names[i:i + 256]
+            sums = subprocess.run(["shasum", "-a", "256"] + batch, cwd=out, capture_output=True, check=True)
+            for line in sums.stdout.decode().splitlines():
+                digest, fname = line.split(None, 1)
+                check(fname.strip() == digest + ".json", "crosscheck %s: %s does not hash to its name" % (c["name"], fname))
+        print("crosscheck %-45s root ok, %d node files ok (shasum)" % (c["name"], len(names)))
+        checked += 1
+    return checked
 
 
 # ----------------------------------------------------------------------- main
@@ -365,8 +947,27 @@ def main():
     vp = sub.add_parser("verify", help="check every vector file")
     vp.add_argument("--heavy", action="store_true", help="include heavy cases")
     sub.add_parser("review", help="regenerate testdata/vectors/REVIEW.md")
+    sub.add_parser("generate", help="(re)compute the expected values in tree.json from its inputs")
+    mp = sub.add_parser("materialize", help="write the files of a tree case into a directory")
+    mp.add_argument("case")
+    mp.add_argument("dir")
+    cp = sub.add_parser("crosscheck", help="run the Go CLI on every tree case and check node files with shasum")
+    cp.add_argument("--heavy", action="store_true")
     args = ap.parse_args()
 
+    if args.cmd == "materialize":
+        materialize(find_case(args.case), args.dir)
+        return 0
+    if args.cmd == "crosscheck":
+        n = crosscheck(args.heavy)
+        for msg in FAILURES:
+            print("FAIL:", msg)
+        print("crosschecked %d case(s); %s" % (n, "%d failure(s)" % len(FAILURES) if FAILURES else "all agree"))
+        return 1 if FAILURES else 0
+
+    if args.cmd == "generate":
+        verify_tree(heavy=True, update=True)
+        return 0
     if args.cmd == "review":
         write_review()
         return 0
@@ -374,6 +975,7 @@ def main():
         counts = {
             "contenthash": verify_contenthash(),
             "pathx": verify_pathx(),
+            "tree": verify_tree(args.heavy),
         }
         for msg in FAILURES:
             print("FAIL:", msg)

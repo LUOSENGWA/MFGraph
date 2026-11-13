@@ -8,8 +8,8 @@ BIN     ?= bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build test vet fmt fmt-check clean dev-db-up dev-db-down dev-db-reset \
-	vectors-verify vectors-review
+.PHONY: all build test test-heavy vet fmt fmt-check clean dev-db-up dev-db-down dev-db-reset \
+	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review
 
 all: build test
 
@@ -22,6 +22,10 @@ build:
 ## test: unit tests (no database, no network)
 test:
 	$(GO) test ./...
+
+## test-heavy: also run the multi-million-entry tree vectors (~10 s)
+test-heavy:
+	MFGRAPH_HEAVY_VECTORS=1 $(GO) test -count=1 ./internal/tree/...
 
 ## vet: go vet
 vet:
@@ -37,6 +41,17 @@ fmt-check:
 ## vectors-verify: independent Python cross-check of testdata/vectors
 vectors-verify:
 	python3 scripts/vectors.py verify
+
+vectors-verify-heavy:
+	python3 scripts/vectors.py verify --heavy
+
+## vectors-crosscheck: run the Go CLI on every tree case and check node files with shasum
+vectors-crosscheck:
+	python3 scripts/vectors.py crosscheck
+
+## vectors-generate: recompute expected values in testdata/vectors/tree.json (Python reference)
+vectors-generate:
+	python3 scripts/vectors.py generate
 
 ## vectors-review: regenerate testdata/vectors/REVIEW.md
 vectors-review:

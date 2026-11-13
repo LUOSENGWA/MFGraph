@@ -1,0 +1,938 @@
+{
+ "schema": "mfgraph-test-vectors/tree/1",
+ "review_status": "pending-human-review",
+ "description": "Manifest tree vectors (format 1). Each case builds a tree from a list of files and gives the expected root hash, the number of distinct nodes and the nodes in walk order (a directory's own nodes - index first, then its pages - followed by its subdirectories in name order). canonical is the exact node text (UTF-8, no trailing newline); it is listed for nodes up to 4096 bytes, larger nodes give size and hash only. Cases with error must be rejected with that path error kind. decode_invalid lists node byte strings that a strict decoder must reject.",
+ "inputs": "files: {path, content (UTF-8 text), mode (default 420)}; the file's hash is sha256 of content and its size is the byte length. generate: for i in [start, start+count): path = dir + '/' + prefix*prefix_repeat + zero-padded decimal i (digits wide), or without 'dir/' when dir is empty; content = UTF-8 bytes of the path; mode 420.",
+ "limits": {
+  "max_entries_per_node": 1024,
+  "max_node_bytes": 1048576
+ },
+ "cases": [
+  {
+   "name": "empty-root",
+   "files": [],
+   "root": "sha256:e515bab4a24abb9c4929143865d247855e153af697b270afb65a0dcb1b62d9c4",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:e515bab4a24abb9c4929143865d247855e153af697b270afb65a0dcb1b62d9c4",
+     "size": 38,
+     "canonical": "{\"entries\":[],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "single-file",
+   "files": [
+    {
+     "path": "a.txt",
+     "content": "hello\n"
+    }
+   ],
+   "root": "sha256:c054d695dcf341ac6d5570a0a7e0c1cbcf14379854ea857a1643c9bddf34695a",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:c054d695dcf341ac6d5570a0a7e0c1cbcf14379854ea857a1643c9bddf34695a",
+     "size": 169,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\",\"mode\":420,\"name\":\"a.txt\",\"size\":6,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "nested",
+   "files": [
+    {
+     "path": "README.md",
+     "content": "# MFGraph\n"
+    },
+    {
+     "path": "docs/guide.md",
+     "content": "guide\n"
+    },
+    {
+     "path": "docs/specs/v1/format.md",
+     "content": "format v1\n"
+    },
+    {
+     "path": "src/main.go",
+     "content": "package main\n"
+    },
+    {
+     "path": "src/util/strings.go",
+     "content": "package util\n"
+    }
+   ],
+   "root": "sha256:99f1d7819d267b6cb81d3127a2faeb6c7516512eb16f702ec36c87b594e5fbab",
+   "node_count": 6,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:99f1d7819d267b6cb81d3127a2faeb6c7516512eb16f702ec36c87b594e5fbab",
+     "size": 393,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:4539bb271aeb71c85c67fc70418cea60677ce8192b28d83b92a690829957c2bd\",\"mode\":420,\"name\":\"README.md\",\"size\":10,\"type\":\"file\"},{\"hash\":\"sha256:800cef8eb274df88d34fde60f0a8b0a50a91c97fc6bac7a7c987bfc7c4547787\",\"name\":\"docs\",\"type\":\"dir\"},{\"hash\":\"sha256:43a5c4ffb740c009898a18d06f37fc43ed4c10423d627a310b1f0d4b419ab5aa\",\"name\":\"src\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "docs",
+     "kind": "dir",
+     "hash": "sha256:800cef8eb274df88d34fde60f0a8b0a50a91c97fc6bac7a7c987bfc7c4547787",
+     "size": 283,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:90c390ec1de806bf945885cd0af51e90c3cd8cda0d0ff676051a56c20848c90f\",\"mode\":420,\"name\":\"guide.md\",\"size\":6,\"type\":\"file\"},{\"hash\":\"sha256:0beac2a35add712ab5214819b92547d7020fc503668519acf44f6af7f44b9c2f\",\"name\":\"specs\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "docs/specs",
+     "kind": "dir",
+     "hash": "sha256:0beac2a35add712ab5214819b92547d7020fc503668519acf44f6af7f44b9c2f",
+     "size": 145,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:036d17fd2332cd0ffd509a204eeaaad4c01a787d0c0b711b40ad31f66d02e5e5\",\"name\":\"v1\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "docs/specs/v1",
+     "kind": "dir",
+     "hash": "sha256:036d17fd2332cd0ffd509a204eeaaad4c01a787d0c0b711b40ad31f66d02e5e5",
+     "size": 174,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:48291bae7455703d6b8d40a776501782fc86f842fb68e78d158ee8e05f00a6a1\",\"mode\":420,\"name\":\"format.md\",\"size\":10,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "src",
+     "kind": "dir",
+     "hash": "sha256:43a5c4ffb740c009898a18d06f37fc43ed4c10423d627a310b1f0d4b419ab5aa",
+     "size": 282,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:df1d036cbbf3df46e2045071e082245ece204c7f53ecf0a4e022bff9bb228f47\",\"mode\":420,\"name\":\"main.go\",\"size\":13,\"type\":\"file\"},{\"hash\":\"sha256:db831b8ad6a57f309fa72a0be3221b3afad2f69b49f1c06c6df73c3bdb6f558f\",\"name\":\"util\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "src/util",
+     "kind": "dir",
+     "hash": "sha256:db831b8ad6a57f309fa72a0be3221b3afad2f69b49f1c06c6df73c3bdb6f558f",
+     "size": 175,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:d098f4ba6f0a23b2ed2a30db7808873971b9d254c8e13c0812cd3b421c1e63f2\",\"mode\":420,\"name\":\"strings.go\",\"size\":13,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "special-names",
+   "files": [
+    {
+     "path": "文档/设计说明.md",
+     "content": "设计\n"
+    },
+    {
+     "path": "🚀.txt",
+     "content": "launch\n"
+    },
+    {
+     "path": "<&>.txt",
+     "content": "html\n"
+    },
+    {
+     "path": "say \"hi\".txt",
+     "content": "quote\n"
+    },
+    {
+     "path": "café/menu.txt",
+     "content": "menu\n"
+    }
+   ],
+   "root": "sha256:e7074b2d9f235a36c824211bcd73f85f1444ef9ed85a1ffc27aad136b6bad791",
+   "node_count": 3,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:e7074b2d9f235a36c824211bcd73f85f1444ef9ed85a1ffc27aad136b6bad791",
+     "size": 670,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:95d53ad4efbcc898697e40693e04357cb6b8e54198270fc9d2b1b51227d23b7b\",\"mode\":420,\"name\":\"<&>.txt\",\"size\":5,\"type\":\"file\"},{\"hash\":\"sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e\",\"name\":\"café\",\"type\":\"dir\"},{\"hash\":\"sha256:88bdeff7ba192fa68d48df993f971cd5255263240018cf9e7021e116ba01ee64\",\"mode\":420,\"name\":\"say \\\"hi\\\".txt\",\"size\":6,\"type\":\"file\"},{\"hash\":\"sha256:9b75147957cef4db2aa03a564080478ef8aa9994251b1f37329f8a96bf37e12e\",\"name\":\"文档\",\"type\":\"dir\"},{\"hash\":\"sha256:46ef88e17c41da5cc0cd057b46d6167f549c0762c12fcc6729537bee72a7733a\",\"mode\":420,\"name\":\"🚀.txt\",\"size\":7,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "café",
+     "kind": "dir",
+     "hash": "sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e",
+     "size": 172,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:7e8a051c48ddd8592694f7a489a1a406846a386cb67010ed090806ae301ab8df\",\"mode\":420,\"name\":\"menu.txt\",\"size\":5,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "文档",
+     "kind": "dir",
+     "hash": "sha256:9b75147957cef4db2aa03a564080478ef8aa9994251b1f37329f8a96bf37e12e",
+     "size": 179,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:7645010f785aedc55b254ba5f8b1535b18f5699ae337c139a4a7cb26c3250174\",\"mode\":420,\"name\":\"设计说明.md\",\"size\":7,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "executable-mode",
+   "files": [
+    {
+     "path": "bin/tool",
+     "content": "#!/bin/sh\necho hi\n",
+     "mode": 493
+    },
+    {
+     "path": "bin/README",
+     "content": "tools\n",
+     "mode": 420
+    }
+   ],
+   "root": "sha256:9511823d2629f7876ace6f4e5acc0cf3a449794a58bdb434a521af95937a54ed",
+   "node_count": 2,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:9511823d2629f7876ace6f4e5acc0cf3a449794a58bdb434a521af95937a54ed",
+     "size": 146,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:978629daf903cba280e8b64c24bafa01f33f0aca2243a8dd43f069aad613c6aa\",\"name\":\"bin\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "bin",
+     "kind": "dir",
+     "hash": "sha256:978629daf903cba280e8b64c24bafa01f33f0aca2243a8dd43f069aad613c6aa",
+     "size": 302,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:21be1903630f069893d2d0bed2ab7945c3fd838da02dd7516f1f4f89819af857\",\"mode\":420,\"name\":\"README\",\"size\":6,\"type\":\"file\"},{\"hash\":\"sha256:299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba\",\"mode\":493,\"name\":\"tool\",\"size\":18,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "utf8-byte-order-not-utf16",
+   "files": [
+    {
+     "path": "𝄞",
+     "content": "𝄞\n"
+    },
+    {
+     "path": "\uff61",
+     "content": "\uff61\n"
+    },
+    {
+     "path": "é",
+     "content": "é\n"
+    },
+    {
+     "path": "~tilde",
+     "content": "~tilde\n"
+    },
+    {
+     "path": "banana",
+     "content": "banana\n"
+    },
+    {
+     "path": "Zeta",
+     "content": "Zeta\n"
+    },
+    {
+     "path": "Apple",
+     "content": "Apple\n"
+    },
+    {
+     "path": "0",
+     "content": "0\n"
+    }
+   ],
+   "root": "sha256:5282381cdc942bd029ac3f1a639eb6ca11dfb6940d5336ebfcd19037b106447a",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:5282381cdc942bd029ac3f1a639eb6ca11dfb6940d5336ebfcd19037b106447a",
+     "size": 1084,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa\",\"mode\":420,\"name\":\"0\",\"size\":2,\"type\":\"file\"},{\"hash\":\"sha256:07a9b7b36597df7db7d84b0d7020517da1dc87cf381ed4bc62f0dc331faffcd0\",\"mode\":420,\"name\":\"Apple\",\"size\":6,\"type\":\"file\"},{\"hash\":\"sha256:f359ee0750695221acac365545d61a0977ff538f0b25d8db6dc762ce59509c36\",\"mode\":420,\"name\":\"Zeta\",\"size\":5,\"type\":\"file\"},{\"hash\":\"sha256:5a81483d96b0bc15ad19af7f5a662e14b275729fbc05579b18513e7f550016b1\",\"mode\":420,\"name\":\"banana\",\"size\":7,\"type\":\"file\"},{\"hash\":\"sha256:fbeb6ab43380abefb4387f6674697e6cee6a55a386bbb8014a02e6c1a53461e9\",\"mode\":420,\"name\":\"~tilde\",\"size\":7,\"type\":\"file\"},{\"hash\":\"sha256:edd3a863872a04239eb29ad4bc12fc892b3d4ae57cc7e786a3697816f8e141c2\",\"mode\":420,\"name\":\"é\",\"size\":3,\"type\":\"file\"},{\"hash\":\"sha256:a44cede6bdbbab155e6dbcc010c4529ebdf97936e8ad6ec8d2e484b4a64a3c16\",\"mode\":420,\"name\":\"\uff61\",\"size\":4,\"type\":\"file\"},{\"hash\":\"sha256:8b6f07cb8272054393ef8ffe1cabd9549a108cb0841ecc2659c5cc9aba5acbb7\",\"mode\":420,\"name\":\"𝄞\",\"size\":5,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "nfc-input",
+   "files": [
+    {
+     "path": "café/menu.txt",
+     "content": "menu\n"
+    }
+   ],
+   "root": "sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0",
+   "node_count": 2,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0",
+     "size": 148,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e\",\"name\":\"café\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "café",
+     "kind": "dir",
+     "hash": "sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e",
+     "size": 172,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:7e8a051c48ddd8592694f7a489a1a406846a386cb67010ed090806ae301ab8df\",\"mode\":420,\"name\":\"menu.txt\",\"size\":5,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "nfd-input-gives-same-root-as-nfc",
+   "files": [
+    {
+     "path": "cafe\u0301/menu.txt",
+     "content": "menu\n"
+    }
+   ],
+   "root": "sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0",
+   "node_count": 2,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0",
+     "size": 148,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e\",\"name\":\"café\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "café",
+     "kind": "dir",
+     "hash": "sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e",
+     "size": 172,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:7e8a051c48ddd8592694f7a489a1a406846a386cb67010ed090806ae301ab8df\",\"mode\":420,\"name\":\"menu.txt\",\"size\":5,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "empty-file",
+   "files": [
+    {
+     "path": "empty",
+     "content": ""
+    }
+   ],
+   "root": "sha256:ace1320d99e2686d8a56ed56316c898e7e2182517c2b4f0b1f8252b0e57647cd",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:ace1320d99e2686d8a56ed56316c898e7e2182517c2b4f0b1f8252b0e57647cd",
+     "size": 169,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"empty\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "deep-path",
+   "files": [
+    {
+     "path": "a/b/c/d/e/f/g/h/i/j.txt",
+     "content": "deep\n"
+    }
+   ],
+   "root": "sha256:8a797cbf3e0abc3e895c72dd9bfc0be5bee4d49ad5b8c203e43ae90df0a14683",
+   "node_count": 10,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:8a797cbf3e0abc3e895c72dd9bfc0be5bee4d49ad5b8c203e43ae90df0a14683",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:891efa03f6fde974c5fa71cf795633f8451de824a6e3cee1c8e9cf0367685675\",\"name\":\"a\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a",
+     "kind": "dir",
+     "hash": "sha256:891efa03f6fde974c5fa71cf795633f8451de824a6e3cee1c8e9cf0367685675",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:bd715659812558f54509cc729cb09b21d2807750ade31e5cb953153855dd83a7\",\"name\":\"b\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b",
+     "kind": "dir",
+     "hash": "sha256:bd715659812558f54509cc729cb09b21d2807750ade31e5cb953153855dd83a7",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:d5da1de2caa0c77f1be716c68ea3ad361de4cc7cae113c1fd9628b8a09e11420\",\"name\":\"c\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b/c",
+     "kind": "dir",
+     "hash": "sha256:d5da1de2caa0c77f1be716c68ea3ad361de4cc7cae113c1fd9628b8a09e11420",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:2278ecb87bc57bfb8d91b6f305b59512cb978780739d01a200d57969f6d02bf4\",\"name\":\"d\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b/c/d",
+     "kind": "dir",
+     "hash": "sha256:2278ecb87bc57bfb8d91b6f305b59512cb978780739d01a200d57969f6d02bf4",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:3b5ed1c676efd49079e7d55cc4633fdbcb81e7ca33596721b1403953434c1dbc\",\"name\":\"e\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b/c/d/e",
+     "kind": "dir",
+     "hash": "sha256:3b5ed1c676efd49079e7d55cc4633fdbcb81e7ca33596721b1403953434c1dbc",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:53f61440936dd099ddba4bd415a1ed2d447c02dc10aca464a733f1a1abc4eb5b\",\"name\":\"f\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b/c/d/e/f",
+     "kind": "dir",
+     "hash": "sha256:53f61440936dd099ddba4bd415a1ed2d447c02dc10aca464a733f1a1abc4eb5b",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:e5523c78f76270c9c313a45c4e4a7249d2ff698475ae8cea3ade1b2572490539\",\"name\":\"g\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b/c/d/e/f/g",
+     "kind": "dir",
+     "hash": "sha256:e5523c78f76270c9c313a45c4e4a7249d2ff698475ae8cea3ade1b2572490539",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:01cfbeeab32854fb9cc5e71d2e7c909f2e407d0372e1182b73527f1af65da680\",\"name\":\"h\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b/c/d/e/f/g/h",
+     "kind": "dir",
+     "hash": "sha256:01cfbeeab32854fb9cc5e71d2e7c909f2e407d0372e1182b73527f1af65da680",
+     "size": 144,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:bc0388c49002c59c0988a9793bbb92809153bd839f671ed81de59339ed352356\",\"name\":\"i\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "a/b/c/d/e/f/g/h/i",
+     "kind": "dir",
+     "hash": "sha256:bc0388c49002c59c0988a9793bbb92809153bd839f671ed81de59339ed352356",
+     "size": 169,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:64896f89fd11190013b70103e603a1c5826e56b7fb7d2197ab279b0690043599\",\"mode\":420,\"name\":\"j.txt\",\"size\":5,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "shared-subtree",
+   "files": [
+    {
+     "path": "x/data.txt",
+     "content": "same\n"
+    },
+    {
+     "path": "y/data.txt",
+     "content": "same\n"
+    }
+   ],
+   "root": "sha256:b73fb86088a26afe77c51cebe5350c44a161dac0f869d535c3854ac3775a79d9",
+   "node_count": 2,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:b73fb86088a26afe77c51cebe5350c44a161dac0f869d535c3854ac3775a79d9",
+     "size": 251,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d\",\"name\":\"x\",\"type\":\"dir\"},{\"hash\":\"sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d\",\"name\":\"y\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "x",
+     "kind": "dir",
+     "hash": "sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d",
+     "size": 172,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:a6328afc76e9db71da297ebff4b0d3e7a7eb3b01d917c05a6573fef121b6ecb6\",\"mode\":420,\"name\":\"data.txt\",\"size\":5,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "y",
+     "kind": "dir",
+     "hash": "sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d",
+     "size": 172,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:a6328afc76e9db71da297ebff4b0d3e7a7eb3b01d917c05a6573fef121b6ecb6\",\"mode\":420,\"name\":\"data.txt\",\"size\":5,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
+   "name": "dir-1024-entries-one-node",
+   "generate": [
+    {
+     "dir": "",
+     "prefix": "f",
+     "prefix_repeat": 1,
+     "digits": 5,
+     "start": 0,
+     "count": 1024
+    }
+   ],
+   "root": "sha256:84d212b37a4dfce347b41046884acd9abc90cbbab0ca1d07c87f70c57affa3ac",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:84d212b37a4dfce347b41046884acd9abc90cbbab0ca1d07c87f70c57affa3ac",
+     "size": 136229
+    }
+   ]
+  },
+  {
+   "name": "dir-1025-entries-two-pages",
+   "generate": [
+    {
+     "dir": "",
+     "prefix": "f",
+     "prefix_repeat": 1,
+     "digits": 5,
+     "start": 0,
+     "count": 1025
+    }
+   ],
+   "root": "sha256:bc1eec93a00201aa7ced9f427443cf983424ae6afba5aeedf723e8122bd420f8",
+   "node_count": 3,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir_index",
+     "hash": "sha256:bc1eec93a00201aa7ced9f427443cf983424ae6afba5aeedf723e8122bd420f8",
+     "size": 264,
+     "canonical": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1024,\"first\":\"f00000\",\"hash\":\"sha256:74ae5ba83a2912452fdb8e2c7dcae7c3ab5fdd69825d43922aa61b28e75f8f98\"},{\"count\":1,\"first\":\"f01024\",\"hash\":\"sha256:c65289d6c3f583e90526cedeb4c29a29ad25fbaab805ffca2e7972ad3d1611a9\"}]}"
+    },
+    {
+     "dir": "",
+     "kind": "dir_page",
+     "hash": "sha256:74ae5ba83a2912452fdb8e2c7dcae7c3ab5fdd69825d43922aa61b28e75f8f98",
+     "size": 136234
+    },
+    {
+     "dir": "",
+     "kind": "dir_page",
+     "hash": "sha256:c65289d6c3f583e90526cedeb4c29a29ad25fbaab805ffca2e7972ad3d1611a9",
+     "size": 175,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:d63535650d8c6931678fe732747c6670e3144c01413a74932f5acf9f7440b1aa\",\"mode\":420,\"name\":\"f01024\",\"size\":6,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir_page\"}"
+    }
+   ]
+  },
+  {
+   "name": "subdir-3000-entries-three-pages",
+   "files": [
+    {
+     "path": "README.md",
+     "content": "big directory below\n"
+    }
+   ],
+   "generate": [
+    {
+     "dir": "big",
+     "prefix": "f",
+     "prefix_repeat": 1,
+     "digits": 5,
+     "start": 0,
+     "count": 3000
+    }
+   ],
+   "root": "sha256:43b5f3318a5b92a69255fdafef8bc4e8a662d37603f4f460ae9f6f3cdf380d46",
+   "node_count": 5,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:43b5f3318a5b92a69255fdafef8bc4e8a662d37603f4f460ae9f6f3cdf380d46",
+     "size": 283,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:01735ed37e95edded4396f7acd4ec0d634cfba2c2dab2d89c78b33a0cb3601a7\",\"mode\":420,\"name\":\"README.md\",\"size\":20,\"type\":\"file\"},{\"hash\":\"sha256:0a3f5a575ad0f0ee7f9e707b0175b734530086adec10041b5ac518f1d79f0802\",\"name\":\"big\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+    },
+    {
+     "dir": "big",
+     "kind": "dir_index",
+     "hash": "sha256:0a3f5a575ad0f0ee7f9e707b0175b734530086adec10041b5ac518f1d79f0802",
+     "size": 379,
+     "canonical": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1024,\"first\":\"f00000\",\"hash\":\"sha256:6e5b26f730d44146edda758c632070909928f71bd5034d414ad66d9131ce4f71\"},{\"count\":1024,\"first\":\"f01024\",\"hash\":\"sha256:4be5e0a30c74fb25c54074d5084f8f7b07889c7a1627698bea7d4c2f6056ceb7\"},{\"count\":952,\"first\":\"f02048\",\"hash\":\"sha256:78f10ff74df11e6c272f3d20bcf9cfef0ab229d40faea5edfa8337767f839777\"}]}"
+    },
+    {
+     "dir": "big",
+     "kind": "dir_page",
+     "hash": "sha256:6e5b26f730d44146edda758c632070909928f71bd5034d414ad66d9131ce4f71",
+     "size": 137258
+    },
+    {
+     "dir": "big",
+     "kind": "dir_page",
+     "hash": "sha256:4be5e0a30c74fb25c54074d5084f8f7b07889c7a1627698bea7d4c2f6056ceb7",
+     "size": 137258
+    },
+    {
+     "dir": "big",
+     "kind": "dir_page",
+     "hash": "sha256:78f10ff74df11e6c272f3d20bcf9cfef0ab229d40faea5edfa8337767f839777",
+     "size": 127610
+    }
+   ]
+  },
+  {
+   "name": "longest-names-1024-entries-still-one-node",
+   "generate": [
+    {
+     "dir": "",
+     "prefix": "\"",
+     "prefix_repeat": 250,
+     "digits": 5,
+     "start": 0,
+     "count": 1024
+    }
+   ],
+   "root": "sha256:5421ad2489be6a98afac4c6aeabe177ed1afa96c677680a43b7dbc986ae346b0",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:5421ad2489be6a98afac4c6aeabe177ed1afa96c677680a43b7dbc986ae346b0",
+     "size": 649253
+    }
+   ]
+  },
+  {
+   "name": "two-level-index-1048577-entries",
+   "heavy": true,
+   "list_nodes": [
+    0,
+    -2,
+    -1
+   ],
+   "generate": [
+    {
+     "dir": "",
+     "prefix": "f",
+     "prefix_repeat": 1,
+     "digits": 7,
+     "start": 0,
+     "count": 1048577
+    }
+   ],
+   "root": "sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c",
+   "node_count": 1028,
+   "walk_length": 1028,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir_index",
+     "hash": "sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c",
+     "size": 271,
+     "canonical": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1048576,\"first\":\"f0000000\",\"hash\":\"sha256:a3d74c9e09aab22419a4f5d1324793ca517abd5df41ffea1e690fda9ee224095\"},{\"count\":1,\"first\":\"f1048576\",\"hash\":\"sha256:25568880f10538654d433d8b9a01bd94b6bb770e5464b90a77ba0b4f3c094509\"}]}",
+     "position": 0
+    },
+    {
+     "dir": "",
+     "kind": "dir_index",
+     "hash": "sha256:25568880f10538654d433d8b9a01bd94b6bb770e5464b90a77ba0b4f3c094509",
+     "size": 153,
+     "canonical": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"f1048576\",\"hash\":\"sha256:88a61f4436ce70dac4a0b057cf7b092b9e473d970cd61e4404f6d240dea79db6\"}]}",
+     "position": 1026
+    },
+    {
+     "dir": "",
+     "kind": "dir_page",
+     "hash": "sha256:88a61f4436ce70dac4a0b057cf7b092b9e473d970cd61e4404f6d240dea79db6",
+     "size": 177,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:44e4b4c77b4136e901c4b5ea556456aefce698ae618fff1e078c5b60ac8daa6b\",\"mode\":420,\"name\":\"f1048576\",\"size\":8,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir_page\"}",
+     "position": 1027
+    }
+   ]
+  },
+  {
+   "name": "reject-case-conflict",
+   "files": [
+    {
+     "path": "Plan.dwg",
+     "content": "a"
+    },
+    {
+     "path": "plan.dwg",
+     "content": "b"
+    }
+   ],
+   "error": "case_conflict"
+  },
+  {
+   "name": "reject-sharp-s-vs-ss",
+   "files": [
+    {
+     "path": "straße.txt",
+     "content": "a"
+    },
+    {
+     "path": "STRASSE.txt",
+     "content": "b"
+    }
+   ],
+   "error": "case_conflict"
+  },
+  {
+   "name": "reject-directory-case-conflict",
+   "files": [
+    {
+     "path": "Docs/a.txt",
+     "content": "a"
+    },
+    {
+     "path": "docs/b.txt",
+     "content": "b"
+    }
+   ],
+   "error": "case_conflict"
+  },
+  {
+   "name": "reject-file-and-directory",
+   "files": [
+    {
+     "path": "a",
+     "content": "a"
+    },
+    {
+     "path": "a/b",
+     "content": "b"
+    }
+   ],
+   "error": "file_dir_conflict"
+  },
+  {
+   "name": "reject-duplicate-path",
+   "files": [
+    {
+     "path": "x.txt",
+     "content": "a"
+    },
+    {
+     "path": "x.txt",
+     "content": "b"
+    }
+   ],
+   "error": "duplicate"
+  },
+  {
+   "name": "reject-nfc-nfd-duplicate",
+   "files": [
+    {
+     "path": "café.txt",
+     "content": "a"
+    },
+    {
+     "path": "cafe\u0301.txt",
+     "content": "b"
+    }
+   ],
+   "error": "duplicate"
+  },
+  {
+   "name": "reject-dotdot",
+   "files": [
+    {
+     "path": "../evil",
+     "content": "a"
+    }
+   ],
+   "error": "dot_segment"
+  },
+  {
+   "name": "reject-backslash",
+   "files": [
+    {
+     "path": "a\\b",
+     "content": "a"
+    }
+   ],
+   "error": "backslash"
+  },
+  {
+   "name": "reject-absolute",
+   "files": [
+    {
+     "path": "/etc/passwd",
+     "content": "a"
+    }
+   ],
+   "error": "absolute"
+  }
+ ],
+ "decode_invalid": [
+  {
+   "name": "trailing-newline",
+   "bytes": "{\"entries\":[],\"format\":1,\"kind\":\"dir\"}\n"
+  },
+  {
+   "name": "leading-space",
+   "bytes": " {\"entries\":[],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "byte-order-mark",
+   "bytes": "\ufeff{\"entries\":[],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "space-after-colon",
+   "bytes": "{\"entries\": [],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "whitespace-inside-array",
+   "bytes": "{\"entries\":[ ],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "keys-out-of-order",
+   "bytes": "{\"format\":1,\"entries\":[],\"kind\":\"dir\"}"
+  },
+  {
+   "name": "unknown-key",
+   "bytes": "{\"entries\":[],\"extra\":1,\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "duplicate-key",
+   "bytes": "{\"entries\":[],\"format\":1,\"kind\":\"dir\",\"kind\":\"dir\"}"
+  },
+  {
+   "name": "format-2",
+   "bytes": "{\"entries\":[],\"format\":2,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "format-as-string",
+   "bytes": "{\"entries\":[],\"format\":\"1\",\"kind\":\"dir\"}"
+  },
+  {
+   "name": "format-as-float",
+   "bytes": "{\"entries\":[],\"format\":1.0,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "unknown-kind",
+   "bytes": "{\"entries\":[],\"format\":1,\"kind\":\"tree\"}"
+  },
+  {
+   "name": "null-entries",
+   "bytes": "{\"entries\":null,\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "not-an-object",
+   "bytes": "[]"
+  },
+  {
+   "name": "truncated",
+   "bytes": "{\"entries\":["
+  },
+  {
+   "name": "empty-dir-page",
+   "bytes": "{\"entries\":[],\"format\":1,\"kind\":\"dir_page\"}"
+  },
+  {
+   "name": "empty-dir-index",
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[]}"
+  },
+  {
+   "name": "dir-with-pages-key",
+   "bytes": "{\"entries\":[],\"format\":1,\"kind\":\"dir\",\"pages\":[]}"
+  },
+  {
+   "name": "index-with-entries-key",
+   "bytes": "{\"entries\":[],\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"a\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+  },
+  {
+   "name": "escaped-ascii-in-name",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"\\u0061\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "escaped-non-ascii-in-name",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"caf\\u00e9\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "escaped-solidus-in-name",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\\/b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-not-nfc",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"cafe\u0301\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-dotdot",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"..\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-slash",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a/b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-control-char",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\\u0001\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "name-with-backslash",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\\\\b\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "empty-name",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "uppercase-hash",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "hash-without-prefix",
+   "bytes": "{\"entries\":[{\"hash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "entries-not-sorted",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"b\",\"size\":0,\"type\":\"file\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "duplicate-names",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "case-conflict-in-node",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"A\",\"size\":0,\"type\":\"file\"},{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "mode-0666",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":438,\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "mode-as-string",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":\"420\",\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "file-without-mode",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"name\":\"a\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "file-without-size",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "size-negative",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":-1,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "size-leading-zero",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":01,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "size-plus-sign",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":+1,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "size-exponent",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":1e3,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "size-above-2^53-1",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\",\"size\":9007199254740992,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "dir-entry-with-size",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"name\":\"d\",\"size\":0,\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "dir-entry-with-mode",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"d\",\"type\":\"dir\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "type-symlink",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"name\":\"l\",\"type\":\"symlink\"}],\"format\":1,\"kind\":\"dir\"}"
+  },
+  {
+   "name": "index-count-zero",
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":0,\"first\":\"a\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"b\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+  },
+  {
+   "name": "index-pages-not-sorted",
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"b\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"a\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+  },
+  {
+   "name": "index-first-not-nfc",
+   "bytes": "{\"format\":1,\"kind\":\"dir_index\",\"pages\":[{\"count\":1,\"first\":\"cafe\u0301\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"count\":1,\"first\":\"d\",\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}"
+  }
+ ]
+}

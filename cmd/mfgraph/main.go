@@ -1,7 +1,7 @@
 // Command mfgraph is the MFGraph command-line tool.
 //
-// M0 ships "version", "help" and the offline "debug" commands. The workspace
-// subcommands are placeholders for the first core slice.
+// This build ships "version", "help" and the offline "debug" commands. The
+// workspace subcommands are placeholders for the first core slice.
 package main
 
 import (
@@ -42,6 +42,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "help", "-h", "-help", "--help":
 		usage(stdout)
 		return 0
+	case "debug":
+		return runDebug(args[1:], stdout, stderr)
 	}
 	for _, p := range placeholders {
 		if args[0] == p.name {
@@ -60,6 +62,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintf(w, "  %-10s %s\n", "version", "print the version")
 	fmt.Fprintf(w, "  %-10s %s\n", "help", "show this help")
+	fmt.Fprintf(w, "  %-10s %s\n", "debug", "offline format tools: debug hash <file>, debug tree <dir> [--out <dir>]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Planned (not implemented in this build):")
 	for _, p := range placeholders {

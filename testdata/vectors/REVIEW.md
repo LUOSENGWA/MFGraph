@@ -14,16 +14,27 @@
 * **pathx** — expected results are written by hand from the rules, and checked by
   an independent Python implementation (`scripts/vectors.py`, stdlib
   `unicodedata`) as well as by the Go tests.
-* Unicode data: the Go implementation uses `golang.org/x/text` (Unicode 17.0.0);
-  the Python check ran with Python's `unicodedata` (Unicode 14.0.0). The vectors
-  only use characters whose NFC and case-fold behavior is the same in both versions.
+* **tree** — inputs are written by hand (`tree.json`); the expected roots, node
+  lists and canonical bytes are computed by the independent Python
+  implementation in `scripts/vectors.py` (written from the specification, two
+  serializers — a hand-written JCS writer and `json.dumps` — must agree). The Go
+  implementation is then checked against them, and `crosscheck` runs the Go CLI on
+  materialized inputs and verifies every node file with `shasum -a 256`.
 
-Re-run all checks:
+Check it yourself (three commands; needs Go, Python 3 and `shasum`):
 
 ```bash
-python3 scripts/vectors.py verify
-go test ./internal/contenthash ./internal/pathx
-printf 'hello\n' | shasum -a 256   # 5891b5b5…6be03, see table below
+d=$(mktemp -d) && python3 scripts/vectors.py materialize nested "$d/in"
+go run ./cmd/mfgraph debug tree "$d/in" --out "$d/nodes"   # last line: root sha256:99f1d781…; compare with tree.json
+(cd "$d/nodes" && for f in *.json; do echo "${f%.json}  $f"; done | shasum -a 256 -c -)
+```
+
+Re-run everything:
+
+```bash
+python3 scripts/vectors.py verify [--heavy]   # Python reference vs. vector files
+python3 scripts/vectors.py crosscheck         # Go CLI + shasum on every small/large case
+go test ./internal/contenthash ./internal/pathx ./internal/tree   # MFGRAPH_HEAVY_VECTORS=1 for the heavy case
 ```
 
 
@@ -158,3 +169,462 @@ Rule order: UTF-8 + non-empty → absolute / backslash / control (U+0000–U+001
 | `tab\u0009` | ✗ `control_char` |
 | bytes `6d61696eff` | ✗ `invalid_utf8` |
 | `a`×256 (256 bytes) | ✗ `segment_too_long` |
+
+## 3. tree (format 1)
+
+Rules checked by these vectors:
+
+* node = RFC 8785 (JCS) JSON, keys sorted, no whitespace; strings escape only `"`, `\` and U+0000–U+001F; everything else is raw UTF-8; node hash = SHA-256 of the uncompressed bytes;
+* `entries` sorted by UTF-8 bytes of `name`; file entry `{hash,mode,name,size,type}`, directory entry `{hash,name,type}`; mode is 420 or 493; no mtime;
+* a directory is one `dir` node when it has ≤ 1024 entries and encodes to ≤ 1 MiB; otherwise greedy `dir_page` nodes + `dir_index` (levels added while > 1024 references); a reference is `{count,first,hash}` where count = number of directory entries below it;
+* only the root may be empty; directories are implicit.
+
+### 3.1 Cases
+
+| case | input | expected |
+|---|---|---|
+| empty-root | no files | root `sha256:e515bab4a24a…`, 1 node(s) |
+| single-file | 1 file(s) | root `sha256:c054d695dcf3…`, 1 node(s) |
+| nested | 5 file(s) | root `sha256:99f1d7819d26…`, 6 node(s) |
+| special-names | 5 file(s) | root `sha256:e7074b2d9f23…`, 3 node(s) |
+| executable-mode | 2 file(s) | root `sha256:9511823d2629…`, 2 node(s) |
+| utf8-byte-order-not-utf16 | 8 file(s) | root `sha256:5282381cdc94…`, 1 node(s) |
+| nfc-input | 1 file(s) | root `sha256:a584f9ae3974…`, 2 node(s) |
+| nfd-input-gives-same-root-as-nfc | 1 file(s) | root `sha256:a584f9ae3974…`, 2 node(s) |
+| empty-file | 1 file(s) | root `sha256:ace1320d99e2…`, 1 node(s) |
+| deep-path | 1 file(s) | root `sha256:8a797cbf3e0a…`, 10 node(s) |
+| shared-subtree | 2 file(s) | root `sha256:b73fb86088a2…`, 2 node(s) |
+| dir-1024-entries-one-node | generated `f` + 5-digit index, 0…1023 | root `sha256:84d212b37a4d…`, 1 node(s) |
+| dir-1025-entries-two-pages | generated `f` + 5-digit index, 0…1024 | root `sha256:bc1eec93a002…`, 3 node(s) |
+| subdir-3000-entries-three-pages | 1 file(s); generated `big`/`f` + 5-digit index, 0…2999 | root `sha256:43b5f3318a5b…`, 5 node(s) |
+| longest-names-1024-entries-still-one-node | generated `"`×250 + 5-digit index, 0…1023 | root `sha256:5421ad2489be…`, 1 node(s) |
+| two-level-index-1048577-entries | generated `f` + 7-digit index, 0…1048576 | root `sha256:c63ef4eaae56…`, 1028 node(s) (heavy, opt-in) |
+| reject-case-conflict | 2 file(s) | ✗ `case_conflict` |
+| reject-sharp-s-vs-ss | 2 file(s) | ✗ `case_conflict` |
+| reject-directory-case-conflict | 2 file(s) | ✗ `case_conflict` |
+| reject-file-and-directory | 2 file(s) | ✗ `file_dir_conflict` |
+| reject-duplicate-path | 2 file(s) | ✗ `duplicate` |
+| reject-nfc-nfd-duplicate | 2 file(s) | ✗ `duplicate` |
+| reject-dotdot | 1 file(s) | ✗ `dot_segment` |
+| reject-backslash | 1 file(s) | ✗ `backslash` |
+| reject-absolute | 1 file(s) | ✗ `absolute` |
+
+### 3.2 Small cases in full
+
+Inputs and every node (directory, kind, hash, canonical bytes exactly as hashed). File hashes are SHA-256 of the given content.
+
+#### `empty-root`
+
+(no files)
+
+root: `sha256:e515bab4a24abb9c4929143865d247855e153af697b270afb65a0dcb1b62d9c4`
+
+* dir `.` (root) · `dir` · `sha256:e515bab4a24abb9c4929143865d247855e153af697b270afb65a0dcb1b62d9c4` · 38 bytes
+
+  ```json
+  {"entries":[],"format":1,"kind":"dir"}
+  ```
+
+#### `single-file`
+
+| path | content | mode |
+|---|---|---:|
+| `a.txt` | `hello\u000a` | 420 |
+
+root: `sha256:c054d695dcf341ac6d5570a0a7e0c1cbcf14379854ea857a1643c9bddf34695a`
+
+* dir `.` (root) · `dir` · `sha256:c054d695dcf341ac6d5570a0a7e0c1cbcf14379854ea857a1643c9bddf34695a` · 169 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03","mode":420,"name":"a.txt","size":6,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `nested`
+
+| path | content | mode |
+|---|---|---:|
+| `README.md` | `# MFGraph\u000a` | 420 |
+| `docs/guide.md` | `guide\u000a` | 420 |
+| `docs/specs/v1/format.md` | `format v1\u000a` | 420 |
+| `src/main.go` | `package main\u000a` | 420 |
+| `src/util/strings.go` | `package util\u000a` | 420 |
+
+root: `sha256:99f1d7819d267b6cb81d3127a2faeb6c7516512eb16f702ec36c87b594e5fbab`
+
+* dir `.` (root) · `dir` · `sha256:99f1d7819d267b6cb81d3127a2faeb6c7516512eb16f702ec36c87b594e5fbab` · 393 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:4539bb271aeb71c85c67fc70418cea60677ce8192b28d83b92a690829957c2bd","mode":420,"name":"README.md","size":10,"type":"file"},{"hash":"sha256:800cef8eb274df88d34fde60f0a8b0a50a91c97fc6bac7a7c987bfc7c4547787","name":"docs","type":"dir"},{"hash":"sha256:43a5c4ffb740c009898a18d06f37fc43ed4c10423d627a310b1f0d4b419ab5aa","name":"src","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `docs` · `dir` · `sha256:800cef8eb274df88d34fde60f0a8b0a50a91c97fc6bac7a7c987bfc7c4547787` · 283 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:90c390ec1de806bf945885cd0af51e90c3cd8cda0d0ff676051a56c20848c90f","mode":420,"name":"guide.md","size":6,"type":"file"},{"hash":"sha256:0beac2a35add712ab5214819b92547d7020fc503668519acf44f6af7f44b9c2f","name":"specs","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `docs/specs` · `dir` · `sha256:0beac2a35add712ab5214819b92547d7020fc503668519acf44f6af7f44b9c2f` · 145 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:036d17fd2332cd0ffd509a204eeaaad4c01a787d0c0b711b40ad31f66d02e5e5","name":"v1","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `docs/specs/v1` · `dir` · `sha256:036d17fd2332cd0ffd509a204eeaaad4c01a787d0c0b711b40ad31f66d02e5e5` · 174 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:48291bae7455703d6b8d40a776501782fc86f842fb68e78d158ee8e05f00a6a1","mode":420,"name":"format.md","size":10,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `src` · `dir` · `sha256:43a5c4ffb740c009898a18d06f37fc43ed4c10423d627a310b1f0d4b419ab5aa` · 282 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:df1d036cbbf3df46e2045071e082245ece204c7f53ecf0a4e022bff9bb228f47","mode":420,"name":"main.go","size":13,"type":"file"},{"hash":"sha256:db831b8ad6a57f309fa72a0be3221b3afad2f69b49f1c06c6df73c3bdb6f558f","name":"util","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `src/util` · `dir` · `sha256:db831b8ad6a57f309fa72a0be3221b3afad2f69b49f1c06c6df73c3bdb6f558f` · 175 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:d098f4ba6f0a23b2ed2a30db7808873971b9d254c8e13c0812cd3b421c1e63f2","mode":420,"name":"strings.go","size":13,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `special-names`
+
+| path | content | mode |
+|---|---|---:|
+| `文档/设计说明.md` | `设计\u000a` | 420 |
+| `🚀.txt` | `launch\u000a` | 420 |
+| `<&>.txt` | `html\u000a` | 420 |
+| `say "hi".txt` | `quote\u000a` | 420 |
+| `café/menu.txt` | `menu\u000a` | 420 |
+
+root: `sha256:e7074b2d9f235a36c824211bcd73f85f1444ef9ed85a1ffc27aad136b6bad791`
+
+* dir `.` (root) · `dir` · `sha256:e7074b2d9f235a36c824211bcd73f85f1444ef9ed85a1ffc27aad136b6bad791` · 670 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:95d53ad4efbcc898697e40693e04357cb6b8e54198270fc9d2b1b51227d23b7b","mode":420,"name":"<&>.txt","size":5,"type":"file"},{"hash":"sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e","name":"café","type":"dir"},{"hash":"sha256:88bdeff7ba192fa68d48df993f971cd5255263240018cf9e7021e116ba01ee64","mode":420,"name":"say \"hi\".txt","size":6,"type":"file"},{"hash":"sha256:9b75147957cef4db2aa03a564080478ef8aa9994251b1f37329f8a96bf37e12e","name":"文档","type":"dir"},{"hash":"sha256:46ef88e17c41da5cc0cd057b46d6167f549c0762c12fcc6729537bee72a7733a","mode":420,"name":"🚀.txt","size":7,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `café` · `dir` · `sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e` · 172 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:7e8a051c48ddd8592694f7a489a1a406846a386cb67010ed090806ae301ab8df","mode":420,"name":"menu.txt","size":5,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `文档` · `dir` · `sha256:9b75147957cef4db2aa03a564080478ef8aa9994251b1f37329f8a96bf37e12e` · 179 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:7645010f785aedc55b254ba5f8b1535b18f5699ae337c139a4a7cb26c3250174","mode":420,"name":"设计说明.md","size":7,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `executable-mode`
+
+| path | content | mode |
+|---|---|---:|
+| `bin/tool` | `#!/bin/sh\u000aecho hi\u000a` | 493 |
+| `bin/README` | `tools\u000a` | 420 |
+
+root: `sha256:9511823d2629f7876ace6f4e5acc0cf3a449794a58bdb434a521af95937a54ed`
+
+* dir `.` (root) · `dir` · `sha256:9511823d2629f7876ace6f4e5acc0cf3a449794a58bdb434a521af95937a54ed` · 146 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:978629daf903cba280e8b64c24bafa01f33f0aca2243a8dd43f069aad613c6aa","name":"bin","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `bin` · `dir` · `sha256:978629daf903cba280e8b64c24bafa01f33f0aca2243a8dd43f069aad613c6aa` · 302 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:21be1903630f069893d2d0bed2ab7945c3fd838da02dd7516f1f4f89819af857","mode":420,"name":"README","size":6,"type":"file"},{"hash":"sha256:299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba","mode":493,"name":"tool","size":18,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `utf8-byte-order-not-utf16`
+
+| path | content | mode |
+|---|---|---:|
+| `𝄞` | `𝄞\u000a` | 420 |
+| `\uff61` | `\uff61\u000a` | 420 |
+| `é` | `é\u000a` | 420 |
+| `~tilde` | `~tilde\u000a` | 420 |
+| `banana` | `banana\u000a` | 420 |
+| `Zeta` | `Zeta\u000a` | 420 |
+| `Apple` | `Apple\u000a` | 420 |
+| `0` | `0\u000a` | 420 |
+
+root: `sha256:5282381cdc942bd029ac3f1a639eb6ca11dfb6940d5336ebfcd19037b106447a`
+
+* dir `.` (root) · `dir` · `sha256:5282381cdc942bd029ac3f1a639eb6ca11dfb6940d5336ebfcd19037b106447a` · 1084 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa","mode":420,"name":"0","size":2,"type":"file"},{"hash":"sha256:07a9b7b36597df7db7d84b0d7020517da1dc87cf381ed4bc62f0dc331faffcd0","mode":420,"name":"Apple","size":6,"type":"file"},{"hash":"sha256:f359ee0750695221acac365545d61a0977ff538f0b25d8db6dc762ce59509c36","mode":420,"name":"Zeta","size":5,"type":"file"},{"hash":"sha256:5a81483d96b0bc15ad19af7f5a662e14b275729fbc05579b18513e7f550016b1","mode":420,"name":"banana","size":7,"type":"file"},{"hash":"sha256:fbeb6ab43380abefb4387f6674697e6cee6a55a386bbb8014a02e6c1a53461e9","mode":420,"name":"~tilde","size":7,"type":"file"},{"hash":"sha256:edd3a863872a04239eb29ad4bc12fc892b3d4ae57cc7e786a3697816f8e141c2","mode":420,"name":"é","size":3,"type":"file"},{"hash":"sha256:a44cede6bdbbab155e6dbcc010c4529ebdf97936e8ad6ec8d2e484b4a64a3c16","mode":420,"name":"｡","size":4,"type":"file"},{"hash":"sha256:8b6f07cb8272054393ef8ffe1cabd9549a108cb0841ecc2659c5cc9aba5acbb7","mode":420,"name":"𝄞","size":5,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `nfc-input`
+
+| path | content | mode |
+|---|---|---:|
+| `café/menu.txt` | `menu\u000a` | 420 |
+
+root: `sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0`
+
+* dir `.` (root) · `dir` · `sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0` · 148 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e","name":"café","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `café` · `dir` · `sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e` · 172 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:7e8a051c48ddd8592694f7a489a1a406846a386cb67010ed090806ae301ab8df","mode":420,"name":"menu.txt","size":5,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `nfd-input-gives-same-root-as-nfc`
+
+| path | content | mode |
+|---|---|---:|
+| `cafe\u0301/menu.txt` | `menu\u000a` | 420 |
+
+root: `sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0`
+
+* dir `.` (root) · `dir` · `sha256:a584f9ae39742d786aaa8e01781bb8a1e242640986ea8ae47821bbb4523586b0` · 148 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e","name":"café","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `café` · `dir` · `sha256:df7c55766190c87e784054d7f9fb258db4a04dd9473b28111718510f7fe32e4e` · 172 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:7e8a051c48ddd8592694f7a489a1a406846a386cb67010ed090806ae301ab8df","mode":420,"name":"menu.txt","size":5,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `empty-file`
+
+| path | content | mode |
+|---|---|---:|
+| `empty` | (empty string) | 420 |
+
+root: `sha256:ace1320d99e2686d8a56ed56316c898e7e2182517c2b4f0b1f8252b0e57647cd`
+
+* dir `.` (root) · `dir` · `sha256:ace1320d99e2686d8a56ed56316c898e7e2182517c2b4f0b1f8252b0e57647cd` · 169 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"empty","size":0,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `deep-path`
+
+| path | content | mode |
+|---|---|---:|
+| `a/b/c/d/e/f/g/h/i/j.txt` | `deep\u000a` | 420 |
+
+root: `sha256:8a797cbf3e0abc3e895c72dd9bfc0be5bee4d49ad5b8c203e43ae90df0a14683`
+
+* dir `.` (root) · `dir` · `sha256:8a797cbf3e0abc3e895c72dd9bfc0be5bee4d49ad5b8c203e43ae90df0a14683` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:891efa03f6fde974c5fa71cf795633f8451de824a6e3cee1c8e9cf0367685675","name":"a","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a` · `dir` · `sha256:891efa03f6fde974c5fa71cf795633f8451de824a6e3cee1c8e9cf0367685675` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:bd715659812558f54509cc729cb09b21d2807750ade31e5cb953153855dd83a7","name":"b","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b` · `dir` · `sha256:bd715659812558f54509cc729cb09b21d2807750ade31e5cb953153855dd83a7` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:d5da1de2caa0c77f1be716c68ea3ad361de4cc7cae113c1fd9628b8a09e11420","name":"c","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b/c` · `dir` · `sha256:d5da1de2caa0c77f1be716c68ea3ad361de4cc7cae113c1fd9628b8a09e11420` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:2278ecb87bc57bfb8d91b6f305b59512cb978780739d01a200d57969f6d02bf4","name":"d","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b/c/d` · `dir` · `sha256:2278ecb87bc57bfb8d91b6f305b59512cb978780739d01a200d57969f6d02bf4` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:3b5ed1c676efd49079e7d55cc4633fdbcb81e7ca33596721b1403953434c1dbc","name":"e","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b/c/d/e` · `dir` · `sha256:3b5ed1c676efd49079e7d55cc4633fdbcb81e7ca33596721b1403953434c1dbc` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:53f61440936dd099ddba4bd415a1ed2d447c02dc10aca464a733f1a1abc4eb5b","name":"f","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b/c/d/e/f` · `dir` · `sha256:53f61440936dd099ddba4bd415a1ed2d447c02dc10aca464a733f1a1abc4eb5b` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:e5523c78f76270c9c313a45c4e4a7249d2ff698475ae8cea3ade1b2572490539","name":"g","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b/c/d/e/f/g` · `dir` · `sha256:e5523c78f76270c9c313a45c4e4a7249d2ff698475ae8cea3ade1b2572490539` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:01cfbeeab32854fb9cc5e71d2e7c909f2e407d0372e1182b73527f1af65da680","name":"h","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b/c/d/e/f/g/h` · `dir` · `sha256:01cfbeeab32854fb9cc5e71d2e7c909f2e407d0372e1182b73527f1af65da680` · 144 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:bc0388c49002c59c0988a9793bbb92809153bd839f671ed81de59339ed352356","name":"i","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `a/b/c/d/e/f/g/h/i` · `dir` · `sha256:bc0388c49002c59c0988a9793bbb92809153bd839f671ed81de59339ed352356` · 169 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:64896f89fd11190013b70103e603a1c5826e56b7fb7d2197ab279b0690043599","mode":420,"name":"j.txt","size":5,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+#### `shared-subtree`
+
+| path | content | mode |
+|---|---|---:|
+| `x/data.txt` | `same\u000a` | 420 |
+| `y/data.txt` | `same\u000a` | 420 |
+
+root: `sha256:b73fb86088a26afe77c51cebe5350c44a161dac0f869d535c3854ac3775a79d9`
+
+* dir `.` (root) · `dir` · `sha256:b73fb86088a26afe77c51cebe5350c44a161dac0f869d535c3854ac3775a79d9` · 251 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d","name":"x","type":"dir"},{"hash":"sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d","name":"y","type":"dir"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `x` · `dir` · `sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d` · 172 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:a6328afc76e9db71da297ebff4b0d3e7a7eb3b01d917c05a6573fef121b6ecb6","mode":420,"name":"data.txt","size":5,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+* dir `y` · `dir` · `sha256:e70630ba7182e26a343707260a74a10875b48f193b2bc2bf2057ca0b6d53c18d` · 172 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:a6328afc76e9db71da297ebff4b0d3e7a7eb3b01d917c05a6573fef121b6ecb6","mode":420,"name":"data.txt","size":5,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+### 3.3 Large cases (root and selected nodes)
+
+#### `dir-1024-entries-one-node`
+
+root `sha256:84d212b37a4dfce347b41046884acd9abc90cbbab0ca1d07c87f70c57affa3ac`; 1 distinct node(s).
+
+| position | dir | kind | bytes | hash |
+|---:|---|---|---:|---|
+| 0 | . | dir | 136229 | `sha256:84d212b37a4dfce347b41046884acd9abc90cbbab0ca1d07c87f70c57affa3ac` |
+
+#### `dir-1025-entries-two-pages`
+
+root `sha256:bc1eec93a00201aa7ced9f427443cf983424ae6afba5aeedf723e8122bd420f8`; 3 distinct node(s).
+
+| position | dir | kind | bytes | hash |
+|---:|---|---|---:|---|
+| 0 | . | dir_index | 264 | `sha256:bc1eec93a00201aa7ced9f427443cf983424ae6afba5aeedf723e8122bd420f8` |
+| 1 | . | dir_page | 136234 | `sha256:74ae5ba83a2912452fdb8e2c7dcae7c3ab5fdd69825d43922aa61b28e75f8f98` |
+| 2 | . | dir_page | 175 | `sha256:c65289d6c3f583e90526cedeb4c29a29ad25fbaab805ffca2e7972ad3d1611a9` |
+
+```json
+{"format":1,"kind":"dir_index","pages":[{"count":1024,"first":"f00000","hash":"sha256:74ae5ba83a2912452fdb8e2c7dcae7c3ab5fdd69825d43922aa61b28e75f8f98"},{"count":1,"first":"f01024","hash":"sha256:c65289d6c3f583e90526cedeb4c29a29ad25fbaab805ffca2e7972ad3d1611a9"}]}
+```
+
+```json
+{"entries":[{"hash":"sha256:d63535650d8c6931678fe732747c6670e3144c01413a74932f5acf9f7440b1aa","mode":420,"name":"f01024","size":6,"type":"file"}],"format":1,"kind":"dir_page"}
+```
+
+#### `subdir-3000-entries-three-pages`
+
+root `sha256:43b5f3318a5b92a69255fdafef8bc4e8a662d37603f4f460ae9f6f3cdf380d46`; 5 distinct node(s).
+
+| position | dir | kind | bytes | hash |
+|---:|---|---|---:|---|
+| 0 | . | dir | 283 | `sha256:43b5f3318a5b92a69255fdafef8bc4e8a662d37603f4f460ae9f6f3cdf380d46` |
+| 1 | `big` | dir_index | 379 | `sha256:0a3f5a575ad0f0ee7f9e707b0175b734530086adec10041b5ac518f1d79f0802` |
+| 2 | `big` | dir_page | 137258 | `sha256:6e5b26f730d44146edda758c632070909928f71bd5034d414ad66d9131ce4f71` |
+| 3 | `big` | dir_page | 137258 | `sha256:4be5e0a30c74fb25c54074d5084f8f7b07889c7a1627698bea7d4c2f6056ceb7` |
+| 4 | `big` | dir_page | 127610 | `sha256:78f10ff74df11e6c272f3d20bcf9cfef0ab229d40faea5edfa8337767f839777` |
+
+```json
+{"entries":[{"hash":"sha256:01735ed37e95edded4396f7acd4ec0d634cfba2c2dab2d89c78b33a0cb3601a7","mode":420,"name":"README.md","size":20,"type":"file"},{"hash":"sha256:0a3f5a575ad0f0ee7f9e707b0175b734530086adec10041b5ac518f1d79f0802","name":"big","type":"dir"}],"format":1,"kind":"dir"}
+```
+
+```json
+{"format":1,"kind":"dir_index","pages":[{"count":1024,"first":"f00000","hash":"sha256:6e5b26f730d44146edda758c632070909928f71bd5034d414ad66d9131ce4f71"},{"count":1024,"first":"f01024","hash":"sha256:4be5e0a30c74fb25c54074d5084f8f7b07889c7a1627698bea7d4c2f6056ceb7"},{"count":952,"first":"f02048","hash":"sha256:78f10ff74df11e6c272f3d20bcf9cfef0ab229d40faea5edfa8337767f839777"}]}
+```
+
+#### `longest-names-1024-entries-still-one-node`
+
+root `sha256:5421ad2489be6a98afac4c6aeabe177ed1afa96c677680a43b7dbc986ae346b0`; 1 distinct node(s).
+
+| position | dir | kind | bytes | hash |
+|---:|---|---|---:|---|
+| 0 | . | dir | 649253 | `sha256:5421ad2489be6a98afac4c6aeabe177ed1afa96c677680a43b7dbc986ae346b0` |
+
+#### `two-level-index-1048577-entries`
+
+root `sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c`; 1028 distinct node(s); walk visits 1028.
+
+| position | dir | kind | bytes | hash |
+|---:|---|---|---:|---|
+| 0 | . | dir_index | 271 | `sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c` |
+| 1026 | . | dir_index | 153 | `sha256:25568880f10538654d433d8b9a01bd94b6bb770e5464b90a77ba0b4f3c094509` |
+| 1027 | . | dir_page | 177 | `sha256:88a61f4436ce70dac4a0b057cf7b092b9e473d970cd61e4404f6d240dea79db6` |
+
+```json
+{"format":1,"kind":"dir_index","pages":[{"count":1048576,"first":"f0000000","hash":"sha256:a3d74c9e09aab22419a4f5d1324793ca517abd5df41ffea1e690fda9ee224095"},{"count":1,"first":"f1048576","hash":"sha256:25568880f10538654d433d8b9a01bd94b6bb770e5464b90a77ba0b4f3c094509"}]}
+```
+
+```json
+{"format":1,"kind":"dir_index","pages":[{"count":1,"first":"f1048576","hash":"sha256:88a61f4436ce70dac4a0b057cf7b092b9e473d970cd61e4404f6d240dea79db6"}]}
+```
+
+```json
+{"entries":[{"hash":"sha256:44e4b4c77b4136e901c4b5ea556456aefce698ae618fff1e078c5b60ac8daa6b","mode":420,"name":"f1048576","size":8,"type":"file"}],"format":1,"kind":"dir_page"}
+```
+
+### 3.4 Strict decoding: inputs that must be rejected
+
+`trailing-newline`, `leading-space`, `byte-order-mark`, `space-after-colon`, `whitespace-inside-array`, `keys-out-of-order`, `unknown-key`, `duplicate-key`, `format-2`, `format-as-string`, `format-as-float`, `unknown-kind`, `null-entries`, `not-an-object`, `truncated`, `empty-dir-page`, `empty-dir-index`, `dir-with-pages-key`, `index-with-entries-key`, `escaped-ascii-in-name`, `escaped-non-ascii-in-name`, `escaped-solidus-in-name`, `name-not-nfc`, `name-dotdot`, `name-with-slash`, `name-with-control-char`, `name-with-backslash`, `empty-name`, `uppercase-hash`, `hash-without-prefix`, `entries-not-sorted`, `duplicate-names`, `case-conflict-in-node`, `mode-0666`, `mode-as-string`, `file-without-mode`, `file-without-size`, `size-negative`, `size-leading-zero`, `size-plus-sign`, `size-exponent`, `size-above-2^53-1`, `dir-entry-with-size`, `dir-entry-with-mode`, `type-symlink`, `index-count-zero`, `index-pages-not-sorted`, `index-first-not-nfc`.
+
+## 4. Coverage checklist
+
+| requirement | where |
+|---|---|
+| contenthash: empty, `hello`, `hello\n`, non-ASCII, 1 MiB deterministic pseudo-random | `contenthash.json` (+ NFC/NFD content, bytes 00–ff) |
+| contenthash: strict parsing | `contenthash.json` → `parse` |
+| path: NFC and NFD `café`; `Plan.dwg` vs `plan.dwg`; `ß` vs `SS` | `pathx.json` → `cafe-*`, `case-conflict`, `sharp-s-vs-ss` |
+| path: `..`, `a//b`, trailing `/`, absolute, backslash, control characters | `pathx.json` → `dot*`, `double-slash`, `trailing-slash`, `absolute`, `backslash*`, `nul`/`newline`/`tab`/`del` |
+| path: 256-byte segment, over-long path, emoji, Chinese | `segment-256-bytes`, `path-4097-bytes` (+ 255/4096 boundaries), `emoji`, `chinese` |
+| tree: empty tree, single file, nested, Chinese/emoji/`<&>`/`"` names, executable | `empty-root`, `single-file`, `nested`, `deep-path`, `special-names`, `executable-mode` |
+| tree: exactly 1024 entries (no split), 1025 entries (2 pages) | `dir-1024-entries-one-node`, `dir-1025-entries-two-pages`, `subdir-3000-entries-three-pages` |
+| tree: page split caused by the 1 MiB limit | **not constructible with valid names** — see note 1; covered by `TestSplitByBytesGreedy` with reduced limits and by `longest-names-1024-entries-still-one-node` |
+| tree: conflicting input rejected | `reject-*` |
+| tree: multi-level index | `two-level-index-1048577-entries` (heavy) and `TestSplitByCountMultiLevel` |
+| tree: input order does not change the root; a change rewrites only the path to the root | `internal/tree/property_test.go` |
+| tree: Build → Walk restores the input | every case in `TestTreeVectors` |
+| tree: strict decoding | `decode_invalid`, `FuzzDecode` |
+
+## 5. Notes for the reviewer
+
+1. **The 1 MiB rule cannot trigger with valid paths.** A file entry is at most 651 bytes
+   (255-byte name made of `"` escapes to 510 bytes, plus a 16-digit size), so 1024 entries
+   encode to at most ~667 KB, and 1024 index references to at most ~644 KB. The splitting
+   therefore always happens at the 1024-entry limit. The byte rule stays in the format as a
+   guard; `longest-names-1024-entries-still-one-node` shows the largest single node
+   (649,253 bytes) that real names produce.
+2. **`count` in a `dir_index` reference** is the number of directory entries below the
+   referenced node (for a lower-level index: the sum), and `first` is the first entry name
+   below it. The specification did not say which count to use for nested indexes; this
+   choice keeps one meaning at every level.
+3. **Integers are limited to 0…2^53−1** so that any RFC 8785 implementation reproduces the
+   bytes (JCS serializes numbers as IEEE-754 doubles).
+4. **Unicode version.** NFC and case folding depend on the Unicode tables. The Go code uses
+   Unicode 17.0.0 (`golang.org/x/text`), the Python check Unicode 14.0.0. Only characters with
+   identical behavior in both are used here.
+5. **Not rejected on purpose** (the path rules are frozen and nothing was added):
+   C1 controls such as U+0085, bidi and zero-width characters, fullwidth solidus U+FF0F,
+   names that are reserved on some platforms (`CON`, trailing dots or spaces).
