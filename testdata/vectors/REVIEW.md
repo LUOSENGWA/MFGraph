@@ -764,27 +764,30 @@ A decoder must accept these nodes (the read-time rules do not use Unicode tables
 | path: 256-byte segment, over-long path, emoji, Chinese | `segment-256-bytes`, `path-4097-bytes` (+ 255/4096 boundaries), `emoji`, `chinese` |
 | tree: empty tree, single file, nested, Chinese/emoji/`<&>`/`"` names, executable | `empty-root`, `single-file`, `nested`, `deep-path`, `special-names`, `executable-mode` |
 | tree: exactly 1024 entries (no split), 1025 entries (2 pages) | `dir-1024-entries-one-node`, `dir-1025-entries-two-pages`, `subdir-3000-entries-three-pages` |
-| tree: page split caused by the 1 MiB limit | **not constructible with valid names** — see note 1; covered by `TestSplitByBytesGreedy` with reduced limits and by `longest-names-1024-entries-still-one-node` |
+| tree: page split caused by the 1 MiB limit | **no longer a required case**: it cannot be constructed under the format-1 path rules (spec §3.5, note 1); the byte rule is tested with reduced thresholds (`TestSplitByBytesGreedy`, `TestSplitByCountMultiLevel`), and `longest-names-1024-entries-still-one-node` shows the largest node real names produce |
 | tree: conflicting input rejected | `reject-*` |
 | tree: multi-level index | `two-level-index-1048577-entries` (heavy) and `TestSplitByCountMultiLevel` |
 | tree: input order does not change the root; a change rewrites only the path to the root | `internal/tree/property_test.go` |
 | tree: Build → Walk restores the input | every case in `TestTreeVectors` |
-| tree: strict decoding | `decode_invalid`, `FuzzDecode` |
+| tree: strict decoding (read-time rules) | `decode_invalid`, `FuzzDecode` |
+| path, write time: C1 controls, bidi controls, zero-width, unassigned code points; allowed ZWJ/ZWNJ | `pathx.json` → `c1-control-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `unassigned-*`, `noncharacter-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-noncharacter`, `allowed-zwj-zwnj-fullwidth-reserved-names` |
+| read time: Unicode-independent rules; NFD, case variants and unassigned code points readable | `pathx.json` → `stored_names`; `tree.json` → `decode_valid_build_rejects`, `decode_invalid` → `name-with-*`, `index-first-with-*` |
 
 ## 5. Notes for the reviewer
 
-1. **The 1 MiB rule cannot trigger with valid paths.** A file entry is at most 651 bytes
+1. **The 1 MiB rule cannot trigger with valid paths** (confirmed: the rule stays as a defensive cap). A file entry is at most 651 bytes
    (255-byte name made of `"` escapes to 510 bytes, plus a 16-digit size), so 1024 entries
    encode to at most ~667 KB, and 1024 index references to at most ~644 KB. The splitting
    therefore always happens at the 1024-entry limit. The byte rule stays in the format as a
    guard; `longest-names-1024-entries-still-one-node` shows the largest single node
    (649,253 bytes) that real names produce.
-2. **`count` in a `dir_index` reference** is the number of directory entries below the
-   referenced node (for a lower-level index: the sum), and `first` is the first entry name
-   below it. The specification did not say which count to use for nested indexes; this
-   choice keeps one meaning at every level.
-3. **Integers are limited to 0…2^53−1** so that any RFC 8785 implementation reproduces the
-   bytes (JCS serializes numbers as IEEE-754 doubles).
+2. **`count` in a `dir_index` reference** (confirmed definition) is the number of directory
+   entries (leaves) below the referenced node (for a lower-level index: the sum of its
+   counts), and `first` is the name of the first leaf below it. The specification now states
+   this with a two-level example taken from `two-level-index-1048577-entries` (spec §3.4).
+3. **Integers are limited to 0…2^53−1** (confirmed) so that any RFC 8785 implementation
+   reproduces the bytes: JCS serializes numbers as IEEE-754 doubles, which are exact for all
+   integers only up to 2^53−1.
 4. **Unicode version V = 15.0.0.** NFC, case folding and the unassigned check depend on
    Unicode tables. Under Go 1.26 the standard library (`unicode`) and `golang.org/x/text`
    both use Unicode 15.0.0 (an earlier version of this file said 17.0.0; that was wrong:

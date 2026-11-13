@@ -36,15 +36,29 @@ segments separated by `/`. Directories exist only as prefixes of file paths
 (there are no empty directories), and symbolic links are not part of the data
 model.
 
+Sections 2.1–2.3 are the **write-time rules**: a server applies them to every
+path that is uploaded or committed, and a tree writer applies them before
+encoding. Names read back from stored tree nodes are checked only with the
+**read-time rules** of section 2.5, which never depend on Unicode tables.
+
 ### 2.1 Normalization
 
 The server normalizes every path with these steps, in this order. The first
 step that fails determines the error kind.
 
 1. The input MUST be valid UTF-8 (`invalid_utf8`) and non-empty (`empty`).
-2. It MUST NOT start with `/` (`absolute`), and MUST NOT contain `\`
-   (`backslash`) or a control character U+0000–U+001F or U+007F
-   (`control_char`).
+2. It MUST NOT start with `/` (`absolute`). Then its characters are scanned
+   from left to right, and the first offending character determines the
+   error kind:
+   * `\` (`backslash`);
+   * a control character U+0000–U+001F or U+007F–U+009F, that is C0, DEL
+     and C1 (`control_char`);
+   * a bidirectional formatting character U+061C, U+200E, U+200F,
+     U+202A–U+202E, U+2066–U+2069, or an invisible zero-width character
+     U+200B, U+2060, U+FEFF (`disallowed_char`);
+   * a code point that is unassigned (general category Cn) in Unicode version
+     V, including the noncharacters U+FDD0–U+FDEF and U+xxFFFE/U+xxFFFF
+     (`unassigned_char`; see 2.4).
 3. It is converted to Unicode Normalization Form C (NFC).
 4. It is split on `/`. No segment may be empty (`a//b`, a trailing `/`:
    `empty_segment`) or equal to `.` or `..` (`dot_segment`).
@@ -52,10 +66,25 @@ step that fails determines the error kind.
    path at most 4096 bytes (`path_too_long`), counted in UTF-8 bytes of the
    NFC form.
 
-The result of step 3 is the canonical path. No other rule applies: for
-example C1 control characters (U+0080–U+009F), bidirectional or zero-width
-characters, the fullwidth solidus U+FF0F, names that are reserved on some
-operating systems (`CON`, names ending in a dot or a space) are all allowed.
+All character checks of step 2 run on the input before NFC and before the
+segment rules; for example `../a` followed by U+200B gives `disallowed_char`,
+not `dot_segment`. The result of step 3 is the canonical path.
+
+Why: control characters and the bidirectional formatting characters can make
+a name display differently from what it is (spoofing, "Trojan Source");
+zero-width characters make different names look identical; unassigned code
+points have no defined normalization or case folding yet (see 2.4).
+
+No other rule applies. In particular these are **allowed**:
+
+* ZWNJ U+200C and ZWJ U+200D — emoji sequences (for example
+  U+1F468 U+200D U+1F469 U+200D U+1F467) and Persian, Indic and other
+  scripts need them;
+* the fullwidth solidus U+FF0F — it is not a separator;
+* private-use characters — they are assigned (category Co);
+* names that are reserved or awkward on some operating systems (`CON`, names
+  ending in a dot or a space) — mapping them is left to export tools, not to
+  the format.
 
 ### 2.2 Siblings
 
@@ -77,12 +106,48 @@ A branch name follows the rules of a single segment (steps 1–5 applied to
 one segment) and therefore never contains `/`; a `/` gives
 `contains_slash`. The NFC form is stored.
 
-### 2.4 Unicode version
+### 2.4 Unicode version V
 
-NFC and case folding depend on the Unicode character database. The
-reference implementation uses Unicode 17.0.0. Results for characters that
-are unassigned in an older Unicode version can differ between
-implementations; the server's normalization is authoritative.
+NFC, case folding and the `unassigned_char` rule depend on the Unicode
+character database. **V** is the Unicode version used by the write-time
+rules: the older of the reference implementation's two Unicode sources (the
+Go standard library, which provides the general categories, and
+golang.org/x/text, which provides NFC and case folding). Today **V =
+15.0.0**: with Go 1.26 both sources are at Unicode 15.0.0.
+
+* V may be raised later. Unicode's stability policies keep assigned code
+  points assigned and keep NFC and case folding of assigned characters
+  unchanged, so raising V only assigns more code points: the set of allowed
+  characters only grows, and paths that were valid stay valid with the same
+  canonical form.
+* Because every unassigned code point is rejected at write time, stored
+  names never contain characters whose normalization a later version could
+  define differently.
+* The read-time rules (2.5) never use Unicode tables, so raising V — or a
+  different Unicode version in another implementation — never makes stored
+  data unreadable.
+
+### 2.5 Write-time and read-time rules
+
+| rule | write time (upload, commit, `Build`) | read time (decoding stored nodes, walking trees) |
+|---|---|---|
+| valid UTF-8, non-empty | ✓ | ✓ |
+| no `/` in a name; no `\` | ✓ | ✓ |
+| no control characters (C0, DEL, C1) | ✓ | ✓ |
+| no bidi formatting or zero-width characters (2.1) | ✓ | ✓ |
+| not `.` or `..` | ✓ | ✓ |
+| at most 255 bytes per name | ✓ (after NFC) | ✓ (as stored) |
+| at most 4096 bytes per path | ✓ | — |
+| no unassigned code points (in V) | ✓ | — |
+| NFC | applied (the canonical form is stored) | not checked |
+| no case-fold conflicts between siblings | ✓ | not checked |
+| no duplicate names, no name used as both file and directory | ✓ | ✓ (implied by strictly ascending names, 3.8) |
+
+The read-time rules are a subset of the write-time rules, so everything a
+conforming writer produces is readable. A reader MUST NOT reject a stored
+name because it is not in NFC, because two names have the same fold key, or
+because it contains a code point unassigned in the reader's Unicode version.
+The test vectors list such nodes in `decode_valid_build_rejects`.
 
 ## 3. Tree nodes
 
@@ -105,8 +170,11 @@ Scheme), restricted to objects, arrays, strings and integers:
   including `/`, `<`, `>`, `&`, U+007F and all non-ASCII characters, is
   written as raw UTF-8;
 * integers are written in decimal without sign, leading zeros, fraction or
-  exponent, and lie in the range 0 … 2^53−1 (so that any RFC 8785
-  implementation reproduces them).
+  exponent, and lie in the range 0 … 2^53−1. Reason: RFC 8785 serializes
+  numbers as IEEE-754 double-precision values (the ECMAScript Number type),
+  which represent every integer exactly only up to 2^53−1; larger values
+  could be printed differently by conforming implementations. As a file
+  size, 2^53−1 bytes (about 9 PB) is far above any supported size.
 
 Array order is not defined by RFC 8785; it is defined below.
 
@@ -131,7 +199,9 @@ at most 1,048,576 bytes.
 | file | `{"hash":"sha256:<hex>","mode":420,"name":"a.txt","size":1234,"type":"file"}` |
 | directory | `{"hash":"sha256:<hex>","name":"docs","type":"dir"}` |
 
-* `name` is one path segment in canonical (NFC) form.
+* `name` is one path segment. Writers store the canonical (NFC) form that
+  section 2 produces; readers check names with the read-time rules (2.5)
+  only.
 * A file's `hash` is its content identity (section 1), `size` its length in
   bytes, `mode` either `420` (0644, regular) or `493` (0755, executable).
   Implementations map local permissions to `493` when any execute bit is set
@@ -140,19 +210,40 @@ at most 1,048,576 bytes.
 * A directory's `hash` is the hash of the directory's top node: a `dir` node
   or a top-level `dir_index` node, never a `dir_page`.
 * Entries are sorted by the UTF-8 bytes of `name`, strictly ascending (this
-  is not UTF-16 order: `｡` U+FF61 sorts before `𝄞` U+1D11E). Siblings obey
-  section 2.2.
+  is not UTF-16 order: `｡` U+FF61 sorts before `𝄞` U+1D11E). Writers ensure
+  that siblings obey section 2.2.
 
 ### 3.4 Index references
 
 A reference in a `dir_index` is `{"count":N,"first":"<name>","hash":"sha256:<hex>"}`:
 
 * `hash` is the hash of a `dir_page` or of a lower-level `dir_index`;
-* `count` is the number of directory entries below the referenced node (for
-  a lower-level index, the sum of its counts);
-* `first` is the name of the first directory entry below the referenced node.
+* `count` is the number of **directory entries** (the leaves: files and
+  subdirectories) below the referenced node — for a `dir_page` the number of
+  its entries, for a lower-level `dir_index` the sum of the `count` values of
+  its references. The `count` values of a top-level index therefore add up to
+  the number of entries of the directory;
+* `first` is the name of the first directory entry (leaf) below the
+  referenced node — for a lower-level index, the `first` of its first
+  reference.
 
 References are sorted by `first`, strictly ascending in UTF-8 byte order.
+
+Example (test vector `two-level-index-1048577-entries`): a directory with the
+1,048,577 files `f0000000` … `f1048576` is split into 1025 pages (1024 pages
+of 1024 entries and one page with 1 entry). The 1025 page references exceed
+1024, so they are packed into two level-1 indexes (with 1024 and 1
+references), and the top-level index is:
+
+```json
+{"format":1,"kind":"dir_index","pages":[{"count":1048576,"first":"f0000000","hash":"sha256:a3d74c9e09aab22419a4f5d1324793ca517abd5df41ffea1e690fda9ee224095"},{"count":1,"first":"f1048576","hash":"sha256:25568880f10538654d433d8b9a01bd94b6bb770e5464b90a77ba0b4f3c094509"}]}
+```
+
+Its first reference covers 1024 × 1024 = 1,048,576 entries starting with
+`f0000000`; the second covers the last entry. The second level-1 index is
+`{"format":1,"kind":"dir_index","pages":[{"count":1,"first":"f1048576","hash":"sha256:88a61f4436ce70dac4a0b057cf7b092b9e473d970cd61e4404f6d240dea79db6"}]}`,
+and the directory's hash (the hash of the top-level index) is
+`sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c`.
 
 ### 3.5 Splitting large directories
 
@@ -186,9 +277,13 @@ Consequences: 1024 entries give one `dir` node; 1025 entries give a
 add a second index level. Inserting a name near the start of a large
 directory rewrites the following pages (accepted in format 1).
 
-Informative: with the path limits of section 2 a single entry encodes to at
-most 651 bytes, so 1024 entries stay below about 667 KB and the byte limit
-does not trigger for valid names; it remains part of the format.
+The 1,048,576-byte limit stays in format 1 as a defensive upper bound, but
+it cannot be reached under the path rules of section 2: a name has at most
+255 bytes and only `"` needs escaping (2 bytes), so a file entry encodes to
+at most 651 bytes, 1024 entries stay below about 667 KB, and 1024 index
+references below about 644 KB. Splitting therefore always happens at 1024
+items in format 1. No test vector can exercise the byte limit; implementations
+should test it with reduced thresholds (the reference implementation does).
 
 ### 3.6 The root and empty directories
 
@@ -209,20 +304,24 @@ A reader MUST reject a node unless all of the following hold:
 
 1. it is at most 1,048,576 bytes, valid UTF-8, a single JSON object with
    exactly the keys of its kind, `format` = 1 and a known `kind`;
-2. entries and references have exactly the keys of their type; names are
-   valid segments already in NFC; hashes are in canonical form; modes are
-   420 or 493; integers are in range; there is no symlink or other type;
-3. names (and `first` values) are strictly ascending and siblings in the node
-   obey section 2.2; a `dir_page` or `dir_index` is not empty;
+2. entries and references have exactly the keys of their type; names and
+   `first` values satisfy the read-time rules (2.5); hashes are in canonical
+   form; modes are 420 or 493; integers are in range; there is no symlink or
+   other type;
+3. names (and `first` values) are strictly ascending in UTF-8 byte order —
+   which excludes duplicates and a name used as both file and directory; a
+   `dir_page` or `dir_index` is not empty;
 4. re-encoding the decoded node with section 3.1 gives exactly the input
    bytes, and the SHA-256 of the bytes equals the expected hash.
 
 A reader that walks a tree MUST additionally check that no directory other
 than the root is empty, that `count` and `first` of every reference match
-the referenced node, that entries are ascending and conflict-free across all
-pages of a directory, and that every paged directory is split exactly as
-section 3.5 prescribes. Together these rules give every set of files exactly
-one valid tree.
+the referenced node, that entries are strictly ascending across all pages of
+a directory, and that every paged directory is split exactly as section 3.5
+prescribes. Readers do not check NFC, case-fold conflicts or unassigned code
+points (2.5). Together these rules give every directory listing exactly one
+valid encoding, and the write-time rules ensure that equivalent names never
+coexist.
 
 ### 3.9 Example
 
