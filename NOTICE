@@ -3,5 +3,5 @@ Copyright 2026 MFGraph contributors
 
 This product includes software developed by the MFGraph contributors.
 
-Third-party dependencies will be listed in THIRD_PARTY_NOTICES when code is added.
-This repository currently contains design documentation only.
+Third-party Go modules used by MFGraph and their licenses are listed in
+THIRD_PARTY_NOTICES.md.

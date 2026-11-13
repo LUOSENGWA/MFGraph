@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: build, vet, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: go mod tidy and verify
+        run: |
+          go mod tidy -diff
+          go mod verify
+      - run: make fmt-check
+      - run: make vet
+      - run: make e2e-compile
+      - run: make build
+      - run: make test
+      - run: make test-heavy
+      - name: dependency allowlist and licenses
+        run: python3 scripts/check_deps.py
+
+  contract:
+    name: OpenAPI contract and generated code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make openapi-check
+      - run: make generate-check
+
+  vectors:
+    name: test vectors (independent reference)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make vectors-verify-heavy
+      - run: make vectors-crosscheck
+
+  migrations:
+    name: migrations on MySQL 8.0
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: mfgraph
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmfgraph --silent"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make test-mysql MYSQL_TEST_DSN='root:mfgraph@tcp(127.0.0.1:3306)/'
+
+  docs:
+    name: links and sensitive-data scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 scripts/check_links.py .
+      - run: python3 scripts/scan_sensitive.py .

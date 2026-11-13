@@ -97,6 +97,17 @@ make dev-db-down  # stop it (data kept); make dev-db-reset also deletes the data
 make test-mysql   # migration tests against it: empty database, re-run, tampered file
 ```
 
+Other checks:
+
+```bash
+make ci           # everything the CI workflow runs except the MySQL job (no Docker needed)
+make ci-mysql     # the CI MySQL job against the local container (requires Docker)
+make test-e2e     # end-to-end acceptance tests; they fail with 501 until the first core slice exists
+make vectors-verify vectors-crosscheck   # independent checks of testdata/vectors
+```
+
+CI (`.github/workflows/ci.yml`) runs the same Make targets on GitHub Actions, with a MySQL 8.0 service container for the migration job.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) · [中文](CONTRIBUTING.zh-CN.md). Security issues: see [SECURITY.md](SECURITY.md) · [中文](SECURITY.zh-CN.md). Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · [中文](CODE_OF_CONDUCT.zh-CN.md).

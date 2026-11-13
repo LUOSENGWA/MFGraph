@@ -12,9 +12,31 @@ LDFLAGS := -X main.version=$(VERSION)
 
 .PHONY: all build test test-e2e e2e-compile test-heavy test-mysql generate generate-check openapi-check run vet fmt fmt-check clean \
 	dev-db-up dev-db-down dev-db-reset \
-	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review
+	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review \
+	tidy-check deps-check docs-check ci ci-mysql
 
 all: build test
+
+## ci: run locally everything the CI workflow runs, except the MySQL job (see ci-mysql)
+ci: tidy-check fmt-check vet e2e-compile build test test-heavy deps-check \
+	openapi-check generate-check vectors-verify-heavy vectors-crosscheck docs-check
+
+## ci-mysql: the CI migration job against the local Docker MySQL (requires Docker)
+ci-mysql: dev-db-up test-mysql
+
+## tidy-check: go.mod/go.sum are tidy and verified
+tidy-check:
+	$(GO) mod tidy -diff
+	$(GO) mod verify
+
+## deps-check: every compiled dependency is allowlisted with a matching license
+deps-check:
+	python3 scripts/check_deps.py
+
+## docs-check: relative Markdown links resolve; no secrets or private markers
+docs-check:
+	python3 scripts/check_links.py .
+	python3 scripts/scan_sensitive.py .
 
 ## build: compile every package and the two binaries into ./bin
 build:

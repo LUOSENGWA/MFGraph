@@ -97,6 +97,17 @@ make dev-db-down  # 停止（保留数据）；make dev-db-reset 会同时删除
 make test-mysql   # 在其上跑迁移测试：空库执行、重跑跳过、篡改报错
 ```
 
+其他检查：
+
+```bash
+make ci           # 在本地跑 CI 工作流中除 MySQL 任务以外的全部步骤（不需要 Docker）
+make ci-mysql     # 用本地容器跑 CI 的 MySQL 任务（需要 Docker）
+make test-e2e     # 端到端验收测试；第一个核心切片实现之前会以 501 失败
+make vectors-verify vectors-crosscheck   # 对 testdata/vectors 做独立核对
+```
+
+CI（`.github/workflows/ci.yml`）在 GitHub Actions 上运行同样的 Make 目标，迁移任务使用 MySQL 8.0 服务容器。
+
 ## 贡献
 
 见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)（[English](CONTRIBUTING.md)）。安全问题见 [SECURITY.zh-CN.md](SECURITY.zh-CN.md)（[English](SECURITY.md)）。行为准则见 [CODE_OF_CONDUCT.zh-CN.md](CODE_OF_CONDUCT.zh-CN.md)（[English](CODE_OF_CONDUCT.md)）。
