@@ -19,6 +19,7 @@ MFGRAPH_E2E_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/' make test-e2e   # with My
 | `TestIdempotentCommitRetry` | retry with the same `Idempotency-Key` → same snapshot; different body → 409 `idempotency_key_reuse` |
 | `TestInvalidPathRejected` | commit an invalid path → 422 `invalid_path` |
 | `TestCrossWorkspaceIsNotFound` | the token of workspace A reading a snapshot of workspace B → 404 |
+| `TestModeKeptWhenOmitted` | replacing a 493 file without `mode` keeps 493; new files get 420; an explicit `mode` wins |
 
 Environment passed to the server: `MFGRAPH_HTTP_ADDR` (a free local port),
 `MFGRAPH_AUTH_TOKENS` (two principals), `MFGRAPH_STORAGE_ROOT` (a temporary

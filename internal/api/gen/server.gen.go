@@ -170,6 +170,9 @@ type BranchList struct {
 
 // Change Exactly one of: `hash` (add or replace the file at `path`, with
 // optional `mode`) or `delete: true` (remove the file at `path`).
+// When `mode` is omitted, an existing file keeps its mode from the base
+// snapshot (the branch head) and a new file gets 420; an explicit
+// `mode` always wins.
 type Change struct {
 	// Delete Must be true when present.
 	Delete *bool `json:"delete,omitempty"`
@@ -188,7 +191,7 @@ type Change struct {
 	Path FilePath `json:"path"`
 }
 
-// CommitRequest Example: {"branch_id":"01JD3X5Q8Z9W2V4T6R8P0N2M4K","changes":[{"hash":"sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","path":"drawings/A.dwg"},{"delete":true,"path":"drawings/old.dwg"}],"expected_generation":1,"message":"add drawings"}
+// CommitRequest Example: {"branch_id":"01JD3X5Q8Z9W2V4T6R8P0N2M4K","changes":[{"hash":"sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","path":"drawings/A.dwg"},{"hash":"sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03","mode":493,"path":"tools/build.sh"},{"delete":true,"path":"drawings/old.dwg"}],"expected_generation":1,"message":"add drawings and the build script"}
 type CommitRequest struct {
 	// BranchId ULID, 26 uppercase Crockford base32 characters.
 	//

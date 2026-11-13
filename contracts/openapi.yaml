@@ -322,9 +322,12 @@ paths:
         parent, moves the branch head with a compare-and-swap on
         `expected_generation` and writes the outbox event.
 
-        * A change with `hash` adds or replaces the file at `path`
-          (`mode` 420 by default, 493 for executables). The content must have
-          been uploaded to this workspace.
+        * A change with `hash` adds or replaces the file at `path`. The
+          content must have been uploaded to this workspace. `mode` is
+          optional: an explicit `mode` (420 regular, 493 executable) always
+          wins; without it, a path that is already a file in the base snapshot
+          (the current head of `branch_id`) keeps its existing mode, and a new
+          file gets 420.
         * A change with `delete: true` removes the file at `path`.
         * Each path may appear once per request; the request needs at least
           one change.
@@ -972,6 +975,9 @@ components:
       description: |
         Exactly one of: `hash` (add or replace the file at `path`, with
         optional `mode`) or `delete: true` (remove the file at `path`).
+        When `mode` is omitted, an existing file keeps its mode from the base
+        snapshot (the branch head) and a new file gets 420; an explicit
+        `mode` always wins.
       properties:
         path:
           $ref: '#/components/schemas/FilePath'
@@ -1004,10 +1010,13 @@ components:
       example:
         branch_id: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
         expected_generation: 1
-        message: add drawings
+        message: add drawings and the build script
         changes:
           - path: drawings/A.dwg
             hash: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+          - path: tools/build.sh
+            hash: sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03
+            mode: 493
           - path: drawings/old.dwg
             delete: true
     CommitResult:

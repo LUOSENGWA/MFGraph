@@ -320,3 +320,40 @@ func TestCrossWorkspaceIsNotFound(t *testing.T) {
 		}
 	}
 }
+
+// 9. A change without mode keeps the mode of an existing file (493 here) and
+// gives new files 420; an explicit mode always wins.
+func TestModeKeptWhenOmitted(t *testing.T) {
+	s := start(t, newEnv(t))
+	c := s.client(tokenA)
+	sd := seed(t, c)
+	ws, br := sd.ws.WorkspaceId, sd.branch.BranchId
+
+	h1 := c.upload(ws, "#!/bin/sh\necho one\n")
+	exec := gen.N493
+	first := c.commit(ws, br, sd.first.Generation, gen.Change{Path: "tool.sh", Hash: &h1, Mode: &exec})
+
+	h2 := c.upload(ws, "#!/bin/sh\necho two\n")
+	second := c.commit(ws, br, first.Generation, put("tool.sh", h2), put("new.txt", h2))
+
+	modes := map[string]gen.FileMode{}
+	for _, e := range c.tree(second.SnapshotId, "").Items {
+		if e.Mode != nil {
+			modes[e.Name] = *e.Mode
+		}
+	}
+	if modes["tool.sh"] != gen.N493 {
+		t.Fatalf("tool.sh replaced without mode: mode %d, want 493 (kept)", modes["tool.sh"])
+	}
+	if modes["new.txt"] != gen.N420 || modes["a.txt"] != gen.N420 {
+		t.Fatalf("files added without mode: new.txt %d, a.txt %d, want 420", modes["new.txt"], modes["a.txt"])
+	}
+
+	regular := gen.N420
+	third := c.commit(ws, br, second.Generation, gen.Change{Path: "tool.sh", Hash: &h2, Mode: &regular})
+	for _, e := range c.tree(third.SnapshotId, "").Items {
+		if e.Name == "tool.sh" && (e.Mode == nil || *e.Mode != gen.N420) {
+			t.Fatalf("explicit mode 420 must win: %+v", e)
+		}
+	}
+}
