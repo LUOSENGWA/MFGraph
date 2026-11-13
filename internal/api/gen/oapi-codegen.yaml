@@ -1,0 +1,10 @@
+# oapi-codegen configuration: models + net/http (std-http) server interface +
+# strict server. Regenerate with `go generate ./internal/api/...`.
+package: gen
+output: server.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+output-options:
+  skip-prune: false

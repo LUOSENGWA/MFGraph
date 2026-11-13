@@ -82,7 +82,12 @@ make build        # 编译全部包；二进制输出到 ./bin
 make test         # 单元测试（不需要数据库和网络）
 make vet          # go vet
 make fmt-check    # gofmt 检查
+make openapi-check  # 校验 contracts/openapi.yaml（kin-openapi）及其约定
+make generate     # 由契约重新生成 internal/api/gen（需要网络）
+make run          # 用开发 token 在 127.0.0.1:8080 启动 mfgraph-server
 ```
+
+服务端用 `MFGRAPH_*` 环境变量配置：`MFGRAPH_HTTP_ADDR`、`MFGRAPH_DB_DSN`（MySQL DSN，本版本可不配）、`MFGRAPH_MIGRATE_ON_START`、`MFGRAPH_KERNEL_MIGRATIONS`、`MFGRAPH_AUTH_TOKENS`（`token=PRINCIPAL_ULID,...`）、`MFGRAPH_LOG_LEVEL`、`MFGRAPH_LOG_FORMAT`、`MFGRAPH_SHUTDOWN_TIMEOUT`。`mfgraph-server migrate` 执行待执行的迁移后退出。本版本只实现了 `/healthz` 和 `/readyz`；[`contracts/openapi.yaml`](contracts/openapi.yaml) 中的其他接口都返回 `501 not_implemented`。
 
 开发用 MySQL 8.0 通过 Docker 运行（`deploy/docker-compose.dev.yml`，只绑定 `127.0.0.1`，一次性本地口令）：
 

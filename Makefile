@@ -10,7 +10,8 @@ MYSQL_TEST_DSN ?= root:mfgraph@tcp(127.0.0.1:3306)/
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build test test-heavy test-mysql vet fmt fmt-check clean dev-db-up dev-db-down dev-db-reset \
+.PHONY: all build test test-heavy test-mysql generate generate-check openapi-check run vet fmt fmt-check clean \
+	dev-db-up dev-db-down dev-db-reset \
 	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review
 
 all: build test
@@ -31,7 +32,24 @@ test-heavy:
 
 ## test-mysql: migration tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
 test-mysql:
-	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v ./internal/migrate/...
+	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v ./internal/migrate/... ./cmd/mfgraph-server/...
+
+## generate: regenerate internal/api/gen from contracts/openapi.yaml (needs network for oapi-codegen)
+generate:
+	$(GO) generate ./internal/api/...
+
+## generate-check: fail if the generated code is not up to date
+generate-check: generate
+	@git diff --exit-code -- internal/api/gen || (echo "generated code is stale: run make generate and commit" && exit 1)
+
+## openapi-check: validate contracts/openapi.yaml and its conventions (kin-openapi)
+openapi-check:
+	$(GO) test -count=1 -run 'OpenAPI' ./internal/api/...
+
+## run: start the server locally without a database (business endpoints answer 501)
+DEV_TOKENS ?= dev-token-change-me-0000=01JD3X5Q8Z9W2V4T6R8P0N2M4K
+run: build
+	MFGRAPH_AUTH_TOKENS='$(DEV_TOKENS)' ./$(BIN)/mfgraph-server
 
 ## vet: go vet
 vet:

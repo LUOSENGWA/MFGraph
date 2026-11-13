@@ -82,7 +82,12 @@ make build        # compile all packages; binaries go to ./bin
 make test         # unit tests (no database, no network)
 make vet          # go vet
 make fmt-check    # gofmt check
+make openapi-check  # validate contracts/openapi.yaml (kin-openapi) and its conventions
+make generate     # regenerate internal/api/gen from the contract (needs network)
+make run          # start mfgraph-server on 127.0.0.1:8080 with a development token
 ```
+
+The server is configured with `MFGRAPH_*` environment variables: `MFGRAPH_HTTP_ADDR`, `MFGRAPH_DB_DSN` (MySQL DSN, optional in this build), `MFGRAPH_MIGRATE_ON_START`, `MFGRAPH_KERNEL_MIGRATIONS`, `MFGRAPH_AUTH_TOKENS` (`token=PRINCIPAL_ULID,...`), `MFGRAPH_LOG_LEVEL`, `MFGRAPH_LOG_FORMAT`, `MFGRAPH_SHUTDOWN_TIMEOUT`. `mfgraph-server migrate` applies pending migrations and exits. In this build only `/healthz` and `/readyz` are implemented; every other endpoint of [`contracts/openapi.yaml`](contracts/openapi.yaml) answers `501 not_implemented`.
 
 MySQL 8.0 for development runs in Docker (`deploy/docker-compose.dev.yml`, bound to `127.0.0.1`, throwaway credentials):
 
