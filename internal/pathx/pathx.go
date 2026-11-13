@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/cases"
@@ -29,7 +30,9 @@ const (
 	KindInvalidUTF8     Kind = "invalid_utf8"      // not valid UTF-8
 	KindAbsolute        Kind = "absolute"          // starts with '/'
 	KindBackslash       Kind = "backslash"         // contains '\'
-	KindControlChar     Kind = "control_char"      // contains U+0000-U+001F or U+007F
+	KindControlChar     Kind = "control_char"      // contains a control character: U+0000-U+001F, U+007F-U+009F
+	KindDisallowedChar  Kind = "disallowed_char"   // contains a bidi control or an invisible zero-width character
+	KindUnassignedChar  Kind = "unassigned_char"   // contains a code point unassigned in UnicodeVersion (write time only)
 	KindEmptySegment    Kind = "empty_segment"     // "a//b" or trailing '/'
 	KindDotSegment      Kind = "dot_segment"       // a segment equal to "." or ".."
 	KindSegmentTooLong  Kind = "segment_too_long"  // segment > MaxSegmentBytes after NFC
@@ -74,18 +77,56 @@ func fail(k Kind, input, detail string) error {
 	return &Error{Kind: k, Input: input, Detail: detail}
 }
 
+// UnicodeVersion is V, the Unicode version whose tables decide at write time
+// whether a code point is assigned. V is the older of the standard library's
+// unicode.Version and the version of golang.org/x/text (NFC, case folding);
+// the tests fail if the standard library ever becomes the newer one, because
+// the assignment check uses the standard library's tables. Raising V only
+// allows more characters; read-time checks never depend on it.
+var UnicodeVersion = unicode.Version
+
+// isControl reports C0 controls, DEL and C1 controls (general category Cc).
+func isControl(r rune) bool { return r < 0x20 || 0x7f <= r && r <= 0x9f }
+
+// isDisallowed reports the fixed set of bidirectional formatting characters
+// (spoofing, "Trojan Source") and invisible zero-width characters rejected in
+// names. U+200C (ZWNJ) and U+200D (ZWJ) are deliberately allowed: emoji
+// sequences and several scripts need them.
+func isDisallowed(r rune) bool {
+	switch r {
+	case 0x061c, // ARABIC LETTER MARK
+		0x200e, 0x200f, // LEFT-TO-RIGHT / RIGHT-TO-LEFT MARK
+		0x200b, // ZERO WIDTH SPACE
+		0x2060, // WORD JOINER
+		0xfeff: // ZERO WIDTH NO-BREAK SPACE (byte order mark)
+		return true
+	}
+	return 0x202a <= r && r <= 0x202e || // embeddings and overrides LRE..RLO
+		0x2066 <= r && r <= 0x2069 // isolates LRI..PDI
+}
+
+// isUnassigned reports code points of general category Cn in UnicodeVersion,
+// including the noncharacters U+FDD0-U+FDEF and U+xxFFFE/U+xxFFFF.
+func isUnassigned(r rune) bool { return unicode.Is(unicode.Cn, r) }
+
 // Normalize validates a '/'-separated relative path and returns its canonical
-// (NFC) form. The checks run in this order, and the first failure wins:
+// (NFC) form. These are the write-time rules, applied to every path that is
+// uploaded or committed. The checks run in this order, and the first failure
+// wins:
 //
 //  1. valid UTF-8 and non-empty;
-//  2. no leading '/', no '\', no NUL or other control characters
-//     (U+0000-U+001F, U+007F);
+//  2. no leading '/'; then the characters are scanned from left to right and
+//     the first offending one decides: '\' (backslash), a control character
+//     U+0000-U+001F or U+007F-U+009F (control_char), a bidi control or
+//     zero-width character (disallowed_char), a code point unassigned in
+//     UnicodeVersion (unassigned_char);
 //  3. NFC normalization;
 //  4. split on '/': no empty segments ("a//b", trailing '/'), no "." or "..";
 //  5. every segment <= MaxSegmentBytes and the whole path <= MaxPathBytes,
 //     counted in bytes of the NFC form.
 //
-// No other rules apply (in particular no platform-specific reserved names).
+// No other rules apply (in particular no platform-specific reserved names,
+// and ZWNJ U+200C / ZWJ U+200D are allowed).
 func Normalize(p string) (string, error) {
 	if p == "" {
 		return "", fail(KindEmpty, p, "")
@@ -96,7 +137,7 @@ func Normalize(p string) (string, error) {
 	if p[0] == '/' {
 		return "", fail(KindAbsolute, p, "paths are relative to the workspace root")
 	}
-	if err := checkChars(p, p); err != nil {
+	if err := checkChars(p, p, true); err != nil {
 		return "", err
 	}
 	n := norm.NFC.String(p)
@@ -120,24 +161,29 @@ func Normalize(p string) (string, error) {
 	return n, nil
 }
 
-// checkChars rejects '\' and control characters, reporting input as the
-// offending value.
-func checkChars(s, input string) error {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+// checkChars scans the valid UTF-8 string s from left to right and rejects
+// the first '\', control character or disallowed character; with
+// assignedOnly it also rejects code points unassigned in UnicodeVersion (a
+// write-time rule). input is reported as the offending value.
+func checkChars(s, input string, assignedOnly bool) error {
+	for _, r := range s {
 		switch {
-		case c == '\\':
+		case r == '\\':
 			return fail(KindBackslash, input, "")
-		case c < 0x20 || c == 0x7f:
-			return fail(KindControlChar, input, fmt.Sprintf("byte 0x%02x", c))
+		case isControl(r):
+			return fail(KindControlChar, input, fmt.Sprintf("%U", r))
+		case isDisallowed(r):
+			return fail(KindDisallowedChar, input, fmt.Sprintf("%U", r))
+		case assignedOnly && isUnassigned(r):
+			return fail(KindUnassignedChar, input, fmt.Sprintf("%U is not assigned in Unicode %s", r, UnicodeVersion))
 		}
 	}
 	return nil
 }
 
 // NormalizeSegment validates a single path segment (a file or directory
-// name) and returns its NFC form. It applies the same rules as Normalize and
-// additionally rejects '/'.
+// name) and returns its NFC form. It applies the same write-time rules as
+// Normalize and additionally rejects '/' (checked before the character scan).
 func NormalizeSegment(s string) (string, error) {
 	if s == "" {
 		return "", fail(KindEmpty, s, "")
@@ -148,7 +194,7 @@ func NormalizeSegment(s string) (string, error) {
 	if strings.IndexByte(s, '/') >= 0 {
 		return "", fail(KindContainsSlash, s, "")
 	}
-	if err := checkChars(s, s); err != nil {
+	if err := checkChars(s, s, true); err != nil {
 		return "", err
 	}
 	n := norm.NFC.String(s)

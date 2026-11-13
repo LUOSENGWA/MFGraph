@@ -7,8 +7,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 )
@@ -218,5 +223,67 @@ func TestErrorType(t *testing.T) {
 	}
 	if pathx.KindOf(errors.New("other")) != "" || pathx.KindOf(nil) != "" {
 		t.Fatal("KindOf of foreign error must be empty")
+	}
+}
+
+func compareVersions(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var x, y int
+		if i < len(as) {
+			x, _ = strconv.Atoi(as[i])
+		}
+		if i < len(bs) {
+			y, _ = strconv.Atoi(bs[i])
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// TestUnicodeVersionV guards the choice of V. The unassigned check uses the
+// standard library's tables, which is only correct while the standard
+// library is not newer than golang.org/x/text (NFC and case folding). The
+// pinned value is the one written in the specification and REVIEW.md.
+func TestUnicodeVersionV(t *testing.T) {
+	if pathx.UnicodeVersion != unicode.Version {
+		t.Fatalf("UnicodeVersion %s != unicode.Version %s", pathx.UnicodeVersion, unicode.Version)
+	}
+	for name, v := range map[string]string{"x/text unicode/norm": norm.Version, "x/text cases": cases.UnicodeVersion} {
+		if compareVersions(unicode.Version, v) > 0 {
+			t.Fatalf("standard library Unicode %s is newer than %s %s: V must then come from the x/text tables "+
+				"(see docs/spec/content-format.md, Unicode version)", unicode.Version, name, v)
+		}
+	}
+	if pathx.UnicodeVersion != "15.0.0" {
+		t.Fatalf("V changed to %s: update docs/spec/content-format.md and REVIEW.md, and re-check the vectors "+
+			"(raising V may only allow more characters)", pathx.UnicodeVersion)
+	}
+}
+
+func TestAllowedAndRejectedCharacters(t *testing.T) {
+	allowed := []rune{0x200c, 0x200d, 0xff0f, 0xe000, 0x00a0, 0x2028}
+	for _, r := range allowed {
+		if _, err := pathx.NormalizeSegment("a" + string(r) + "b"); err != nil {
+			t.Errorf("%U must be allowed: %v", r, err)
+		}
+	}
+	rejected := map[rune]pathx.Kind{
+		0x0085: pathx.KindControlChar, 0x0080: pathx.KindControlChar, 0x009f: pathx.KindControlChar,
+		0x061c: pathx.KindDisallowedChar, 0x200e: pathx.KindDisallowedChar, 0x200f: pathx.KindDisallowedChar,
+		0x202a: pathx.KindDisallowedChar, 0x202e: pathx.KindDisallowedChar, 0x2066: pathx.KindDisallowedChar,
+		0x2069: pathx.KindDisallowedChar, 0x200b: pathx.KindDisallowedChar, 0x2060: pathx.KindDisallowedChar,
+		0xfeff: pathx.KindDisallowedChar, 0x0378: pathx.KindUnassignedChar, 0xfffe: pathx.KindUnassignedChar,
+		0x10ffff: pathx.KindUnassignedChar,
+	}
+	for r, want := range rejected {
+		if _, err := pathx.NormalizeSegment("a" + string(r)); pathx.KindOf(err) != want {
+			t.Errorf("%U: got %v, want %s", r, err, want)
+		}
 	}
 }
