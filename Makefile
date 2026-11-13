@@ -5,10 +5,12 @@ GO      ?= go
 DOCKER  ?= docker
 COMPOSE ?= $(DOCKER) compose -f deploy/docker-compose.dev.yml
 BIN     ?= bin
+# DSN of a MySQL user that may create/drop databases (the dev container's root).
+MYSQL_TEST_DSN ?= root:mfgraph@tcp(127.0.0.1:3306)/
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build test test-heavy vet fmt fmt-check clean dev-db-up dev-db-down dev-db-reset \
+.PHONY: all build test test-heavy test-mysql vet fmt fmt-check clean dev-db-up dev-db-down dev-db-reset \
 	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review
 
 all: build test
@@ -26,6 +28,10 @@ test:
 ## test-heavy: also run the multi-million-entry tree vectors (~10 s)
 test-heavy:
 	MFGRAPH_HEAVY_VECTORS=1 $(GO) test -count=1 ./internal/tree/...
+
+## test-mysql: migration tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
+test-mysql:
+	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v ./internal/migrate/...
 
 ## vet: go vet
 vet:

@@ -89,6 +89,7 @@ make fmt-check    # gofmt 检查
 ```bash
 make dev-db-up    # 启动 MySQL 8.0 并等待就绪（需要 Docker）
 make dev-db-down  # 停止（保留数据）；make dev-db-reset 会同时删除数据卷
+make test-mysql   # 在其上跑迁移测试：空库执行、重跑跳过、篡改报错
 ```
 
 ## 贡献

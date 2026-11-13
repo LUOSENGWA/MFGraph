@@ -12,3 +12,6 @@
 *.pdf binary
 *.zip binary
 *.pack binary
+
+# Migration checksums are computed over the exact bytes; keep LF endings.
+*.sql text eol=lf

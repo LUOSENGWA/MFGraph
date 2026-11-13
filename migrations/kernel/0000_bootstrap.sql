@@ -1,0 +1,28 @@
+-- Kernel bootstrap for standalone deployments: minimal projects and
+-- principals. When MFGraph is embedded in a host platform these tables are
+-- owned by the host and this directory is not executed.
+-- Conventions: IDs are ULIDs (CHAR(26) ascii_bin), times are epoch
+-- microseconds (BIGINT), states are VARCHAR checked by the application.
+
+CREATE TABLE IF NOT EXISTS projects (
+  project_id     CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  tenant_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  name           VARCHAR(255) NOT NULL,
+  status         VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at_us  BIGINT NOT NULL,
+  updated_at_us  BIGINT NOT NULL,
+  PRIMARY KEY (project_id),
+  KEY idx_projects_tenant (tenant_id, status, updated_at_us)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+-- kind: human / agent / service / team (MFGraph treats them alike).
+CREATE TABLE IF NOT EXISTS principals (
+  principal_uid  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  tenant_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  display_name   VARCHAR(255) NOT NULL DEFAULT '',
+  kind           VARCHAR(32) NOT NULL,
+  status         VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at_us  BIGINT NOT NULL,
+  PRIMARY KEY (principal_uid),
+  KEY idx_principals_tenant (tenant_id, kind, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

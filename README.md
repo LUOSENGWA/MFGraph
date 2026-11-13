@@ -89,6 +89,7 @@ MySQL 8.0 for development runs in Docker (`deploy/docker-compose.dev.yml`, bound
 ```bash
 make dev-db-up    # start MySQL 8.0 and wait until healthy (requires Docker)
 make dev-db-down  # stop it (data kept); make dev-db-reset also deletes the data volume
+make test-mysql   # migration tests against it: empty database, re-run, tampered file
 ```
 
 ## Contributing
