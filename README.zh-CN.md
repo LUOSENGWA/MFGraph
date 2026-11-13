@@ -4,11 +4,11 @@
 
 **面向团队与 Agent 的项目级版本图谱。**
 
-MFGraph 是一个设计阶段的自托管服务，用图谱方式对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。workspace 是项目图谱中的节点；项目级 commit 层（superproject，MF-D28）是 **v1 核心特性**。
+MFGraph 是一个处于早期开发阶段的自托管服务，用图谱方式对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。workspace 是项目图谱中的节点；项目级 commit 层（superproject）是 **v1 核心特性**。
 
-> 状态：**设计/规格阶段**。本仓库暂无生产代码；这里定义的是待实现的契约。
+> 状态：**早期开发（M0）**。内容格式（[规范](docs/spec/zh-CN/content-format.md)）、第一个核心切片的数据库 schema（[`migrations/`](migrations)）、HTTP 契约（[`contracts/openapi.yaml`](contracts/openapi.yaml)）和代码骨架已就位。目前只实现了 `/healthz` 和 `/readyz`；在第一个核心切片完成之前，其他接口都返回 `501 not_implemented`。
 >
-> ⚠️ **快照声明（2026-11-12）**：公开仓是 **pre-M0 快照**，不是现行内部契约。部分文档仍描述已被取代的设计（如 workstream 的 `assign`/`dispatch` 已移除——MFGraph 不指派、不派发任务）。以内部设计集为准；M0 冻结后会重新同步。
+> 说明：[`docs/spec/`](docs/spec/zh-CN/content-format.md) 中的字节格式、迁移脚本和 OpenAPI 契约具有约束力。其他文档描述规划中的 v1 设计；两者不一致时以契约为准。MFGraph 不指派、不派发任务。
 
 ## 为什么需要 MFGraph
 
@@ -57,6 +57,8 @@ workflow (外部，可选)
 
 ## 文档
 
+- [内容格式规范](docs/spec/zh-CN/content-format.md)
+- [HTTP API 契约（OpenAPI）](contracts/openapi.yaml)
 - [架构](docs/zh-CN/architecture.md)
 - [数据模型](docs/zh-CN/data-model.md)
 - [存储](docs/zh-CN/storage.md)
@@ -69,7 +71,7 @@ workflow (外部，可选)
 
 ## 状态与许可
 
-本仓库是**设计/规格仓库**。代码将按照 `docs/` 中的契约实现。
+代码遵循 `docs/spec/`、`contracts/` 和 `migrations/` 中的契约；格式的测试向量在 `testdata/vectors/`。
 
 许可：**Apache-2.0**（见 [LICENSE](LICENSE)）。
 

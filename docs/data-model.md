@@ -41,7 +41,7 @@ MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase 
 - JSON is stored as `LONGTEXT`; queries are application-side;
 - paths use NFC + `path_hash = sha256(NFC(path))` for indexes;
 - **content identity**: `content_hash` = whole-file SHA-256 (`sha256:<hex>`), independent of chunk size, backend and upload path; chunking is physical layout only, not part of the identity;
-- **manifest = tree**: tree nodes are pure content with deterministic encoding; `snapshots.root_tree_hash` points to the root node; `mtime` lives in a snapshot sidecar and is not hashed;
+- **manifest = tree**: tree nodes are pure content with deterministic encoding; `snapshots.root_tree_hash` points to the root node; v1 stores no modification times (only the executable bit, as mode 420/493) — see the [content format specification](spec/content-format.md);
 - content tables are **scoped by `workspace_id`** — no cross-workspace deduplication;
 - storage keys in the DB are **relative to `workspaces.storage_prefix`** (immutable, chosen at create time);
 - branches use `ref_name` (`main`, `workstreams/<workstream_id>/<branch_name>`); `workstream` and `branch` are separate entities;
@@ -59,17 +59,16 @@ A workstream may have multiple branches. A branch belongs to exactly one workspa
 
 ## Migrations
 
-- `0000_project_nodes.sql` — kernel bootstrap (creates `projects`/`project_nodes` in the host `ops` schema; not an mfgraph module migration)
-- `0001_workspaces.sql`
-- `0002_workstreams_branches.sql`
-- `0003_snapshots_entries.sql`
-- `0004_blobs_packs_chunks.sql`
-- `0005_locks.sql`
-- `0006_uploads.sql`
-- `0007_derived_artifacts.sql`
-- `0008_usage_outbox_idempotency.sql`
-- `0009_project_commits_restore_pins.sql`
-- `0010_workspace_fencing.sql`
-- `0011_gc_state.sql`
+Migrations live in [`migrations/`](../migrations) and are applied by `mfgraph-server migrate` (or `MFGRAPH_MIGRATE_ON_START=true`). The first core slice defines:
+
+- `kernel/0000_bootstrap.sql` — kernel tables for standalone deployments (`projects`, minimal `principals`); a host platform provides its own and does not run this file
+- `mysql/0001_workspaces.sql`
+- `mysql/0002_workstreams_branches.sql`
+- `mysql/0003_snapshots.sql` — `snapshots`, `snapshot_parents`
+- `mysql/0004_blobs.sql` — `blobs` with a `hash_algo` column; status `staged` / `live`
+- `mysql/0006_uploads.sql`
+- `mysql/0008_usage_outbox_idempotency.sql`
+
+Numbers 0005 and 0007 are reserved. Later slices add locks, packs/chunks, the optional path index (`snapshot_entries`), derived artifacts, project commits, fencing and GC state as new files. Applied files are immutable: the runner records a SHA-256 per file in `schema_migrations(component, version, checksum, applied_at_us)` and refuses to continue when it changes.
 
 Use expand/contract; never combine destructive DDL and code switch in one release.

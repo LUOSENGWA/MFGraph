@@ -37,16 +37,16 @@ Capabilities
 ## 内容布局
 
 ```text
-tenants/<tenant_id>/
-  projects/<project_id>/
-    nodes/<scope_node_id>/          # 可选
-      workspaces/<workspace_id>/
-        packs/<pack_id>.pack
-        manifests/<snapshot_id>.json.zst
-        uploads/<upload_id>/
-        derived/<source_hash>/<kind>/
-        trash/<yyyy>/<mm>/
+<storage_prefix>/                   # 默认：tenants/<tenant_id>/projects/<project_id>/workspaces/<workspace_id>
+  objects/<hh>/<sha256>             # 整文件内容（已冻结）
+  tree/<hh>/<sha256>.json.zst       # 树节点：规范字节的 zstd 压缩（已冻结）
+  packs/<pack_id>.pack              # 后续切片
+  uploads/<upload_id>/              # 后续切片
+  derived/<source_hash>/<kind>/
+  trash/<yyyy>/<mm>/
 ```
+
+存储前缀在创建 workspace 时确定，之后不变；数据库只保存相对于它的 key。key 规则见[内容格式规范](../spec/zh-CN/content-format.md#4-存储-key)。
 
 ## 提交协议
 
@@ -64,7 +64,7 @@ DB 与对象存储之间没有分布式事务。一次提交是**文件/版本�
 - TTL + 心跳 + fencing token；持有凭据是 **lock_id**，不是 principal；
 - 租约过期判定用 **DB 时间**（`NOW(6)`）；acquire/接管与提交共用 `workspace_fencing` 行锁（串行化点）；
 - 过期写者的提交返回 409；break-glass 仅管理员可用，且必须审计；
-- 提交校验 `base_head`：同一路径被并发修改返回 409 `path_conflict`——重试绝不静默覆盖。
+- 提交携带 `expected_generation`；基于过期分支 head 的提交返回 409 `conflict`——重试绝不静默覆盖。
 
 ## 垃圾回收
 

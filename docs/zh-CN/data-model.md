@@ -41,7 +41,7 @@ MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBas
 - JSON 存为 `LONGTEXT`；查询在应用侧完成；
 - 路径使用 NFC + `path_hash = sha256(NFC(path))` 建索引；
 - **内容身份**：`content_hash` = 整文件 SHA-256（`sha256:<hex>`），与分片大小、后端、上传路径无关；chunking 只是物理布局，不参与身份；
-- **manifest = 树**：树节点是纯内容 + 确定性编码；`snapshots.root_tree_hash` 指向根节点；`mtime` 放快照级 sidecar，不进 hash；
+- **manifest = 树**：树节点是纯内容 + 确定性编码；`snapshots.root_tree_hash` 指向根节点；v1 不保存修改时间（只保留可执行位，即 mode 420/493）——见[内容格式规范](../spec/zh-CN/content-format.md)；
 - 内容表**按 `workspace_id` 隔离** —— 不做跨 workspace 去重；
 - DB 里的存储 key 是**相对 `workspaces.storage_prefix` 的路径**（创建时写入、不可变）；
 - branch 使用 `ref_name`（`main`、`workstreams/<workstream_id>/<branch_name>`）；`workstream` 与 `branch` 是不同实体；
@@ -59,17 +59,16 @@ workstreams/<workstream_id>/<branch_name>
 
 ## 迁移
 
-- `0000_project_nodes.sql` —— 内核 bootstrap（在宿主 `ops` schema 建 `projects`/`project_nodes`；不属于 mfgraph 模块迁移）
-- `0001_workspaces.sql`
-- `0002_workstreams_branches.sql`
-- `0003_snapshots_entries.sql`
-- `0004_blobs_packs_chunks.sql`
-- `0005_locks.sql`
-- `0006_uploads.sql`
-- `0007_derived_artifacts.sql`
-- `0008_usage_outbox_idempotency.sql`
-- `0009_project_commits_restore_pins.sql`
-- `0010_workspace_fencing.sql`
-- `0011_gc_state.sql`
+迁移脚本在 [`migrations/`](../../migrations)，由 `mfgraph-server migrate`（或 `MFGRAPH_MIGRATE_ON_START=true`）执行。第一个核心切片定义：
+
+- `kernel/0000_bootstrap.sql` —— 独立部署时的内核表（`projects`、最小的 `principals`）；宿主平台自带这些表，不执行此文件
+- `mysql/0001_workspaces.sql`
+- `mysql/0002_workstreams_branches.sql`
+- `mysql/0003_snapshots.sql` —— `snapshots`、`snapshot_parents`
+- `mysql/0004_blobs.sql` —— `blobs`，含 `hash_algo` 列；状态 `staged` / `live`
+- `mysql/0006_uploads.sql`
+- `mysql/0008_usage_outbox_idempotency.sql`
+
+编号 0005 和 0007 预留。后续切片以新文件增加锁、packs/chunks、可选路径索引（`snapshot_entries`）、派生工件、project commit、fencing 和 GC 状态。已执行的文件不可修改：执行器在 `schema_migrations(component, version, checksum, applied_at_us)` 中记录每个文件的 SHA-256，发现变化即拒绝继续。
 
 使用 expand/contract；不要把破坏性 DDL 与代码切换放在同一个 release。

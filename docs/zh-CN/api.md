@@ -4,6 +4,8 @@
 
 REST/JSON，版本化在 `/api/v1` 下。MCP 与 CLI 都是同一 API 的薄适配器。
 
+第一个核心切片的契约是 [`contracts/openapi.yaml`](../../contracts/openapi.yaml)（OpenAPI 3.0.3）：健康检查、项目、project 级 workspace、分支、整文件上传进暂存（`PUT /api/v1/workspaces/{id}/objects`）、提交、时间线、目录浏览、文件下载、diff 和恢复。下文列出的是规划中的 v1 接口；后续切片只新增接口，不改变已有接口。
+
 ## Workspace / 项目树
 
 ```text
@@ -91,4 +93,4 @@ X-Correlation-Id: <optional>
 
 ## 错误
 
-`400`、`401`、`403`、`404`、`409`、`410`、`412`、`413`、`422`、`429`、`500`、`503`，响应带稳定的 `code` 与 `request_id`。
+所有错误都使用同一种扁平结构：`{"code": "...", "message": "...", "request_id": "...", "details": {...}}`。错误码：`invalid_request`（400）、`unauthenticated`（401）、`forbidden`（403）、`not_found`（404）、`conflict` 与 `idempotency_key_reuse`（409）、`upload_expired` 与 `blob_missing`（410）、`precondition_failed`（412）、`quota_exceeded` 与 `file_too_large`（413）、`invalid_path` 与 `unsupported_format`（422）、`rate_limited`（429）、`internal`（500）、`not_implemented`（501）、`storage_unavailable` 与 `db_unavailable`（503）。

@@ -69,7 +69,7 @@ Health() -> ok
 
 ## 不派发
 
-MFGraph **不指派、不派发任务**（MF-D32）。`workstream` 只是版本车道（active/archived）；任务指派、派发与任务状态归外部任务/工作流系统。MFGraph 只发领域事件（如 `mfgraph.snapshot.created.v1`），工作流引擎可回写 `workflow_ref`（仅引用）。
+MFGraph **不指派、不派发任务**。`workstream` 只是版本车道（active/archived）；任务指派、派发与任务状态归外部任务/工作流系统。MFGraph 只发领域事件（如 `mfgraph.snapshot.created.v1`），工作流引擎可回写 `workflow_ref`（仅引用）。
 
 ## 安全
 

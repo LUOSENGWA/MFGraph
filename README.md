@@ -4,11 +4,11 @@
 
 **Project-level version graph for teams and agents.**
 
-MFGraph is a design-stage, self-hosted service for versioning project workspaces as a graph. It separates the business hierarchy (`project` → `project_node`), the content layer (`workspace` → `snapshot`), the execution layer (`workstream` → `branch`), and the process layer (external workflow engine). A workspace is a node in the project graph; the project-level commit layer (superproject, MF-D28) is a **v1 core feature**.
+MFGraph is a self-hosted service, in early development, for versioning project workspaces as a graph. It separates the business hierarchy (`project` → `project_node`), the content layer (`workspace` → `snapshot`), the execution layer (`workstream` → `branch`), and the process layer (external workflow engine). A workspace is a node in the project graph; the project-level commit layer (superproject) is a **v1 core feature**.
 
-> Status: **design/spec stage**. There is no production code in this repository yet. The documents here define the contracts to implement.
+> Status: **early development (M0)**. The content formats ([specification](docs/spec/content-format.md)), the database schema of the first core slice ([`migrations/`](migrations)), the HTTP contract ([`contracts/openapi.yaml`](contracts/openapi.yaml)) and a code skeleton are in place. Only `/healthz` and `/readyz` are implemented; every other endpoint answers `501 not_implemented` until the first core slice lands.
 >
-> ⚠️ **Snapshot notice (2026-11-12)**: this public repo is a *pre-M0 snapshot*, not the current internal contract. Some docs still describe superseded designs (e.g. workstream `assign`/`dispatch` was removed — MFGraph does not assign or dispatch tasks). The source of truth is the internal design set; this repo will be re-synced after M0 freeze.
+> Note: the byte formats in [`docs/spec/`](docs/spec/content-format.md), the migrations and the OpenAPI contract are authoritative. The other documents describe the planned v1 design; where they differ, the contracts win. MFGraph does not assign or dispatch tasks.
 
 ## Why MFGraph
 
@@ -57,6 +57,8 @@ workflow (external, optional)
 
 ## Documentation
 
+- [Content format specification](docs/spec/content-format.md) · [中文](docs/spec/zh-CN/content-format.md)
+- [HTTP API contract (OpenAPI)](contracts/openapi.yaml)
 - [Architecture](docs/architecture.md) · [中文](docs/zh-CN/architecture.md)
 - [Data model](docs/data-model.md) · [中文](docs/zh-CN/data-model.md)
 - [Storage](docs/storage.md) · [中文](docs/zh-CN/storage.md)
@@ -69,7 +71,7 @@ workflow (external, optional)
 
 ## Status and license
 
-This repository is a **design/specification repository**. Code will follow the contracts in `docs/`.
+The code follows the contracts in `docs/spec/`, `contracts/` and `migrations/`; test vectors for the formats are in `testdata/vectors/`.
 
 License: **Apache-2.0** (see [LICENSE](LICENSE)).
 

@@ -37,16 +37,16 @@ Capabilities
 ## Content layout
 
 ```text
-tenants/<tenant_id>/
-  projects/<project_id>/
-    nodes/<scope_node_id>/          # optional
-      workspaces/<workspace_id>/
-        packs/<pack_id>.pack
-        manifests/<snapshot_id>.json.zst
-        uploads/<upload_id>/
-        derived/<source_hash>/<kind>/
-        trash/<yyyy>/<mm>/
+<storage_prefix>/                   # default: tenants/<tenant_id>/projects/<project_id>/workspaces/<workspace_id>
+  objects/<hh>/<sha256>             # whole-file content (frozen)
+  tree/<hh>/<sha256>.json.zst       # tree nodes: zstd of the canonical bytes (frozen)
+  packs/<pack_id>.pack              # later slice
+  uploads/<upload_id>/              # later slice
+  derived/<source_hash>/<kind>/
+  trash/<yyyy>/<mm>/
 ```
+
+The storage prefix is fixed when the workspace is created; the database stores keys relative to it. The key rules are specified in the [content format specification](spec/content-format.md#4-storage-keys).
 
 ## Commit protocol
 
@@ -64,7 +64,7 @@ There is no distributed transaction across DB and object storage. A commit is a 
 - TTL + heartbeat + fencing token; the holder capability is the **lock_id**, not the principal;
 - lease expiry is compared against **DB time** (`NOW(6)`), and lock acquire/takeover commit share the `workspace_fencing` row lock (serialization point);
 - expired writer commits get 409; break-glass is admin-only and audited;
-- commit checks `base_head`: concurrent edits to the same path return 409 `path_conflict` — retries never silently overwrite.
+- commits carry `expected_generation`; a commit based on an outdated branch head returns 409 `conflict` — retries never silently overwrite.
 
 ## Garbage collection
 

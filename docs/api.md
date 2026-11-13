@@ -4,6 +4,8 @@
 
 REST/JSON, versioned under `/api/v1`. MCP and CLI are thin adapters over the same API.
 
+The contract of the first core slice is [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.0.3): health checks, projects, project-level workspaces, branches, whole-file upload into staging (`PUT /api/v1/workspaces/{id}/objects`), commits, timeline, tree listing, file download, diff and restore. The lists below show the planned v1 surface; later slices add endpoints without changing existing ones.
+
 ## Workspace / project tree
 
 ```text
@@ -91,4 +93,4 @@ X-Correlation-Id: <optional>
 
 ## Errors
 
-`400`, `401`, `403`, `404`, `409`, `410`, `412`, `413`, `422`, `429`, `500`, `503` with a stable `code` and `request_id`.
+Every error has one flat body: `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`. Codes: `invalid_request` (400), `unauthenticated` (401), `forbidden` (403), `not_found` (404), `conflict` and `idempotency_key_reuse` (409), `upload_expired` and `blob_missing` (410), `precondition_failed` (412), `quota_exceeded` and `file_too_large` (413), `invalid_path` and `unsupported_format` (422), `rate_limited` (429), `internal` (500), `not_implemented` (501), `storage_unavailable` and `db_unavailable` (503).
