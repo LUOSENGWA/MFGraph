@@ -44,6 +44,12 @@ var frozenLimits = limits{maxItems: MaxEntriesPerNode, maxBytes: MaxNodeBytes}
 // and directory, and case-fold conflicts between siblings are rejected with a
 // *pathx.Error. Directories are implicit; an empty input gives the empty
 // root directory. The result does not depend on the order of files.
+//
+// Build applies the write-time rules to every input path, which is right
+// for a tree built from a complete set of new paths. A commit on top of an
+// existing tree applies them only to the paths it adds or changes and carries
+// the other entries over with their stored bytes, without normalizing or
+// checking them again (specification, section 2.6).
 func Build(files []FileEntry) (contenthash.Hash, map[contenthash.Hash][]byte, error) {
 	return build(files, frozenLimits)
 }

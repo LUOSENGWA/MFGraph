@@ -10,6 +10,9 @@ produce and verify identical hashes. Test vectors are in
 
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
+This English version is authoritative; the Chinese translation is provided
+for convenience.
+
 Changing anything in this document that changes a hash requires a new format
 version (`"format": 2`); data written with format 1 stays valid.
 
@@ -28,6 +31,16 @@ version (`"format": 2`); data written with format 1 stays valid.
    whitespace, wrong length), so that every hash has one representation.
 4. Database form: the 64-digit lowercase hex digest without prefix, plus a
    separate algorithm column whose value is `sha256`.
+5. An empty file is valid content. Its identity is
+   `sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+   and its size 0.
+6. Content hashes and tree node hashes (3.7) are computed the same way and
+   have **no domain separation**: a file whose bytes happen to equal the
+   canonical encoding of a node has that node's hash. A hash is therefore
+   never looked up without knowing which kind of object it names. In a tree
+   the kind follows from the position (a file entry's `hash` is a content
+   hash; a directory entry's or index reference's `hash` is a node hash), and
+   storage keeps the two kinds apart (`objects/` and `tree/`, section 4).
 
 ## 2. Paths
 
@@ -40,6 +53,7 @@ Sections 2.1–2.3 are the **write-time rules**: a server applies them to every
 path that is uploaded or committed, and a tree writer applies them before
 encoding. Names read back from stored tree nodes are checked only with the
 **read-time rules** of section 2.5, which never depend on Unicode tables.
+Section 2.6 says which paths a commit checks and how paths are looked up.
 
 ### 2.1 Normalization
 
@@ -80,6 +94,13 @@ reports.
 All character checks of step 2 run on the input before NFC and before the
 segment rules; for example `../a` followed by U+200B gives `disallowed_char`,
 not `dot_segment`. The result of step 3 is the canonical path.
+
+NFC can change characters a client sent: besides composing sequences such as
+`e` U+0301 into `é`, it replaces the CJK compatibility ideographs by their
+unified counterparts (U+FA10 becomes U+585A), which occur in Japanese and
+Korean names. Only the canonical path is stored, and servers return only
+canonical paths, so a client must use the paths it receives rather than the
+ones it sent.
 
 Error kinds are normative only for an input that breaks exactly one rule.
 When an input breaks several rules (for example `/a//b`, or `a\b` followed
@@ -152,6 +173,13 @@ A branch name follows the rules of a single segment (steps 1–5 applied to
 one segment) and therefore never contains `/`; a `/` gives
 `contains_slash`. The NFC form is stored.
 
+Within one workstream, two branch names MUST NOT have the same fold key
+(2.2), and this includes the branch `main`: `Dev` and `dev` cannot coexist,
+and neither can `main` and `Main`. Names are stored byte for byte otherwise:
+`dev` and `dev ` (with a trailing space) are different branches. This rule
+is part of the specification now; the reference implementation enforces it
+once branches can be created by name.
+
 ### 2.4 Unicode version V
 
 NFC, case folding and the `unassigned_char` rule depend on the Unicode
@@ -204,6 +232,25 @@ or because it contains a character of the fixed disallowed list. The
 write-time rules can therefore change (a new V, a longer disallowed list)
 without making stored data unreadable. The test vectors list such nodes in
 `decode_valid_build_rejects`.
+
+### 2.6 Applying the rules
+
+* **Commits.** A commit applies the write-time rules to the paths it adds or
+  changes, including the sibling rules of 2.2 between a new or changed name
+  and the names already in its directory. Entries carried over unchanged from
+  the base snapshot (and entries restored from another snapshot) keep their
+  stored bytes: they are neither normalized nor checked again. A tree that
+  contains a name outside the current write-time rules (for example a code
+  point assigned only in a later Unicode version, written by an
+  implementation with a higher V) therefore never makes a later commit fail
+  because of entries the commit does not touch.
+* **Lookups.** A path given to find an existing entry (listing a directory,
+  downloading a file, a path given to a diff or a restore) MUST be valid UTF-8
+  and every `/`-separated segment MUST satisfy the read-time rules of 2.5; it
+  is then converted to NFC and compared byte for byte with the stored names.
+  Lookups do not check unassigned code points or the disallowed list. A
+  stored name that is not in NFC cannot be found this way; it can still be
+  listed.
 
 ## 3. Tree nodes
 
@@ -265,9 +312,22 @@ at most 1,048,576 bytes.
   time, owner or other permission bits.
 * A directory's `hash` is the hash of the directory's top node: a `dir` node
   or a top-level `dir_index` node, never a `dir_page`.
+* A file may be empty: `size` 0 and the hash of the empty content (1.5).
 * Entries are sorted by the UTF-8 bytes of `name`, strictly ascending (this
   is not UTF-16 order: `｡` U+FF61 sorts before `𝄞` U+1D11E). Writers ensure
   that siblings obey section 2.2.
+* Entries are sorted within their own directory, and the name of a
+  directory is compared without a trailing `/`. Walking a tree (pre-order,
+  each directory's entries in this order) therefore produces the paths in
+  **path order**: two paths are compared segment by segment, each segment by
+  its UTF-8 bytes, and a path sorts before every path below it. Path order
+  is not the byte order of the full path strings. Example: a directory `a`
+  containing `x`, and the files `a-b` and `a.txt`. The walk order is `a`,
+  `a/x`, `a-b`, `a.txt`; the byte order of the full paths is `a`, `a-b`,
+  `a.txt`, `a/x` (`-` is 0x2D, `.` 0x2E, `/` 0x2F). A list sorted by full
+  path bytes, for example by a database index, must not be fed to a tree
+  builder that expects walk order, nor merged with a tree walk. Test vector:
+  `walk-order-is-path-order-not-full-path-byte-order`.
 
 ### 3.4 Index references
 
@@ -278,7 +338,8 @@ A reference in a `dir_index` is `{"count":N,"first":"<name>","hash":"sha256:<hex
   subdirectories) below the referenced node — for a `dir_page` the number of
   its entries, for a lower-level `dir_index` the sum of the `count` values of
   its references. The `count` values of a top-level index therefore add up to
-  the number of entries of the directory;
+  the number of entries of the directory. Since pages and indexes are never
+  empty, `count` is **at least 1**;
 * `first` is the name of the first directory entry (leaf) below the
   referenced node — for a lower-level index, the `first` of its first
   reference.
@@ -338,8 +399,11 @@ it cannot be reached under the path rules of section 2: a name has at most
 255 bytes and only `"` needs escaping (2 bytes), so a file entry encodes to
 at most 651 bytes, 1024 entries stay below about 667 KB, and 1024 index
 references below about 644 KB. Splitting therefore always happens at 1024
-items in format 1. No test vector can exercise the byte limit; implementations
-should test it with reduced thresholds (the reference implementation does).
+items in format 1: **every page except the last one of a directory has
+exactly 1024 entries**, and every index below the top level except the last
+one has exactly 1024 references, which lets a reader check a page on its own.
+No test vector can exercise the byte limit; implementations should test it
+with reduced thresholds (the reference implementation does).
 
 ### 3.6 The root and empty directories
 
@@ -352,7 +416,7 @@ A directory entry that points to an empty node is invalid.
 
 The hash of a node is the SHA-256 of its **uncompressed** canonical bytes, in
 the textual form of section 1. How nodes are compressed or stored does not
-affect it.
+affect it. Node hashes and content hashes are not domain-separated (1.6).
 
 ### 3.8 Strict decoding
 
@@ -362,8 +426,8 @@ A reader MUST reject a node unless all of the following hold:
    exactly the keys of its kind, `format` = 1 and a known `kind`;
 2. entries and references have exactly the keys of their type; names and
    `first` values satisfy the read-time rules (2.5); hashes are in canonical
-   form; modes are 420 or 493; integers are in range; there is no symlink or
-   other type;
+   form; modes are 420 or 493; integers are in range (0 … 2^53−1, and
+   `count` at least 1); there is no symlink or other type;
 3. names (and `first` values) are strictly ascending in UTF-8 byte order —
    which excludes duplicates and a name used as both file and directory; a
    `dir_page` or `dir_index` is not empty;
@@ -448,6 +512,13 @@ uncompressed canonical bytes (3.7).
 * `testdata/vectors/contenthash.json`, `pathx.json` and `tree.json` contain
   inputs and expected results; see the
   [vectors README](../../testdata/vectors/README.md) for the generator rules.
+  The files are ASCII: every non-ASCII character is written as a `\u` escape.
+* `tree.json` also gives node bytes that a reader must reject
+  (`decode_invalid`) or accept (`decode_valid_build_rejects`), and whole
+  trees a reader must accept (`walk_valid`) or reject (`walk_invalid`) with
+  the category `invalid_node` (a node breaks a rule of the first list of
+  3.8) or `invalid_tree` (every node is valid, but the tree breaks 3.6 or the
+  second paragraph of 3.8).
 * `mfgraph debug tree <dir> --out <out>` prints every node of the tree of a
   local directory and writes each node's canonical bytes to
   `<out>/<hex>.json`; `shasum -a 256` over those files must reproduce the
