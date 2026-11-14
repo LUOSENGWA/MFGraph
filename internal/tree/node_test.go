@@ -20,13 +20,13 @@ func TestEncodeStringEscaping(t *testing.T) {
 	for c := 0; c < 0x20; c++ {
 		name.WriteByte(byte(c))
 	}
-	name.WriteString("\"\\/<>&\x7fé🚀 ")
+	name.WriteString("\"\\/<>&\x7f\u00e9\U0001f680\u2028")
 	n := tree.Node{Kind: tree.KindDir, Entries: []tree.Entry{{Name: name.String(), Type: tree.TypeDir, Hash: h0}}}
 	got := string(tree.Encode(n))
 	want := `{"entries":[{"hash":"` + h0.String() + `","name":"` +
 		`\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f` +
 		`\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f` +
-		`\"\\/<>&` + "\x7fé🚀 " + `","type":"dir"}],"format":1,"kind":"dir"}`
+		`\"\\/<>&` + "\x7f\u00e9\U0001f680\u2028" + `","type":"dir"}],"format":1,"kind":"dir"}`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

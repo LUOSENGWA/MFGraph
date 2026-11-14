@@ -9,6 +9,7 @@ implementation, so agreement between the two is a cross-check.
 Usage:
   python3 scripts/vectors.py verify [--heavy]      # check all vector files
   python3 scripts/vectors.py generate              # recompute expected values in tree.json
+  python3 scripts/vectors.py format                # rewrite the vector files as ASCII (\\u escapes)
   python3 scripts/vectors.py review                # regenerate testdata/vectors/REVIEW.md
   python3 scripts/vectors.py materialize CASE DIR  # write a tree case's files into DIR
   python3 scripts/vectors.py crosscheck [--heavy]  # Go CLI + shasum on every tree case
@@ -668,34 +669,91 @@ def verify_tree(heavy, update=False):
         check(write_rule_violated(obj, case["write_rule"]), "%s: write rule %s not violated" % (label, case["write_rule"]))
         n += 1
     if update:
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
+        with open(path, "w", encoding="ascii", newline="\n") as f:
             f.write(dump_vectors(v))
         print("updated", os.path.relpath(path, ROOT))
     return n
 
 
 def needs_escape(ch):
+    """Characters that REVIEW.md shows as code points (display only)."""
     cat = unicodedata.category(ch)
     invisible = cat[0] in "MC" or cat in ("Zl", "Zp") or (cat == "Zs" and ch != " ")
     lookalike = unicodedata.normalize("NFKC", ch) != ch or 0x1100 <= ord(ch) <= 0x11FF
     return (invisible or lookalike) and ord(ch) >= 0x80
 
 
-def json_escape_char(ch):
-    o = ord(ch)
-    if o <= 0xFFFF:
-        return "\\u%04x" % o
-    o -= 0x10000
-    return "\\u%04x\\u%04x" % (0xD800 + (o >> 10), 0xDC00 + (o & 0x3FF))
+def json_ascii(obj, **kw):
+    """json.dumps with every non-ASCII character (and DEL) written as a \\u
+    escape. Vector files are pure ASCII, so no editor can silently normalize
+    an NFD input or rewrite a combining mark, a compatibility character or an
+    invisible character; the decoded values are unchanged. The rule needs no
+    Unicode tables, so every Python version writes the same bytes."""
+    return json.dumps(obj, ensure_ascii=True, **kw).replace("\x7f", "\\u007f")
 
 
 def dump_vectors(v):
-    """Pretty-print a vector file. Invisible and look-alike non-ASCII
-    characters (combining marks, compatibility characters, ...) are written
-    as \\u escapes so that NFC/NFD inputs stay readable; the decoded values
-    are unchanged."""
-    text = json.dumps(v, ensure_ascii=False, indent=1)
-    return "".join(json_escape_char(c) if needs_escape(c) else c for c in text) + "\n"
+    """Pretty-print tree.json (indent 1, ASCII only)."""
+    return json_ascii(v, indent=1) + "\n"
+
+
+def dump_lines(v):
+    """Format pathx.json and contenthash.json (ASCII only): one top-level key
+    per line; list items one per line as compact JSON; one level of nested
+    objects."""
+    out = ["{"]
+    keys = list(v)
+    for i, k in enumerate(keys):
+        val = v[k]
+        comma = "," if i < len(keys) - 1 else ""
+        if isinstance(val, list):
+            out.append("  %s: [" % json_ascii(k))
+            out += ["    " + json_ascii(x) + ("," if n < len(val) - 1 else "") for n, x in enumerate(val)]
+            out.append("  ]" + comma)
+        elif isinstance(val, dict):
+            out.append("  %s: {" % json_ascii(k))
+            sub = list(val)
+            for n, sk in enumerate(sub):
+                sv = val[sk]
+                c2 = "," if n < len(sub) - 1 else ""
+                if isinstance(sv, list):
+                    out.append("    %s: [" % json_ascii(sk))
+                    out += ["      " + json_ascii(x) + ("," if m < len(sv) - 1 else "") for m, x in enumerate(sv)]
+                    out.append("    ]" + c2)
+                else:
+                    out.append("    %s: %s%s" % (json_ascii(sk), json_ascii(sv), c2))
+            out.append("  }" + comma)
+        else:
+            out.append("  %s: %s%s" % (json_ascii(k), json_ascii(val), comma))
+    out.append("}")
+    return "\n".join(out) + "\n"
+
+
+VECTOR_FILES = {"contenthash.json": dump_lines, "pathx.json": dump_lines, "tree.json": dump_vectors}
+
+
+def format_vectors():
+    """Rewrite every vector file in its canonical ASCII-only layout."""
+    for name, dump in VECTOR_FILES.items():
+        path = os.path.join(VECTORS, name)
+        v = load(name)
+        text = dump(v)
+        if json.loads(text) != v:
+            raise AssertionError("formatting changed the values of " + name)
+        with open(path, "w", encoding="ascii", newline="\n") as f:
+            f.write(text)
+        print("formatted", os.path.relpath(path, ROOT))
+
+
+def verify_ascii():
+    """Every vector file must be pure ASCII (non-ASCII characters escaped)."""
+    for name in VECTOR_FILES:
+        with open(os.path.join(VECTORS, name), "rb") as f:
+            raw = f.read()
+        bad = [i for i, b in enumerate(raw) if b >= 0x80 or b == 0x7F]
+        check(not bad, "%s: raw non-ASCII byte at offset %s; run: python3 scripts/vectors.py format"
+              % (name, bad[:1]))
+    return len(VECTOR_FILES)
 
 
 # --------------------------------------------------------------------- review
@@ -1124,6 +1182,7 @@ def main():
     vp.add_argument("--heavy", action="store_true", help="include heavy cases")
     sub.add_parser("review", help="regenerate testdata/vectors/REVIEW.md")
     sub.add_parser("generate", help="(re)compute the expected values in tree.json from its inputs")
+    sub.add_parser("format", help="rewrite the vector files in their ASCII-only layout")
     mp = sub.add_parser("materialize", help="write the files of a tree case into a directory")
     mp.add_argument("case")
     mp.add_argument("dir")
@@ -1144,11 +1203,15 @@ def main():
     if args.cmd == "generate":
         verify_tree(heavy=True, update=True)
         return 0
+    if args.cmd == "format":
+        format_vectors()
+        return 0
     if args.cmd == "review":
         write_review()
         return 0
     if args.cmd == "verify":
         counts = {
+            "ascii_files": verify_ascii(),
             "contenthash": verify_contenthash(),
             "pathx": verify_pathx(),
             "tree": verify_tree(args.heavy),

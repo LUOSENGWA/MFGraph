@@ -102,6 +102,11 @@ func loadVectors(t *testing.T) vectorFile {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i, c := range b {
+		if c >= 0x80 || c == 0x7f {
+			t.Fatalf("pathx.json: raw non-ASCII byte at offset %d: vector files are ASCII, characters are \\u escapes (run: python3 scripts/vectors.py format)", i)
+		}
+	}
 	var v vectorFile
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -208,7 +213,7 @@ func TestNormalizeSegment(t *testing.T) {
 			t.Errorf("NormalizeSegment(%q) = %v, want %q", tc.in, err, tc.want)
 		}
 	}
-	if !pathx.IsNormalizedSegment("café") || pathx.IsNormalizedSegment("café") {
+	if !pathx.IsNormalizedSegment("caf\u00e9") || pathx.IsNormalizedSegment("cafe\u0301") {
 		t.Error("IsNormalizedSegment must accept NFC and reject NFD")
 	}
 }

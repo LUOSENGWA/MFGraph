@@ -14,7 +14,7 @@ import (
 // randomFiles returns a random, conflict-free file set. Names come from a
 // small alphabet (with non-ASCII letters) so that directories are shared.
 func randomFiles(r *rand.Rand, n int) []tree.FileEntry {
-	alphabet := []string{"a", "b", "c", "d", "é", "文", "🚀", "x y", "q\"", "<&>"}
+	alphabet := []string{"a", "b", "c", "d", "\u00e9", "文", "🚀", "x y", "q\"", "<&>"}
 	seen := map[string]bool{}
 	var files []tree.FileEntry
 	for len(files) < n {

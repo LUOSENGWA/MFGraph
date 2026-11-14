@@ -52,8 +52,15 @@ See [the specification](../../docs/spec/content-format.md).
 python3 scripts/vectors.py verify [--heavy]   # Python reference vs. the files
 python3 scripts/vectors.py crosscheck         # Go CLI on materialized inputs + shasum
 python3 scripts/vectors.py generate           # recompute expected values in tree.json
+python3 scripts/vectors.py format             # rewrite the files as ASCII (\u escapes)
 python3 scripts/vectors.py review             # regenerate REVIEW.md
 ```
+
+The JSON files are pure ASCII: every non-ASCII character (and DEL) is written
+as a `\u` escape, so that an editor cannot silently normalize an NFD input or
+rewrite a combining mark, a compatibility character or an invisible
+character. The Go tests and `verify` reject raw non-ASCII bytes; `format`
+rewrites a hand-edited file. `REVIEW.md` shows the characters.
 
 Expected values must never be produced by the Go code under test. Inputs of
 `contenthash.json` and `pathx.json` and all expected values of `pathx.json` are

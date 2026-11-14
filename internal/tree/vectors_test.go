@@ -77,6 +77,11 @@ func loadTreeVectors(t testing.TB) vecDoc {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i, c := range b {
+		if c >= 0x80 || c == 0x7f {
+			t.Fatalf("tree.json: raw non-ASCII byte at offset %d: vector files are ASCII, characters are \\u escapes (run: python3 scripts/vectors.py format)", i)
+		}
+	}
 	var v vecDoc
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
