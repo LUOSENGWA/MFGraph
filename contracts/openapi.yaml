@@ -37,12 +37,42 @@ info:
     * **Identifiers.** IDs are ULIDs (26 uppercase Crockford base32
       characters). URL paths contain only IDs; file paths are always passed as
       the `path` query parameter or in request bodies.
-    * **File paths.** Relative, `/`-separated, normalized to Unicode NFC by
-      the server; no empty, `.` or `..` segments, no leading `/`, no `\`, no
-      control characters; at most 255 bytes per segment and 4096 bytes in
-      total (UTF-8, after NFC). Siblings that differ only by case (Unicode
-      full case folding) or a name used as both a file and a directory are
-      rejected. Violations give `422 invalid_path` with `details.kind`.
+    * **File paths** (docs/spec/content-format.md, section 2). Paths are
+      relative and `/`-separated. A path that is written (uploaded or
+      committed) must satisfy the write-time rules:
+      valid UTF-8, not empty, no leading `/`, no `\`, no control character
+      (U+0000-U+001F, U+007F-U+009F), no noncharacter (U+FDD0-U+FDEF,
+      U+xxFFFE, U+xxFFFF), no character of the fixed disallowed list (bidi
+      controls and invisible characters), no code point unassigned in
+      Unicode 15.0.0; the server converts it to NFC; then no empty, `.` or
+      `..` segment, at most 255 bytes per segment and 4096 bytes in total
+      (UTF-8, after NFC). Within one directory a name may not be used for a
+      file and a directory, and two names may not have the same case-fold
+      key NFD(casefold(NFD(name))). On a commit these rules apply to the
+      paths it adds or changes (including conflicts with the names already
+      in the directory); entries carried over from the base snapshot, or
+      restored from another snapshot, keep their stored bytes and are not
+      checked again.
+    * **Looking up a path** (the `path` parameter of the tree and file
+      operations, `path` of a restore): the path must be valid UTF-8 and
+      every segment must satisfy the read-time rules (not empty, not `.` or
+      `..`, no `\`, no control character, no noncharacter, at most 255
+      bytes); the server converts it to NFC and compares it byte for byte
+      with the stored names. Unassigned code points and the disallowed list
+      are not checked for lookups.
+    * **Paths in responses** are always the stored, normalized form. NFC can
+      change what a client sent: for example the CJK compatibility
+      ideograph U+FA10 becomes U+585A, and `e` + U+0301 becomes U+00E9.
+    * **Path order.** Lists of paths (diffs, and the entries of a directory)
+      are in path order: paths are compared segment by segment, each segment
+      by its UTF-8 bytes, and a path sorts before the paths below it. This is
+      the order of a tree walk; it is not the byte order of the full path
+      strings (`a`, `a/x`, `a-b`, `a.txt` in path order, but `a`, `a-b`,
+      `a.txt`, `a/x` by bytes).
+    * **Path errors** give `422 invalid_path`; `details.kind` (enum
+      `PathErrorKind`) names the violated rule. The kind is guaranteed only
+      when a path breaks a single rule; with several violations any of them
+      may be reported.
     * **Hashes.** Content and tree hashes are `sha256:` followed by 64
       lowercase hex digits; nothing else is accepted.
     * **Times.** RFC 3339 strings in UTC with a `Z` suffix and up to
@@ -266,7 +296,9 @@ paths:
         in a commit. Uploading content that is already present is a no-op
         (200). If `X-Content-SHA256` is given and does not match, nothing is
         stored and the server answers `400 invalid_request` with
-        `details.reason` = `checksum_mismatch`.
+        `details.reason` = `checksum_mismatch`. An empty body is valid: it
+        uploads the empty file
+        (`sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`).
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -281,6 +313,7 @@ paths:
         - $ref: '#/components/parameters/RequestId'
       requestBody:
         required: true
+        description: The exact file content; may be empty (zero bytes).
         content:
           application/octet-stream:
             schema:
@@ -437,7 +470,9 @@ paths:
       summary: List one directory of a snapshot
       description: |
         Lists the entries of the directory `path` (the root when `path` is
-        omitted or empty) in byte order of their names.
+        omitted or empty) in byte order of their names, which is path order
+        within one directory. `path` is looked up as described under
+        "Looking up a path".
 
         Errors: `invalid_request` (400; `details.reason` = `not_a_directory`
         when `path` names a file), `unauthenticated` (401), `not_found` (404,
@@ -447,7 +482,7 @@ paths:
         - name: path
           in: query
           required: false
-          description: Directory path; omit or leave empty for the root.
+          description: Directory path, looked up with the read-time rules and NFC (see "Looking up a path"); omit or leave empty for the root.
           schema:
             type: string
             maxLength: 4096
@@ -563,7 +598,8 @@ paths:
       operationId: getSnapshotDiff
       summary: Compare a snapshot with a base snapshot
       description: |
-        File-level differences from `base` to this snapshot, ordered by path.
+        File-level differences from `base` to this snapshot, in path order
+        (segment by segment; see "Path order").
         Without `base` the first parent is used (the empty tree for a root
         snapshot). Both snapshots must belong to the same workspace.
 
@@ -604,7 +640,8 @@ paths:
         head. Without `path` its tree equals the tree of `{snapshot_id}`;
         with `path` only that file or directory is restored (removed if it
         does not exist in `{snapshot_id}`) and everything else is kept from
-        the head. History is never rewritten.
+        the head. `path` is looked up with the read-time rules and NFC (see
+        "Looking up a path"). History is never rewritten.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404, snapshot or branch), `conflict` (409,
@@ -718,6 +755,7 @@ components:
       name: path
       in: query
       required: true
+      description: File path, looked up with the read-time rules and NFC (see "Looking up a path").
       schema:
         $ref: '#/components/schemas/FilePath'
   responses:
@@ -764,7 +802,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     UnprocessableEntity:
-      description: '`invalid_path`, with `details.kind` naming the violated rule.'
+      description: '`invalid_path`, with `details.kind` (`PathErrorKind`) naming the violated rule.'
       content:
         application/json:
           schema:
@@ -797,7 +835,7 @@ components:
       example: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
     FilePath:
       type: string
-      description: Relative file path; see "File paths" in the API description.
+      description: Relative file path; see "File paths" and "Looking up a path" in the API description.
       minLength: 1
       maxLength: 4096
       example: docs/specs/format.md
@@ -833,7 +871,32 @@ components:
         details:
           type: object
           additionalProperties: true
-          description: Optional machine-readable details, specific to the code.
+          description: |
+            Optional machine-readable details, specific to the code. For
+            `invalid_path`, `kind` names the violated path rule.
+          properties:
+            kind:
+              $ref: '#/components/schemas/PathErrorKind'
+          # Keep the generated Go type a plain map; the properties document
+          # the known keys.
+          x-go-type: map[string]interface{}
+    PathErrorKind:
+      type: string
+      description: |
+        The path rule an `invalid_path` error reports (docs/spec/content-format.md,
+        section 2): `empty`, `invalid_utf8`, `absolute` (leading `/`),
+        `backslash`, `control_char` (C0, DEL, C1), `noncharacter`
+        (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), `disallowed_char` (the fixed list
+        of bidi controls and invisible characters), `unassigned_char` (not
+        assigned in Unicode 15.0.0), `empty_segment`, `dot_segment` (`.` or
+        `..`), `segment_too_long` (over 255 bytes), `path_too_long` (over 4096
+        bytes), `contains_slash` (a name with `/`), `duplicate` (the same path
+        twice), `case_conflict` (two names with the same case-fold key),
+        `file_dir_conflict` (a name used as a file and a directory).
+      enum: [empty, invalid_utf8, absolute, backslash, control_char, noncharacter, disallowed_char,
+        unassigned_char, empty_segment, dot_segment, segment_too_long, path_too_long, contains_slash,
+        duplicate, case_conflict, file_dir_conflict]
+      example: case_conflict
     Health:
       type: object
       required: [status]

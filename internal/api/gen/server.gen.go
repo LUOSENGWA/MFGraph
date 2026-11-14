@@ -72,6 +72,66 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for PathErrorKind.
+const (
+	Absolute        PathErrorKind = "absolute"
+	Backslash       PathErrorKind = "backslash"
+	CaseConflict    PathErrorKind = "case_conflict"
+	ContainsSlash   PathErrorKind = "contains_slash"
+	ControlChar     PathErrorKind = "control_char"
+	DisallowedChar  PathErrorKind = "disallowed_char"
+	DotSegment      PathErrorKind = "dot_segment"
+	Duplicate       PathErrorKind = "duplicate"
+	Empty           PathErrorKind = "empty"
+	EmptySegment    PathErrorKind = "empty_segment"
+	FileDirConflict PathErrorKind = "file_dir_conflict"
+	InvalidUtf8     PathErrorKind = "invalid_utf8"
+	Noncharacter    PathErrorKind = "noncharacter"
+	PathTooLong     PathErrorKind = "path_too_long"
+	SegmentTooLong  PathErrorKind = "segment_too_long"
+	UnassignedChar  PathErrorKind = "unassigned_char"
+)
+
+// Valid indicates whether the value is a known member of the PathErrorKind enum.
+func (e PathErrorKind) Valid() bool {
+	switch e {
+	case Absolute:
+		return true
+	case Backslash:
+		return true
+	case CaseConflict:
+		return true
+	case ContainsSlash:
+		return true
+	case ControlChar:
+		return true
+	case DisallowedChar:
+		return true
+	case DotSegment:
+		return true
+	case Duplicate:
+		return true
+	case Empty:
+		return true
+	case EmptySegment:
+		return true
+	case FileDirConflict:
+		return true
+	case InvalidUtf8:
+		return true
+	case Noncharacter:
+		return true
+	case PathTooLong:
+		return true
+	case SegmentTooLong:
+		return true
+	case UnassignedChar:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	Ready ReadinessStatus = "ready"
@@ -185,7 +245,7 @@ type Change struct {
 	// Mode 420 (0644, regular file) or 493 (0755, executable).
 	Mode *FileMode `json:"mode,omitempty"`
 
-	// Path Relative file path; see "File paths" in the API description.
+	// Path Relative file path; see "File paths" and "Looking up a path" in the API description.
 	//
 	// Example: docs/specs/format.md
 	Path FilePath `json:"path"`
@@ -271,7 +331,7 @@ type DiffEntry struct {
 	New    *FileVersion    `json:"new,omitempty"`
 	Old    *FileVersion    `json:"old,omitempty"`
 
-	// Path Relative file path; see "File paths" in the API description.
+	// Path Relative file path; see "File paths" and "Looking up a path" in the API description.
 	//
 	// Example: docs/specs/format.md
 	Path FilePath `json:"path"`
@@ -293,7 +353,8 @@ type Error struct {
 	// Example: not_implemented
 	Code string `json:"code"`
 
-	// Details Optional machine-readable details, specific to the code.
+	// Details Optional machine-readable details, specific to the code. For
+	// `invalid_path`, `kind` names the violated path rule.
 	Details *map[string]interface{} `json:"details,omitempty"`
 
 	// Message Human-readable explanation; not stable.
@@ -306,7 +367,7 @@ type Error struct {
 // FileMode 420 (0644, regular file) or 493 (0755, executable).
 type FileMode int
 
-// FilePath Relative file path; see "File paths" in the API description.
+// FilePath Relative file path; see "File paths" and "Looking up a path" in the API description.
 //
 // Example: docs/specs/format.md
 type FilePath = string
@@ -335,6 +396,20 @@ type Health struct {
 
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
+
+// PathErrorKind The path rule an `invalid_path` error reports (docs/spec/content-format.md,
+// section 2): `empty`, `invalid_utf8`, `absolute` (leading `/`),
+// `backslash`, `control_char` (C0, DEL, C1), `noncharacter`
+// (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), `disallowed_char` (the fixed list
+// of bidi controls and invisible characters), `unassigned_char` (not
+// assigned in Unicode 15.0.0), `empty_segment`, `dot_segment` (`.` or
+// `..`), `segment_too_long` (over 255 bytes), `path_too_long` (over 4096
+// bytes), `contains_slash` (a name with `/`), `duplicate` (the same path
+// twice), `case_conflict` (two names with the same case-fold key),
+// `file_dir_conflict` (a name used as a file and a directory).
+//
+// Example: case_conflict
+type PathErrorKind string
 
 // Project defines model for Project.
 type Project struct {
@@ -382,7 +457,7 @@ type RestoreRequest struct {
 	ExpectedGeneration int64   `json:"expected_generation"`
 	Message            *string `json:"message,omitempty"`
 
-	// Path Relative file path; see "File paths" in the API description.
+	// Path Relative file path; see "File paths" and "Looking up a path" in the API description.
 	//
 	// Example: docs/specs/format.md
 	Path *FilePath `json:"path,omitempty"`
@@ -474,7 +549,7 @@ type TreeEntry struct {
 	Mode *FileMode `json:"mode,omitempty"`
 	Name string    `json:"name"`
 
-	// Path Relative file path; see "File paths" in the API description.
+	// Path Relative file path; see "File paths" and "Looking up a path" in the API description.
 	//
 	// Example: docs/specs/format.md
 	Path FilePath `json:"path"`
@@ -635,6 +710,7 @@ type GetSnapshotDiffParams struct {
 
 // GetSnapshotFileParams defines parameters for GetSnapshotFile.
 type GetSnapshotFileParams struct {
+	// Path File path, looked up with the read-time rules and NFC (see "Looking up a path").
 	Path        FilePath `form:"path" json:"path"`
 	Range       *string  `json:"Range,omitempty"`
 	IfNoneMatch *string  `json:"If-None-Match,omitempty"`
@@ -654,7 +730,7 @@ type RestoreSnapshotParams struct {
 
 // ListSnapshotTreeParams defines parameters for ListSnapshotTree.
 type ListSnapshotTreeParams struct {
-	// Path Directory path; omit or leave empty for the root.
+	// Path Directory path, looked up with the read-time rules and NFC (see "Looking up a path"); omit or leave empty for the root.
 	Path *string `form:"path,omitempty" json:"path,omitempty"`
 
 	// Cursor Opaque cursor from `next_cursor` of the previous page.

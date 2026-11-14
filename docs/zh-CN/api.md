@@ -94,3 +94,13 @@ X-Correlation-Id: <optional>
 ## 错误
 
 所有错误都使用同一种扁平结构：`{"code": "...", "message": "...", "request_id": "...", "details": {...}}`。错误码：`invalid_request`（400）、`unauthenticated`（401）、`forbidden`（403）、`not_found`（404）、`conflict` 与 `idempotency_key_reuse`（409）、`upload_expired` 与 `blob_missing`（410）、`precondition_failed`（412）、`quota_exceeded` 与 `file_too_large`（413）、`invalid_path` 与 `unsupported_format`（422）、`rate_limited`（429）、`internal`（500）、`not_implemented`（501）、`storage_unavailable` 与 `db_unavailable`（503）。
+
+`invalid_path` 错误的 `details.kind` 说明违反了哪条规则，取值见[契约](../../contracts/openapi.yaml)中的 `PathErrorKind` 枚举。只有在单一违规时，这个类别才是确定的。
+
+## 文件路径
+
+- **写入的路径**（上传、提交）按[内容格式](../spec/zh-CN/content-format.md#2-路径)的写入时规则检查，以 NFC 形式保存。提交只检查本次新增或修改的路径；从基准快照带过来的条目保留存储时的字节。
+- **用于查找的路径**（目录、文件接口以及 restore 的 `path`）只做读取时检查，转为 NFC 后与存储的名字按字节比较。
+- **响应**里的路径总是存储的规范形式，可能与客户端发送的不同（NFC 会把 `e` + U+0301 变成 `é`，把 CJK 兼容表意字 U+FA10 变成 U+585A）。
+- **路径列表**按路径顺序排列：逐段比较，每段按 UTF-8 字节比较（`a`、`a/x`、`a-b`、`a.txt`）。
+- **空文件合法**：请求体为空的上传保存一个空文件。

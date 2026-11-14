@@ -2,8 +2,12 @@ package api_test
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	gotoken "go/token"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -146,5 +150,46 @@ func TestOpenAPIConventions(t *testing.T) {
 	lim := doc.Components.Parameters["Limit"].Value.Schema.Value
 	if lim.Default != float64(50) || lim.Max == nil || *lim.Max != 500 {
 		t.Errorf("limit default/max = %v/%v", lim.Default, lim.Max)
+	}
+}
+
+// TestOpenAPIPathErrorKinds: details.kind of invalid_path refers to the
+// PathErrorKind enum, and the enum lists exactly the Kind constants of
+// internal/pathx (read from its source, so a new kind cannot be forgotten).
+func TestOpenAPIPathErrorKinds(t *testing.T) {
+	doc := loadSpec(t)
+	kind := doc.Components.Schemas["Error"].Value.Properties["details"].Value.Properties["kind"]
+	if kind == nil || !strings.HasSuffix(kind.Ref, "/PathErrorKind") {
+		t.Fatalf("Error.details.kind must reference PathErrorKind, is %+v", kind)
+	}
+	var spec []string
+	for _, v := range doc.Components.Schemas["PathErrorKind"].Value.Enum {
+		spec = append(spec, v.(string))
+	}
+	f, err := parser.ParseFile(gotoken.NewFileSet(), filepath.Join("..", "pathx", "pathx.go"), nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var code []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || vs.Type == nil {
+			return true
+		}
+		if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Kind" {
+			return true
+		}
+		for _, v := range vs.Values {
+			if lit, ok := v.(*ast.BasicLit); ok && lit.Kind == gotoken.STRING {
+				s, _ := strconv.Unquote(lit.Value)
+				code = append(code, s)
+			}
+		}
+		return true
+	})
+	sort.Strings(spec)
+	sort.Strings(code)
+	if len(code) < 16 || strings.Join(spec, ",") != strings.Join(code, ",") {
+		t.Errorf("PathErrorKind enum = %v\npathx kinds          = %v", spec, code)
 	}
 }

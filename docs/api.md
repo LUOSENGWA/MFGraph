@@ -94,3 +94,13 @@ X-Correlation-Id: <optional>
 ## Errors
 
 Every error has one flat body: `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`. Codes: `invalid_request` (400), `unauthenticated` (401), `forbidden` (403), `not_found` (404), `conflict` and `idempotency_key_reuse` (409), `upload_expired` and `blob_missing` (410), `precondition_failed` (412), `quota_exceeded` and `file_too_large` (413), `invalid_path` and `unsupported_format` (422), `rate_limited` (429), `internal` (500), `not_implemented` (501), `storage_unavailable` and `db_unavailable` (503).
+
+For `invalid_path`, `details.kind` names the violated rule; the values are listed by the `PathErrorKind` enum of the [contract](../contracts/openapi.yaml). The kind is guaranteed only when a path breaks a single rule.
+
+## File paths
+
+- **Written paths** (uploads, commits) follow the write-time rules of the [content format](spec/content-format.md#2-paths) and are stored in NFC. A commit checks only the paths it adds or changes; entries carried over from the base snapshot keep their stored bytes.
+- **Looked-up paths** (`path` of the tree and file endpoints and of a restore) are checked with the read-time rules only, converted to NFC and compared byte for byte with the stored names.
+- **Responses** always contain the stored, normalized path, which can differ from what the client sent (NFC turns `e` + U+0301 into `é` and the CJK compatibility ideograph U+FA10 into U+585A).
+- **Lists** of paths are in path order: segment by segment, each segment by its UTF-8 bytes (`a`, `a/x`, `a-b`, `a.txt`).
+- **Empty files** are valid: an upload with an empty body stores the empty file.
