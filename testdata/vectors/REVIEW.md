@@ -203,6 +203,10 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | interlinear-annotation-terminator-ufffb | `a\ufffbb` | ✗ `disallowed_char` |
 | unassigned-u0378 | `a\u0378` | ✗ `unassigned_char` |
 | unassigned-plane4-u40000 | `a\U00040000` | ✗ `unassigned_char` |
+| assigned-in-15.0-u1f6dc-allowed | `\U0001f6dc.txt` | ✓ `\U0001f6dc.txt` |
+| assigned-in-15.1-u2ebf0 | `\U0002ebf0.txt` | ✗ `unassigned_char` |
+| assigned-in-16.0-u1c89 | `a\u1c89` | ✗ `unassigned_char` |
+| assigned-in-16.0-u1f6d8 | `d/\U0001f6d8.txt` | ✗ `unassigned_char` |
 | noncharacter-uffff | `a\uffff` | ✗ `noncharacter` |
 | noncharacter-ufdd0 | `a\ufdd0` | ✗ `noncharacter` |
 | noncharacter-ufffe | `a\ufffe` | ✗ `noncharacter` |
@@ -313,6 +317,8 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | `release\u00ad1` | ✗ `disallowed_char` |
 | `❤\ufe0f` | ✓ `❤\ufe0f` |
 | `\u0378` | ✗ `unassigned_char` |
+| `\U0001f6dc` | ✓ `\U0001f6dc` |
+| `release-\U0002ebf0` | ✗ `unassigned_char` |
 | `main\uffff` | ✗ `noncharacter` |
 | bytes `6d61696eff` | ✗ `invalid_utf8` |
 | `a`×256 (256 bytes) | ✗ `segment_too_long` |
@@ -333,6 +339,7 @@ Names inside stored tree nodes are checked only with structural rules that do no
 | noncharacter-plane16-u10ffff | `x\U0010ffff` | ✗ `noncharacter` |
 | disallowed-then-noncharacter | `a\u202e\uffff` | ✗ `noncharacter` |
 | plane4-accepted | `\U00040000` | ✓ accepted |
+| assigned-after-15.0-accepted | `\U0002ebf0\u1c89\U0001f6d8` | ✓ accepted |
 | zwj-sequence-accepted | `👨\u200d👩\u200d👧` | ✓ accepted |
 | zwnj-accepted | `a\u200cb` | ✓ accepted |
 | dots-inside-accepted | `..a` | ✓ accepted |
@@ -399,6 +406,7 @@ Rules checked by these vectors:
 | allowed-zwj-zwnj-fullwidth-reserved-names | 7 file(s) | root `sha256:f0a0a8007714…`, 1 node(s) |
 | allowed-variation-selectors-tags-cgj | 4 file(s) | root `sha256:dff2084c04f5…`, 1 node(s) |
 | allowed-dotless-i-and-capital-i | 2 file(s) | root `sha256:7eb119347970…`, 1 node(s) |
+| allowed-assigned-in-15.0-u1f6dc | 1 file(s) | root `sha256:565fea83caff…`, 1 node(s) |
 | dir-1024-entries-one-node | generated `f` + 5-digit index, 0…1023 | root `sha256:84d212b37a4d…`, 1 node(s) |
 | dir-1025-entries-two-pages | generated `f` + 5-digit index, 0…1024 | root `sha256:bc1eec93a002…`, 3 node(s) |
 | subdir-3000-entries-three-pages | 1 file(s); generated `big`/`f` + 5-digit index, 0…2999 | root `sha256:43b5f3318a5b…`, 5 node(s) |
@@ -430,6 +438,7 @@ Rules checked by these vectors:
 | reject-capital-sharp-s-acute-vs-s-s-acute | 2 file(s) | ✗ `case_conflict` |
 | reject-fi-ligature-acute-vs-f-i-acute | 2 file(s) | ✗ `case_conflict` |
 | reject-noncharacter-plane16-in-subdirectory | 1 file(s) | ✗ `noncharacter` |
+| reject-assigned-in-15.1-u2ebf0 | 1 file(s) | ✗ `unassigned_char` |
 
 ### 3.2 Small cases in full
 
@@ -788,6 +797,22 @@ root: `sha256:7eb119347970622518e95de17c202b2b23aed29aaa643c3bcd49ad46339cc94f`
   {"entries":[{"hash":"sha256:807140de6b4dddde6688492707d4a15be02a47582db95e01fd7b7eda5f10f13d","mode":420,"name":"I.txt","size":10,"type":"file"},{"hash":"sha256:22abc6b3320f7a027146fe506026fcf785f4034140de693f768c55dd17d88a63","mode":420,"name":"ı.txt","size":10,"type":"file"}],"format":1,"kind":"dir"}
   ```
 
+#### `allowed-assigned-in-15.0-u1f6dc`
+
+| path | content | mode |
+|---|---|---:|
+| `\U0001f6dc.txt` | `wireless\u000a` | 420 |
+
+root: `sha256:565fea83caff68e02c28dcb2eb9423b27c38e3d93733d45ec311aec0fbe18c6b`
+
+* dir `.` (root) · `dir` · `sha256:565fea83caff68e02c28dcb2eb9423b27c38e3d93733d45ec311aec0fbe18c6b` · 172 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:65bd7b8a487063af735b7e4cdac3d0e36f2399dc09b10d8a382b7252082c65da","mode":420,"name":"🛜.txt","size":9,"type":"file"}],"format":1,"kind":"dir"}
+  ```
+
+  The same bytes with invisible characters shown as code points: `{"entries":[{"hash":"sha256:65bd7b8a487063af735b7e4cdac3d0e36f2399dc09b10d8a382b7252082c65da","mode":420,"name":"\U0001f6dc.txt","size":9,"type":"file"}],"format":1,"kind":"dir"}`
+
 ### 3.3 Large cases (root and selected nodes)
 
 #### `dir-1024-entries-one-node`
@@ -903,6 +928,7 @@ A decoder must accept these nodes (the read-time rules do not use Unicode tables
 | name-with-interlinear-annotation-anchor-ufff9 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\ufff9b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
 | name-with-interlinear-annotation-separator-ufffa | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\ufffab","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
 | name-with-interlinear-annotation-terminator-ufffb | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\ufffbb","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-assigned-in-16.0-u1f6d8 | `unassigned_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"\U0001f6d8.txt","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
 
 ## 4. Coverage checklist
 

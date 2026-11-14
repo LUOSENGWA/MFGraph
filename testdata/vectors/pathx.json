@@ -1,7 +1,7 @@
 {
   "schema": "mfgraph-test-vectors/pathx/1",
   "review_status": "pending-human-review",
-  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), noncharacter (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), disallowed_char (fixed list of bidi controls and invisible characters), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. fold: the case-fold key NFD(casefold(NFD(input))), the canonical caseless match of Unicode 3.13 (D145) with the full case folding of CaseFolding.txt (statuses C and F); siblings: names that cannot coexist in one directory. stored_names: the read-time rules applied to names inside stored tree nodes; they are structural (valid UTF-8, non-empty, no '/', no backslash, no control characters, no noncharacters, not '.'/'..', at most 255 bytes) and do not depend on Unicode tables (no NFC, case-fold, unassigned or disallowed-list checks); they give no output, only acceptance or the error kind. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1).",
+  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), noncharacter (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), disallowed_char (fixed list of bidi controls and invisible characters), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. fold: the case-fold key NFD(casefold(NFD(input))), the canonical caseless match of Unicode 3.13 (D145) with the full case folding of CaseFolding.txt (statuses C and F); siblings: names that cannot coexist in one directory. stored_names: the read-time rules applied to names inside stored tree nodes; they are structural (valid UTF-8, non-empty, no '/', no backslash, no control characters, no noncharacters, not '.'/'..', at most 255 bytes) and do not depend on Unicode tables (no NFC, case-fold, unassigned or disallowed-list checks); they give no output, only acceptance or the error kind. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1). Cases with ucd_version depend on the Unicode version: they hold for V = 15.0.0 only (assigned or not), and a checker whose Unicode tables have another version must skip them.",
   "normalize": [
     {"name": "simple", "input": "a.txt", "output": "a.txt"},
     {"name": "nested", "input": "docs/specs/v1/format.md", "output": "docs/specs/v1/format.md"},
@@ -72,6 +72,10 @@
     {"name": "interlinear-annotation-terminator-ufffb", "input": "a\ufffbb", "error": "disallowed_char"},
     {"name": "unassigned-u0378", "input": "a\u0378", "error": "unassigned_char"},
     {"name": "unassigned-plane4-u40000", "input": "a\ud8c0\udc00", "error": "unassigned_char"},
+    {"name": "assigned-in-15.0-u1f6dc-allowed", "input": "\ud83d\udedc.txt", "output": "\ud83d\udedc.txt", "ucd_version": "15.0.0"},
+    {"name": "assigned-in-15.1-u2ebf0", "input": "\ud87a\udff0.txt", "error": "unassigned_char", "ucd_version": "15.0.0"},
+    {"name": "assigned-in-16.0-u1c89", "input": "a\u1c89", "error": "unassigned_char", "ucd_version": "15.0.0"},
+    {"name": "assigned-in-16.0-u1f6d8", "input": "d/\ud83d\uded8.txt", "error": "unassigned_char", "ucd_version": "15.0.0"},
     {"name": "noncharacter-uffff", "input": "a\uffff", "error": "noncharacter"},
     {"name": "noncharacter-ufdd0", "input": "a\ufdd0", "error": "noncharacter"},
     {"name": "noncharacter-ufffe", "input": "a\ufffe", "error": "noncharacter"},
@@ -171,6 +175,8 @@
     {"input": "release\u00ad1", "error": "disallowed_char"},
     {"input": "\u2764\ufe0f", "output": "\u2764\ufe0f"},
     {"input": "\u0378", "error": "unassigned_char"},
+    {"input": "\ud83d\udedc", "output": "\ud83d\udedc", "ucd_version": "15.0.0"},
+    {"input": "release-\ud87a\udff0", "error": "unassigned_char", "ucd_version": "15.0.0"},
     {"input": "main\uffff", "error": "noncharacter"},
     {"input_hex": "6d61696eff", "error": "invalid_utf8"},
     {"input_gen": {"segments": [{"unit": "a", "repeat": 256}]}, "error": "segment_too_long"}
@@ -186,6 +192,7 @@
     {"name": "noncharacter-plane16-u10ffff", "input": "x\udbff\udfff", "error": "noncharacter"},
     {"name": "disallowed-then-noncharacter", "input": "a\u202e\uffff", "error": "noncharacter"},
     {"name": "plane4-accepted", "input": "\ud8c0\udc00"},
+    {"name": "assigned-after-15.0-accepted", "input": "\ud87a\udff0\u1c89\ud83d\uded8"},
     {"name": "zwj-sequence-accepted", "input": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67"},
     {"name": "zwnj-accepted", "input": "a\u200cb"},
     {"name": "dots-inside-accepted", "input": "..a"},

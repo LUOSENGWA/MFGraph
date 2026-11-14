@@ -80,13 +80,15 @@ func fail(k Kind, input, detail string) error {
 	return &Error{Kind: k, Input: input, Detail: detail}
 }
 
-// UnicodeVersion is V, the Unicode version whose tables decide at write time
-// whether a code point is assigned. V is the older of the standard library's
-// unicode.Version and the version of golang.org/x/text (NFC, case folding);
-// the tests fail if the standard library ever becomes the newer one, because
-// the assignment check uses the standard library's tables. Raising V only
-// allows more characters; read-time checks never depend on it.
-var UnicodeVersion = unicode.Version
+// UnicodeVersion is V, the Unicode version of the write-time rules: whether a
+// code point is assigned, NFC and case folding. Format 1 fixes V at 15.0.0
+// (docs/spec/content-format.md, section 2.4). The standard library
+// (general categories, unicode.SimpleFold) and golang.org/x/text (NFC, case
+// folding) must both provide exactly these tables; TestUnicodeVersionV fails
+// otherwise, for example after a Go upgrade. Raising V means recording the
+// new version in the specification; it only allows more characters, and the
+// read-time rules never depend on it.
+const UnicodeVersion = "15.0.0"
 
 // isControl reports C0 controls, DEL and C1 controls (general category Cc).
 func isControl(r rune) bool { return r < 0x20 || 0x7f <= r && r <= 0x9f }

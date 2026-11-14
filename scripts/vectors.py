@@ -28,6 +28,28 @@ VECTORS = os.path.join(ROOT, "testdata", "vectors")
 
 FAILURES = []
 
+# V, the Unicode version of the write-time rules (spec section 2.4). Vectors
+# whose result depends on it carry "ucd_version"; they are checked only when
+# this Python's unicodedata has exactly that version and are counted as
+# skipped otherwise.
+V = "15.0.0"
+UCD_SKIPPED = []
+
+
+def ucd_skip(case, label):
+    """True (and the case is recorded as skipped) if case needs a Unicode
+    version other than this Python's."""
+    want = case.get("ucd_version")
+    if want is None:
+        return False
+    if want != V:
+        check(False, "%s: ucd_version %s is not V = %s" % (label, want, V))
+        return True
+    if unicodedata.unidata_version != want:
+        UCD_SKIPPED.append(label)
+        return True
+    return False
+
 
 def check(cond, msg):
     if not cond:
@@ -253,8 +275,10 @@ def verify_pathx():
     v = load("pathx.json")
     n = 0
     for case in v["normalize"]:
-        got, kind = _run(normalize_path, vector_input(case))
         label = "pathx normalize %s" % case["name"]
+        if ucd_skip(case, label):
+            continue
+        got, kind = _run(normalize_path, vector_input(case))
         if "error" in case:
             check(kind == case["error"], "%s: got %r/%r, want error %s" % (label, got, kind, case["error"]))
         else:
@@ -269,8 +293,10 @@ def verify_pathx():
         check(kind == case.get("error"), "pathx siblings %s: got %r" % (case["name"], kind))
         n += 1
     for case in v["branch_names"]:
-        got, kind = _run(normalize_segment, vector_input(case))
         label = "pathx branch %r" % (case.get("input", case.get("input_hex", "<gen>")),)
+        if ucd_skip(case, label):
+            continue
+        got, kind = _run(normalize_segment, vector_input(case))
         if "error" in case:
             check(kind == case["error"], "%s: got %r/%r" % (label, got, kind))
         else:
@@ -657,6 +683,8 @@ def verify_tree(heavy, update=False):
     for case in v["cases"]:
         if case.get("heavy") and not heavy:
             continue
+        if ucd_skip(case, "tree %s" % case["name"]):
+            continue  # with update, the stored expected values are kept
         exp = expected_tree(case)
         if update:
             for k in EXPECTED_KEYS:
@@ -675,6 +703,8 @@ def verify_tree(heavy, update=False):
         n += 1
     for case in v["decode_valid_build_rejects"]:
         label = "tree decode_valid_build_rejects %s" % case["name"]
+        if ucd_skip(case, label):
+            continue
         try:
             obj = decode_node(case["bytes"].encode("utf-8"))
         except DecodeError as e:
@@ -1219,6 +1249,9 @@ def main():
 
     if args.cmd == "generate":
         verify_tree(heavy=True, update=True)
+        if UCD_SKIPPED:
+            print("kept the stored expected values of %d case(s) that need Unicode %s (this Python has %s): %s"
+                  % (len(UCD_SKIPPED), V, unicodedata.unidata_version, ", ".join(UCD_SKIPPED)))
         return 0
     if args.cmd == "format":
         format_vectors()
@@ -1237,6 +1270,9 @@ def main():
             print("FAIL:", msg)
         print("checked: " + ", ".join("%s=%d" % kv for kv in counts.items()))
         print("unicode data version (python):", unicodedata.unidata_version)
+        if UCD_SKIPPED:
+            print("skipped %d case(s) that need Unicode %s (this Python has %s; the Go tests cover them): %s"
+                  % (len(UCD_SKIPPED), V, unicodedata.unidata_version, ", ".join(UCD_SKIPPED)))
         if FAILURES:
             print("%d failure(s)" % len(FAILURES))
             return 1

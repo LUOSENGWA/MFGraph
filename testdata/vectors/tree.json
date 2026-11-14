@@ -1,7 +1,7 @@
 {
  "schema": "mfgraph-test-vectors/tree/1",
  "review_status": "pending-human-review",
- "description": "Manifest tree vectors (format 1). Each case builds a tree from a list of files and gives the expected root hash, the number of distinct nodes and the nodes in walk order (a directory's own nodes - index first, then its pages - followed by its subdirectories in name order). canonical is the exact node text (UTF-8, no trailing newline); it is listed for nodes up to 4096 bytes, larger nodes give size and hash only. Cases with error must be rejected by Build (write-time rules) with that path error kind. decode_invalid lists node byte strings that a strict decoder must reject under the read-time rules. decode_valid_build_rejects lists node byte strings that a decoder must accept (the read-time rules do not depend on Unicode tables) but that the write path never produces: write_rule names the write-time rule they violate (nfc: a name is not in NFC; case_conflict; unassigned_char; disallowed_char: the fixed list of bidi and invisible characters, a write-time rule only).",
+ "description": "Manifest tree vectors (format 1). Each case builds a tree from a list of files and gives the expected root hash, the number of distinct nodes and the nodes in walk order (a directory's own nodes - index first, then its pages - followed by its subdirectories in name order). canonical is the exact node text (UTF-8, no trailing newline); it is listed for nodes up to 4096 bytes, larger nodes give size and hash only. Cases with error must be rejected by Build (write-time rules) with that path error kind. decode_invalid lists node byte strings that a strict decoder must reject under the read-time rules. decode_valid_build_rejects lists node byte strings that a decoder must accept (the read-time rules do not depend on Unicode tables) but that the write path never produces: write_rule names the write-time rule they violate (nfc: a name is not in NFC; case_conflict; unassigned_char; disallowed_char: the fixed list of bidi and invisible characters, a write-time rule only). Cases with ucd_version depend on the Unicode version (V = 15.0.0): a checker whose Unicode tables have another version must skip them.",
  "inputs": "files: {path, content (UTF-8 text), mode (default 420)}; the file's hash is sha256 of content and its size is the byte length. generate: for i in [start, start+count): path = dir + '/' + prefix*prefix_repeat + zero-padded decimal i (digits wide), or without 'dir/' when dir is empty; content = UTF-8 bytes of the path; mode 420.",
  "limits": {
   "max_entries_per_node": 1024,
@@ -541,6 +541,27 @@
    ]
   },
   {
+   "name": "allowed-assigned-in-15.0-u1f6dc",
+   "ucd_version": "15.0.0",
+   "files": [
+    {
+     "path": "\ud83d\udedc.txt",
+     "content": "wireless\n"
+    }
+   ],
+   "root": "sha256:565fea83caff68e02c28dcb2eb9423b27c38e3d93733d45ec311aec0fbe18c6b",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:565fea83caff68e02c28dcb2eb9423b27c38e3d93733d45ec311aec0fbe18c6b",
+     "size": 172,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:65bd7b8a487063af735b7e4cdac3d0e36f2399dc09b10d8a382b7252082c65da\",\"mode\":420,\"name\":\"\ud83d\udedc.txt\",\"size\":9,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
    "name": "dir-1024-entries-one-node",
    "generate": [
     {
@@ -1029,6 +1050,17 @@
     }
    ],
    "error": "noncharacter"
+  },
+  {
+   "name": "reject-assigned-in-15.1-u2ebf0",
+   "ucd_version": "15.0.0",
+   "files": [
+    {
+     "path": "docs/\ud87a\udff0.txt",
+     "content": "x\n"
+    }
+   ],
+   "error": "unassigned_char"
   }
  ],
  "decode_invalid": [
@@ -1376,6 +1408,12 @@
    "name": "name-with-interlinear-annotation-terminator-ufffb",
    "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"a\ufffbb\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
    "write_rule": "disallowed_char"
+  },
+  {
+   "name": "name-assigned-in-16.0-u1f6d8",
+   "ucd_version": "15.0.0",
+   "bytes": "{\"entries\":[{\"hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"name\":\"\ud83d\uded8.txt\",\"size\":0,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}",
+   "write_rule": "unassigned_char"
   }
  ]
 }

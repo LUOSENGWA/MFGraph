@@ -7,7 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode"
@@ -48,6 +48,9 @@ type ioCase struct {
 	Output    *string  `json:"output"`
 	OutputGen *genSpec `json:"output_gen"`
 	Error     string   `json:"error"`
+	// UCDVersion marks a case whose result depends on the Unicode version
+	// (assigned or not in V); it must equal pathx.UnicodeVersion.
+	UCDVersion string `json:"ucd_version"`
 }
 
 func (c ioCase) input(t *testing.T) string {
@@ -140,10 +143,32 @@ func checkResult(t *testing.T, label string, c ioCase, got string, err error) {
 	}
 }
 
+// checkUCD fails for a case tagged with a Unicode version other than V, and
+// counts the tagged cases.
+func checkUCD(t *testing.T, cases []ioCase) int {
+	t.Helper()
+	n := 0
+	for _, c := range cases {
+		if c.UCDVersion == "" {
+			continue
+		}
+		if c.UCDVersion != pathx.UnicodeVersion {
+			t.Fatalf("case %q needs Unicode %s, V is %s", c.Name, c.UCDVersion, pathx.UnicodeVersion)
+		}
+		n++
+	}
+	return n
+}
+
 func TestNormalizeVectors(t *testing.T) {
 	v := loadVectors(t)
 	if len(v.Normalize) == 0 {
 		t.Fatal("no normalize vectors")
+	}
+	// The cases tagged ucd_version pin V: U+1F6DC is assigned in 15.0, while
+	// U+2EBF0, U+1C89 and U+1F6D8 are assigned only later.
+	if n := checkUCD(t, v.Normalize) + checkUCD(t, v.BranchNames); n < 5 {
+		t.Fatalf("only %d cases pin V", n)
 	}
 	for _, c := range v.Normalize {
 		got, err := pathx.Normalize(c.input(t))
@@ -232,43 +257,37 @@ func TestErrorType(t *testing.T) {
 	}
 }
 
-func compareVersions(a, b string) int {
-	as, bs := strings.Split(a, "."), strings.Split(b, ".")
-	for i := 0; i < len(as) || i < len(bs); i++ {
-		var x, y int
-		if i < len(as) {
-			x, _ = strconv.Atoi(as[i])
-		}
-		if i < len(bs) {
-			y, _ = strconv.Atoi(bs[i])
-		}
-		if x != y {
-			if x < y {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
-}
-
-// TestUnicodeVersionV guards the choice of V. The unassigned check uses the
-// standard library's tables, which is only correct while the standard
-// library is not newer than golang.org/x/text (NFC and case folding). The
-// pinned value is the one written in the specification and REVIEW.md.
+// TestUnicodeVersionV guards V. The write-time rules use the tables of the
+// standard library (general categories) and of golang.org/x/text (NFC, case
+// folding); all of them must be exactly V, and V must be the number written
+// in the specification (both languages). A Go or x/text upgrade that changes
+// the tables makes this test fail: raise V only by updating the
+// specification and the vectors tagged with ucd_version.
 func TestUnicodeVersionV(t *testing.T) {
-	if pathx.UnicodeVersion != unicode.Version {
-		t.Fatalf("UnicodeVersion %s != unicode.Version %s", pathx.UnicodeVersion, unicode.Version)
-	}
-	for name, v := range map[string]string{"x/text unicode/norm": norm.Version, "x/text cases": cases.UnicodeVersion} {
-		if compareVersions(unicode.Version, v) > 0 {
-			t.Fatalf("standard library Unicode %s is newer than %s %s: V must then come from the x/text tables "+
-				"(see docs/spec/content-format.md, Unicode version)", unicode.Version, name, v)
+	for name, v := range map[string]string{
+		"standard library unicode": unicode.Version,
+		"x/text unicode/norm":      norm.Version,
+		"x/text cases":             cases.UnicodeVersion,
+	} {
+		if v != pathx.UnicodeVersion {
+			t.Errorf("%s has Unicode %s, but V = %s (docs/spec/content-format.md, section 2.4)", name, v, pathx.UnicodeVersion)
 		}
 	}
-	if pathx.UnicodeVersion != "15.0.0" {
-		t.Fatalf("V changed to %s: update docs/spec/content-format.md and REVIEW.md, and re-check the vectors "+
-			"(raising V may only allow more characters)", pathx.UnicodeVersion)
+	re := regexp.MustCompile(`\*\*V = ([0-9]+\.[0-9]+\.[0-9]+)\*\*`)
+	for _, spec := range []string{"content-format.md", filepath.Join("zh-CN", "content-format.md")} {
+		b, err := os.ReadFile(filepath.Join("..", "..", "docs", "spec", spec))
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := re.FindAllSubmatch(b, -1)
+		if len(m) == 0 {
+			t.Errorf("%s does not state **V = x.y.z**", spec)
+		}
+		for _, x := range m {
+			if string(x[1]) != pathx.UnicodeVersion {
+				t.Errorf("%s states V = %s, code has %s", spec, x[1], pathx.UnicodeVersion)
+			}
+		}
 	}
 }
 

@@ -145,23 +145,28 @@ one segment) and therefore never contains `/`; a `/` gives
 ### 2.4 Unicode version V
 
 NFC, case folding and the `unassigned_char` rule depend on the Unicode
-character database. **V** is the Unicode version used by the write-time
-rules: the older of the reference implementation's two Unicode sources (the
-Go standard library, which provides the general categories, and
-golang.org/x/text, which provides NFC and case folding). Today **V =
-15.0.0**: with Go 1.26 both sources are at Unicode 15.0.0.
+Character Database. Format 1 fixes the version of these tables:
+**V = 15.0.0**. The write-time rules of every implementation MUST use the
+tables of Unicode 15.0.0, whatever its platform provides. (The reference
+implementation takes the general categories from the Go standard library and
+NFC and case folding from golang.org/x/text, both at Unicode 15.0.0 with Go
+1.26; its tests fail if a toolchain upgrade changes either.)
 
-* V may be raised later. Unicode's stability policies keep assigned code
-  points assigned and keep NFC and case folding of assigned characters
-  unchanged, so raising V only assigns more code points: the set of allowed
-  characters only grows, and paths that were valid stay valid with the same
-  canonical form.
+* V is raised only by recording the new version number in this document.
+  Unicode's stability policies keep assigned code points assigned and keep
+  NFC and case folding of assigned characters unchanged, so raising V only
+  assigns more code points: the set of allowed characters only grows, paths
+  that were valid stay valid with the same canonical form, and existing data
+  is not affected.
 * Because every unassigned code point is rejected at write time, stored
   names never contain characters whose normalization a later version could
   define differently.
-* The read-time rules (2.5) never use Unicode tables, so raising V — or a
-  different Unicode version in another implementation — never makes stored
-  data unreadable.
+* The read-time rules (2.5) never use Unicode tables, so a different V — in
+  another implementation, or after V is raised — never makes stored data
+  unreadable.
+* Test vectors whose result depends on V carry `"ucd_version": "15.0.0"`:
+  U+1F6DC (assigned in Unicode 15.0) is accepted, and U+2EBF0 (assigned in
+  15.1), U+1C89 and U+1F6D8 (assigned in 16.0) are `unassigned_char`.
 
 ### 2.5 Write-time and read-time rules
 

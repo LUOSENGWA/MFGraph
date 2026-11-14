@@ -51,6 +51,7 @@ type vecCase struct {
 	WalkLength int       `json:"walk_length"`
 	Nodes      []vecNode `json:"nodes"`
 	Error      string    `json:"error"`
+	UCDVersion string    `json:"ucd_version"`
 }
 
 type vecDoc struct {
@@ -65,9 +66,10 @@ type vecDoc struct {
 		Bytes string `json:"bytes"`
 	} `json:"decode_invalid"`
 	DecodeValidBuildRejects []struct {
-		Name      string `json:"name"`
-		Bytes     string `json:"bytes"`
-		WriteRule string `json:"write_rule"`
+		Name       string `json:"name"`
+		Bytes      string `json:"bytes"`
+		WriteRule  string `json:"write_rule"`
+		UCDVersion string `json:"ucd_version"`
 	} `json:"decode_valid_build_rejects"`
 }
 
@@ -90,6 +92,18 @@ func loadTreeVectors(t testing.TB) vecDoc {
 	}
 	if v.Limits["max_entries_per_node"] != tree.MaxEntriesPerNode || v.Limits["max_node_bytes"] != tree.MaxNodeBytes {
 		t.Fatalf("limits in tree.json %v do not match the implementation", v.Limits)
+	}
+	// Cases tagged ucd_version hold only for that Unicode version, which must
+	// be V.
+	for _, c := range v.Cases {
+		if c.UCDVersion != "" && c.UCDVersion != pathx.UnicodeVersion {
+			t.Fatalf("case %q needs Unicode %s, V is %s", c.Name, c.UCDVersion, pathx.UnicodeVersion)
+		}
+	}
+	for _, c := range v.DecodeValidBuildRejects {
+		if c.UCDVersion != "" && c.UCDVersion != pathx.UnicodeVersion {
+			t.Fatalf("case %q needs Unicode %s, V is %s", c.Name, c.UCDVersion, pathx.UnicodeVersion)
+		}
 	}
 	return v
 }
