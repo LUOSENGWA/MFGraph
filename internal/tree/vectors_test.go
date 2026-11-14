@@ -289,9 +289,9 @@ func TestDecodeValidBuildRejects(t *testing.T) {
 			}
 		case "case_conflict":
 			violated = pathx.KindOf(pathx.CheckSiblings(sibs)) == pathx.KindCaseConflict
-		case "unassigned_char":
+		case "unassigned_char", "disallowed_char":
 			for _, name := range names {
-				if _, err := pathx.NormalizeSegment(name); pathx.KindOf(err) == pathx.KindUnassignedChar {
+				if _, err := pathx.NormalizeSegment(name); string(pathx.KindOf(err)) == c.WriteRule {
 					violated = true
 				}
 			}

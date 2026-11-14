@@ -53,21 +53,21 @@ func TestValidateRejects(t *testing.T) {
 		return tree.Entry{Name: name, Type: tree.TypeFile, Hash: h0, Mode: tree.ModeRegular}
 	}
 	cases := map[string]tree.Node{
-		"unsorted":         {Kind: tree.KindDir, Entries: []tree.Entry{f("b"), f("a")}},
-		"duplicate":        {Kind: tree.KindDir, Entries: []tree.Entry{f("a"), f("a")}},
-		"c1-control":       {Kind: tree.KindDir, Entries: []tree.Entry{f("a\u0085")}},
-		"bidi-override":    {Kind: tree.KindDir, Entries: []tree.Entry{f("a\u202eb")}},
-		"zero-width":       {Kind: tree.KindDir, Entries: []tree.Entry{f("a\u200b")}},
-		"slash":            {Kind: tree.KindDir, Entries: []tree.Entry{f("a/b")}},
-		"index-first-bidi": {Kind: tree.KindDirIndex, Pages: []tree.PageRef{{Count: 1, First: "a\u2066", Hash: h0}}},
-		"bad-mode":         {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeFile, Hash: h0, Mode: 0o600}}},
-		"dir-with-size":    {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeDir, Hash: h0, Size: 1}}},
-		"zero-hash":        {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeFile, Mode: tree.ModeRegular}}},
-		"empty-page":       {Kind: tree.KindDirPage},
-		"empty-index":      {Kind: tree.KindDirIndex},
-		"unknown-kind":     {Kind: "file"},
-		"too-big-size":     {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeFile, Hash: h0, Mode: tree.ModeRegular, Size: tree.MaxSafeInteger + 1}}},
-		"index-zero-count": {Kind: tree.KindDirIndex, Pages: []tree.PageRef{{Count: 0, First: "a", Hash: h0}}},
+		"unsorted":            {Kind: tree.KindDir, Entries: []tree.Entry{f("b"), f("a")}},
+		"duplicate":           {Kind: tree.KindDir, Entries: []tree.Entry{f("a"), f("a")}},
+		"c1-control":          {Kind: tree.KindDir, Entries: []tree.Entry{f("a\u0085")}},
+		"noncharacter":        {Kind: tree.KindDir, Entries: []tree.Entry{f("x\uffff")}},
+		"noncharacter-fdd0":   {Kind: tree.KindDir, Entries: []tree.Entry{f("x\ufdd0")}},
+		"slash":               {Kind: tree.KindDir, Entries: []tree.Entry{f("a/b")}},
+		"index-first-nonchar": {Kind: tree.KindDirIndex, Pages: []tree.PageRef{{Count: 1, First: "a\U0010ffff", Hash: h0}}},
+		"bad-mode":            {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeFile, Hash: h0, Mode: 0o600}}},
+		"dir-with-size":       {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeDir, Hash: h0, Size: 1}}},
+		"zero-hash":           {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeFile, Mode: tree.ModeRegular}}},
+		"empty-page":          {Kind: tree.KindDirPage},
+		"empty-index":         {Kind: tree.KindDirIndex},
+		"unknown-kind":        {Kind: "file"},
+		"too-big-size":        {Kind: tree.KindDir, Entries: []tree.Entry{{Name: "a", Type: tree.TypeFile, Hash: h0, Mode: tree.ModeRegular, Size: tree.MaxSafeInteger + 1}}},
+		"index-zero-count":    {Kind: tree.KindDirIndex, Pages: []tree.PageRef{{Count: 0, First: "a", Hash: h0}}},
 	}
 	for name, n := range cases {
 		if err := n.Validate(); !errors.Is(err, tree.ErrInvalidNode) {
@@ -84,7 +84,8 @@ func TestValidateRejects(t *testing.T) {
 }
 
 // TestValidateReadTimeRulesOnly: names that only the write-time rules reject
-// (not NFC, case-fold conflicts, unassigned code points) are readable.
+// (not NFC, case-fold conflicts, unassigned code points, the fixed disallowed
+// list) are readable.
 func TestValidateReadTimeRulesOnly(t *testing.T) {
 	f := func(name string) tree.Entry {
 		return tree.Entry{Name: name, Type: tree.TypeFile, Hash: h0, Mode: tree.ModeRegular}
@@ -93,8 +94,11 @@ func TestValidateReadTimeRulesOnly(t *testing.T) {
 		"nfd-name":      {Kind: tree.KindDir, Entries: []tree.Entry{f("cafe\u0301")}},
 		"case-conflict": {Kind: tree.KindDir, Entries: []tree.Entry{f("A"), f("a")}},
 		"unassigned":    {Kind: tree.KindDir, Entries: []tree.Entry{f("x\u0378")}},
-		"noncharacter":  {Kind: tree.KindDir, Entries: []tree.Entry{f("x\uffff")}},
+		"bidi-override": {Kind: tree.KindDir, Entries: []tree.Entry{f("a\u202eb")}},
+		"zero-width":    {Kind: tree.KindDir, Entries: []tree.Entry{f("a\u200b")}},
+		"bom":           {Kind: tree.KindDir, Entries: []tree.Entry{f("\ufeffa")}},
 		"zwj-zwnj":      {Kind: tree.KindDir, Entries: []tree.Entry{f("a\u200cb\u200dc")}},
+		"index-bidi":    {Kind: tree.KindDirIndex, Pages: []tree.PageRef{{Count: 1, First: "a\u2066", Hash: h0}, {Count: 1, First: "b", Hash: h0}}},
 		"index-nfd":     {Kind: tree.KindDirIndex, Pages: []tree.PageRef{{Count: 1, First: "cafe\u0301", Hash: h0}, {Count: 1, First: "d", Hash: h0}}},
 	} {
 		if err := n.Validate(); err != nil {

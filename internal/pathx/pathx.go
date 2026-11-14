@@ -14,7 +14,9 @@ import (
 
 const (
 	// MaxSegmentBytes is the maximum length of one path segment, in bytes of
-	// its NFC UTF-8 form.
+	// its NFC UTF-8 form (at read time: as stored). It is the file name limit
+	// of Linux ext4 and leaves room for 85 CJK characters. It is a read-time
+	// rule too, so format 1 can never raise it.
 	MaxSegmentBytes = 255
 	// MaxPathBytes is the maximum length of a whole path, in bytes of its NFC
 	// UTF-8 form (including the '/' separators).
@@ -31,7 +33,8 @@ const (
 	KindAbsolute        Kind = "absolute"          // starts with '/'
 	KindBackslash       Kind = "backslash"         // contains '\'
 	KindControlChar     Kind = "control_char"      // contains a control character: U+0000-U+001F, U+007F-U+009F
-	KindDisallowedChar  Kind = "disallowed_char"   // contains a character of the fixed disallowed list (bidi controls, invisible characters)
+	KindNoncharacter    Kind = "noncharacter"      // contains a noncharacter: U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF
+	KindDisallowedChar  Kind = "disallowed_char"   // contains a character of the fixed disallowed list (bidi controls, invisible characters; write time only)
 	KindUnassignedChar  Kind = "unassigned_char"   // contains a code point unassigned in UnicodeVersion (write time only)
 	KindEmptySegment    Kind = "empty_segment"     // "a//b" or trailing '/'
 	KindDotSegment      Kind = "dot_segment"       // a segment equal to "." or ".."
@@ -88,9 +91,15 @@ var UnicodeVersion = unicode.Version
 // isControl reports C0 controls, DEL and C1 controls (general category Cc).
 func isControl(r rune) bool { return r < 0x20 || 0x7f <= r && r <= 0x9f }
 
-// isDisallowed reports the fixed list of characters rejected in names, at
-// write time and at read time (they are fixed code points, so the check does
-// not depend on Unicode tables):
+// isNoncharacter reports the 66 noncharacters: U+FDD0-U+FDEF and the last
+// two code points of every plane (U+xxFFFE, U+xxFFFF). They are rejected at
+// write time and at read time: I-JSON (RFC 7493), on which RFC 8785 relies,
+// forbids them, and they are fixed code points, so the check needs no Unicode
+// tables.
+func isNoncharacter(r rune) bool { return 0xfdd0 <= r && r <= 0xfdef || r&0xfffe == 0xfffe }
+
+// isDisallowed reports the fixed list of characters rejected in names at
+// write time (they are readable: the read-time rules do not check them):
 //
 //   - bidirectional formatting characters (spoofing, "Trojan Source"):
 //     U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069;
@@ -123,8 +132,9 @@ func isDisallowed(r rune) bool {
 		0xfff9 <= r && r <= 0xfffb // interlinear annotation controls
 }
 
-// isUnassigned reports code points of general category Cn in UnicodeVersion,
-// including the noncharacters U+FDD0-U+FDEF and U+xxFFFE/U+xxFFFF.
+// isUnassigned reports code points of general category Cn in UnicodeVersion.
+// The noncharacters are Cn too, but checkChars reports them as
+// KindNoncharacter first.
 func isUnassigned(r rune) bool { return unicode.Is(unicode.Cn, r) }
 
 // Normalize validates a '/'-separated relative path and returns its canonical
@@ -135,10 +145,10 @@ func isUnassigned(r rune) bool { return unicode.Is(unicode.Cn, r) }
 //  1. valid UTF-8 and non-empty;
 //  2. no leading '/'; then the characters are scanned from left to right and
 //     the first offending one decides: '\' (backslash), a control character
-//     U+0000-U+001F or U+007F-U+009F (control_char), a character of the
-//     fixed disallowed list: bidi controls and invisible characters
-//     (disallowed_char), a code point unassigned in UnicodeVersion
-//     (unassigned_char);
+//     U+0000-U+001F or U+007F-U+009F (control_char), a noncharacter
+//     (noncharacter), a character of the fixed disallowed list: bidi
+//     controls and invisible characters (disallowed_char), a code point
+//     unassigned in UnicodeVersion (unassigned_char);
 //  3. NFC normalization;
 //  4. split on '/': no empty segments ("a//b", trailing '/'), no "." or "..";
 //  5. every segment <= MaxSegmentBytes and the whole path <= MaxPathBytes,
@@ -181,19 +191,22 @@ func Normalize(p string) (string, error) {
 }
 
 // checkChars scans the valid UTF-8 string s from left to right and rejects
-// the first '\', control character or disallowed character; with
-// assignedOnly it also rejects code points unassigned in UnicodeVersion (a
-// write-time rule). input is reported as the offending value.
-func checkChars(s, input string, assignedOnly bool) error {
+// the first '\', control character or noncharacter (the read-time character
+// rules); with writeTime it also rejects the fixed disallowed list and code
+// points unassigned in UnicodeVersion. input is reported as the offending
+// value.
+func checkChars(s, input string, writeTime bool) error {
 	for _, r := range s {
 		switch {
 		case r == '\\':
 			return fail(KindBackslash, input, "")
 		case isControl(r):
 			return fail(KindControlChar, input, fmt.Sprintf("%U", r))
-		case isDisallowed(r):
+		case isNoncharacter(r):
+			return fail(KindNoncharacter, input, fmt.Sprintf("%U", r))
+		case writeTime && isDisallowed(r):
 			return fail(KindDisallowedChar, input, fmt.Sprintf("%U", r))
-		case assignedOnly && isUnassigned(r):
+		case writeTime && isUnassigned(r):
 			return fail(KindUnassignedChar, input, fmt.Sprintf("%U is not assigned in Unicode %s", r, UnicodeVersion))
 		}
 	}
@@ -227,21 +240,21 @@ func NormalizeSegment(s string) (string, error) {
 }
 
 // ValidateStoredName applies the read-time rules to a name found in a stored
-// tree node (an entry name or the first name of an index reference). None of
-// them depends on Unicode tables:
+// tree node (an entry name or the first name of an index reference). They are
+// structural and never depend on Unicode tables:
 //
 //  1. valid UTF-8 (invalid_utf8) and non-empty (empty);
 //  2. no '/' (contains_slash);
 //  3. scanning from left to right, no '\' (backslash), no control character
-//     U+0000-U+001F or U+007F-U+009F (control_char), no character of the
-//     fixed disallowed list (disallowed_char);
+//     U+0000-U+001F or U+007F-U+009F (control_char), no noncharacter
+//     (noncharacter);
 //  4. not "." or ".." (dot_segment);
 //  5. at most MaxSegmentBytes bytes as stored (segment_too_long).
 //
-// It deliberately does not check NFC, case-fold conflicts or whether code
-// points are assigned: those write-time rules depend on the Unicode version,
-// and a tree written under one version must stay readable under any later
-// one.
+// It deliberately does not check NFC, case-fold conflicts, whether code
+// points are assigned, or the fixed disallowed list: those are write-time
+// rules, which may be adjusted later, and a stored tree must stay readable
+// by every reader of format 1.
 func ValidateStoredName(name string) error {
 	if name == "" {
 		return fail(KindEmpty, name, "")

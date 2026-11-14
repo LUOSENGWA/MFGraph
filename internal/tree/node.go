@@ -193,12 +193,12 @@ func appendString(b []byte, s string) []byte {
 }
 
 // Validate checks the read-time rules of a single node: kind, entry and
-// reference fields, names (pathx.ValidateStoredName), strict byte order of
-// names (which also excludes a name used twice or as both file and
-// directory), and the entry limits. It does not check NFC, case-fold
-// conflicts or unassigned code points: those are write-time rules (enforced
-// by Build) that depend on Unicode tables, and stored trees must stay
-// readable when the tables change.
+// reference fields, names (pathx.ValidateStoredName: structural rules only),
+// strict byte order of names (which also excludes a name used twice or as
+// both file and directory), reference counts of at least 1, and the entry
+// limits. It does not check NFC, case-fold conflicts, unassigned code points
+// or the fixed disallowed list: those are write-time rules (enforced by
+// Build), and stored trees must stay readable when they change.
 func (n Node) Validate() error {
 	switch n.Kind {
 	case KindDir, KindDirPage:

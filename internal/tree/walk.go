@@ -50,8 +50,8 @@ type WalkFunc func(path string, e Entry) error
 // rules: node hashes, strict decoding, no empty subdirectories, page
 // reference counts and first names, strictly ascending names across all pages
 // of a directory, and that every paged directory is split exactly as Build
-// would split it. Like Decode it does not check NFC, case-fold conflicts or
-// unassigned code points (write-time rules that depend on Unicode tables).
+// would split it. Like Decode it does not check NFC, case-fold conflicts,
+// unassigned code points or the fixed disallowed list (write-time rules).
 func Walk(ctx context.Context, g Getter, root contenthash.Hash, fn WalkFunc) error {
 	w := walker{ctx: ctx, g: g, lim: frozenLimits, onEntry: fn}
 	return w.dir("", root, true)

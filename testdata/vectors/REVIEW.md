@@ -128,7 +128,7 @@ Parse rejects (must all fail): empty, missing sha256: prefix, uppercase prefix, 
 
 ## 2. pathx
 
-Rule order: UTF-8 + non-empty → absolute → first offending character from left to right (backslash; control_char = U+0000–U+001F, U+007F–U+009F; disallowed_char = the fixed list: bidi controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and invisible characters U+00AD, U+180E, U+200B, U+2028, U+2029, U+2060, U+2061–U+2064, U+FEFF, U+FFF9–U+FFFB; unassigned_char = general category Cn in Unicode 15.0.0) → NFC → empty / `.` / `..` segments → segment ≤ 255 B and path ≤ 4096 B (NFC bytes). First failure wins.
+Rule order: UTF-8 + non-empty → absolute → first offending character from left to right (backslash; control_char = U+0000–U+001F, U+007F–U+009F; noncharacter = U+FDD0–U+FDEF and U+xxFFFE/U+xxFFFF (66 code points); disallowed_char = the fixed list: bidi controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and invisible characters U+00AD, U+180E, U+200B, U+2028, U+2029, U+2060, U+2061–U+2064, U+FEFF, U+FFF9–U+FFFB; unassigned_char = general category Cn in Unicode 15.0.0) → NFC → empty / `.` / `..` segments → segment ≤ 255 B and path ≤ 4096 B (NFC bytes). First failure wins.
 
 ### 2.1 Normalize
 
@@ -203,8 +203,12 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | interlinear-annotation-terminator-ufffb | `a\ufffbb` | ✗ `disallowed_char` |
 | unassigned-u0378 | `a\u0378` | ✗ `unassigned_char` |
 | unassigned-plane4-u40000 | `a\U00040000` | ✗ `unassigned_char` |
-| noncharacter-uffff | `a\uffff` | ✗ `unassigned_char` |
-| noncharacter-ufdd0 | `a\ufdd0` | ✗ `unassigned_char` |
+| noncharacter-uffff | `a\uffff` | ✗ `noncharacter` |
+| noncharacter-ufdd0 | `a\ufdd0` | ✗ `noncharacter` |
+| noncharacter-ufffe | `a\ufffe` | ✗ `noncharacter` |
+| noncharacter-ufdef | `a\ufdef` | ✗ `noncharacter` |
+| noncharacter-plane1-u1ffff | `a\U0001ffff` | ✗ `noncharacter` |
+| noncharacter-plane16-u10fffe | `d/a\U0010fffe` | ✗ `noncharacter` |
 | order-absolute-before-characters | `/\u202e` | ✗ `absolute` |
 | order-first-character-wins-disallowed | `a\u202eb\c` | ✗ `disallowed_char` |
 | order-first-character-wins-backslash | `a\b\u202ec` | ✗ `backslash` |
@@ -212,6 +216,9 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | order-first-character-wins-control | `\u0085\u0378` | ✗ `control_char` |
 | order-characters-before-dot-segment | `../a\u200b` | ✗ `disallowed_char` |
 | order-characters-before-nfc | `cafe\u0301\u0378` | ✗ `unassigned_char` |
+| order-noncharacter-before-unassigned | `\ufdd0\u0378` | ✗ `noncharacter` |
+| order-first-character-wins-disallowed-before-noncharacter | `a\u202eb\uffff` | ✗ `disallowed_char` |
+| order-first-character-wins-noncharacter-before-disallowed | `a\uffffb\u202e` | ✗ `noncharacter` |
 | double-slash | `a//b` | ✗ `empty_segment` |
 | trailing-slash | `a/` | ✗ `empty_segment` |
 | dot | `.` | ✗ `dot_segment` |
@@ -306,12 +313,13 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | `release\u00ad1` | ✗ `disallowed_char` |
 | `❤\ufe0f` | ✓ `❤\ufe0f` |
 | `\u0378` | ✗ `unassigned_char` |
+| `main\uffff` | ✗ `noncharacter` |
 | bytes `6d61696eff` | ✗ `invalid_utf8` |
 | `a`×256 (256 bytes) | ✗ `segment_too_long` |
 
 ### 2.5 Stored names (read-time rules)
 
-Names inside stored tree nodes are checked only with rules that do not depend on Unicode tables: valid UTF-8, non-empty, no `/`, then the first offending character (backslash, control_char, disallowed_char), not `.`/`..`, at most 255 bytes as stored. No NFC, case-fold or unassigned checks, so trees stay readable after a Unicode upgrade.
+Names inside stored tree nodes are checked only with structural rules that do not depend on Unicode tables: valid UTF-8, non-empty, no `/`, then the first offending character (backslash, control_char, noncharacter), not `.`/`..`, at most 255 bytes as stored. No NFC, case-fold, unassigned or disallowed-list checks: those are write-time rules, so stored trees stay readable when they change.
 
 | name | input | result |
 |---|---|---|
@@ -319,7 +327,11 @@ Names inside stored tree nodes are checked only with rules that do not depend on
 | nfd-accepted | `cafe\u0301` | ✓ accepted |
 | case-variant-accepted | `Plan.dwg` | ✓ accepted |
 | unassigned-accepted | `x\u0378` | ✓ accepted |
-| noncharacter-accepted | `x\uffff` | ✓ accepted |
+| noncharacter-uffff | `x\uffff` | ✗ `noncharacter` |
+| noncharacter-ufdd0 | `x\ufdd0` | ✗ `noncharacter` |
+| noncharacter-ufffe | `x\ufffe` | ✗ `noncharacter` |
+| noncharacter-plane16-u10ffff | `x\U0010ffff` | ✗ `noncharacter` |
+| disallowed-then-noncharacter | `a\u202e\uffff` | ✗ `noncharacter` |
 | plane4-accepted | `\U00040000` | ✓ accepted |
 | zwj-sequence-accepted | `👨\u200d👩\u200d👧` | ✓ accepted |
 | zwnj-accepted | `a\u200cb` | ✓ accepted |
@@ -332,21 +344,21 @@ Names inside stored tree nodes are checked only with rules that do not depend on
 | c0-control | `a\u0001` | ✗ `control_char` |
 | del | `a\u007f` | ✗ `control_char` |
 | c1-control | `a\u0085` | ✗ `control_char` |
-| bidi-override | `a\u202eb` | ✗ `disallowed_char` |
-| bidi-isolate | `a\u2068b` | ✗ `disallowed_char` |
-| zero-width-space | `a\u200bb` | ✗ `disallowed_char` |
-| byte-order-mark | `\ufeffa` | ✗ `disallowed_char` |
-| soft-hyphen-u00ad | `co\u00adop.txt` | ✗ `disallowed_char` |
-| mongolian-vowel-separator-u180e | `a\u180eb` | ✗ `disallowed_char` |
-| line-separator-u2028 | `a\u2028b` | ✗ `disallowed_char` |
-| paragraph-separator-u2029 | `a\u2029b` | ✗ `disallowed_char` |
-| function-application-u2061 | `f\u2061x` | ✗ `disallowed_char` |
-| invisible-times-u2062 | `2\u2062x` | ✗ `disallowed_char` |
-| invisible-separator-u2063 | `a\u2063b` | ✗ `disallowed_char` |
-| invisible-plus-u2064 | `1\u20642` | ✗ `disallowed_char` |
-| interlinear-annotation-anchor-ufff9 | `a\ufff9b` | ✗ `disallowed_char` |
-| interlinear-annotation-separator-ufffa | `a\ufffab` | ✗ `disallowed_char` |
-| interlinear-annotation-terminator-ufffb | `a\ufffbb` | ✗ `disallowed_char` |
+| bidi-override-accepted | `a\u202eb` | ✓ accepted |
+| bidi-isolate-accepted | `a\u2068b` | ✓ accepted |
+| zero-width-space-accepted | `a\u200bb` | ✓ accepted |
+| byte-order-mark-accepted | `\ufeffa` | ✓ accepted |
+| soft-hyphen-u00ad-accepted | `co\u00adop.txt` | ✓ accepted |
+| mongolian-vowel-separator-u180e-accepted | `a\u180eb` | ✓ accepted |
+| line-separator-u2028-accepted | `a\u2028b` | ✓ accepted |
+| paragraph-separator-u2029-accepted | `a\u2029b` | ✓ accepted |
+| function-application-u2061-accepted | `f\u2061x` | ✓ accepted |
+| invisible-times-u2062-accepted | `2\u2062x` | ✓ accepted |
+| invisible-separator-u2063-accepted | `a\u2063b` | ✓ accepted |
+| invisible-plus-u2064-accepted | `1\u20642` | ✓ accepted |
+| interlinear-annotation-anchor-ufff9-accepted | `a\ufff9b` | ✓ accepted |
+| interlinear-annotation-separator-ufffa-accepted | `a\ufffab` | ✓ accepted |
+| interlinear-annotation-terminator-ufffb-accepted | `a\ufffbb` | ✓ accepted |
 | emoji-with-variation-selector-ufe0f-accepted | `❤\ufe0f.txt` | ✓ accepted |
 | text-variation-selector-ufe0e-accepted | `☎\ufe0e.txt` | ✓ accepted |
 | tag-sequence-flag-of-scotland-accepted | `🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f.txt` | ✓ accepted |
@@ -357,6 +369,8 @@ Names inside stored tree nodes are checked only with rules that do not depend on
 | length-counted-as-stored-not-after-nfc | `e\u0301`×127 (381 bytes) | ✗ `segment_too_long` |
 | order-slash-before-characters | `a\u202e/b` | ✗ `contains_slash` |
 | order-first-character-wins | `a\u0085\u202e` | ✗ `control_char` |
+| order-control-before-noncharacter | `a\u0085\uffff` | ✗ `control_char` |
+| order-noncharacter-before-control | `a\uffff\u0085` | ✗ `noncharacter` |
 
 ## 3. tree (format 1)
 
@@ -405,7 +419,7 @@ Rules checked by these vectors:
 | reject-byte-order-mark-in-subdirectory | 1 file(s) | ✗ `disallowed_char` |
 | reject-unassigned-u0378 | 1 file(s) | ✗ `unassigned_char` |
 | reject-unassigned-plane4 | 1 file(s) | ✗ `unassigned_char` |
-| reject-noncharacter | 1 file(s) | ✗ `unassigned_char` |
+| reject-noncharacter | 1 file(s) | ✗ `noncharacter` |
 | reject-soft-hyphen | 1 file(s) | ✗ `disallowed_char` |
 | reject-line-separator | 1 file(s) | ✗ `disallowed_char` |
 | reject-invisible-times | 1 file(s) | ✗ `disallowed_char` |
@@ -415,6 +429,7 @@ Rules checked by these vectors:
 | reject-georgian-mtavruli-vs-mkhedruli | 2 file(s) | ✗ `case_conflict` |
 | reject-capital-sharp-s-acute-vs-s-s-acute | 2 file(s) | ✗ `case_conflict` |
 | reject-fi-ligature-acute-vs-f-i-acute | 2 file(s) | ✗ `case_conflict` |
+| reject-noncharacter-plane16-in-subdirectory | 1 file(s) | ✗ `noncharacter` |
 
 ### 3.2 Small cases in full
 
@@ -853,7 +868,7 @@ root `sha256:c63ef4eaae5650368cdb6fac7d9dd85a4d895db54ee8e3bdd17a478bfbd9767c`; 
 
 ### 3.4 Strict decoding: inputs that must be rejected (read-time rules)
 
-`trailing-newline`, `leading-space`, `byte-order-mark`, `space-after-colon`, `whitespace-inside-array`, `keys-out-of-order`, `unknown-key`, `duplicate-key`, `format-2`, `format-as-string`, `format-as-float`, `unknown-kind`, `null-entries`, `not-an-object`, `truncated`, `empty-dir-page`, `empty-dir-index`, `dir-with-pages-key`, `index-with-entries-key`, `escaped-ascii-in-name`, `escaped-non-ascii-in-name`, `escaped-solidus-in-name`, `name-dotdot`, `name-with-slash`, `name-with-control-char`, `name-with-backslash`, `empty-name`, `uppercase-hash`, `hash-without-prefix`, `entries-not-sorted`, `duplicate-names`, `mode-0666`, `mode-as-string`, `file-without-mode`, `file-without-size`, `size-negative`, `size-leading-zero`, `size-plus-sign`, `size-exponent`, `size-above-2^53-1`, `dir-entry-with-size`, `dir-entry-with-mode`, `type-symlink`, `index-count-zero`, `index-pages-not-sorted`, `name-with-c1-control-u0085`, `name-with-c1-control-u009f`, `name-with-bidi-override-u202e`, `name-with-bidi-isolate-u2066`, `name-with-bidi-mark-u200e`, `name-with-arabic-letter-mark-u061c`, `name-with-zero-width-space-u200b`, `name-with-word-joiner-u2060`, `name-with-byte-order-mark-ufeff`, `dir-entry-name-with-bidi-u202b`, `index-first-with-bidi-u202e`, `index-first-with-c1-control`, `name-with-soft-hyphen-u00ad`, `name-with-mongolian-vowel-separator-u180e`, `name-with-line-separator-u2028`, `name-with-paragraph-separator-u2029`, `name-with-function-application-u2061`, `name-with-invisible-times-u2062`, `name-with-invisible-separator-u2063`, `name-with-invisible-plus-u2064`, `name-with-interlinear-annotation-anchor-ufff9`, `name-with-interlinear-annotation-separator-ufffa`, `name-with-interlinear-annotation-terminator-ufffb`.
+`trailing-newline`, `leading-space`, `byte-order-mark`, `space-after-colon`, `whitespace-inside-array`, `keys-out-of-order`, `unknown-key`, `duplicate-key`, `format-2`, `format-as-string`, `format-as-float`, `unknown-kind`, `null-entries`, `not-an-object`, `truncated`, `empty-dir-page`, `empty-dir-index`, `dir-with-pages-key`, `index-with-entries-key`, `escaped-ascii-in-name`, `escaped-non-ascii-in-name`, `escaped-solidus-in-name`, `name-dotdot`, `name-with-slash`, `name-with-control-char`, `name-with-backslash`, `empty-name`, `uppercase-hash`, `hash-without-prefix`, `entries-not-sorted`, `duplicate-names`, `mode-0666`, `mode-as-string`, `file-without-mode`, `file-without-size`, `size-negative`, `size-leading-zero`, `size-plus-sign`, `size-exponent`, `size-above-2^53-1`, `dir-entry-with-size`, `dir-entry-with-mode`, `type-symlink`, `index-count-zero`, `index-pages-not-sorted`, `name-with-c1-control-u0085`, `name-with-c1-control-u009f`, `index-first-with-c1-control`, `name-noncharacter-uffff`, `name-with-noncharacter-ufdd0`, `dir-entry-name-with-noncharacter-u10fffe`, `index-first-with-noncharacter-u1ffff`.
 
 ### 3.5 Accepted when reading, never produced when writing
 
@@ -867,8 +882,27 @@ A decoder must accept these nodes (the read-time rules do not use Unicode tables
 | sharp-s-conflict-in-node | `case_conflict` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"STRASSE","size":0,"type":"file"},{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"straße","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
 | file-and-dir-differ-in-case | `case_conflict` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","name":"Docs","type":"dir"},{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"docs","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
 | name-unassigned-u0378 | `unassigned_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"x\u0378","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
-| name-noncharacter-uffff | `unassigned_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"x\uffff","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
 | index-first-unassigned-plane4 | `unassigned_char` | `{"format":1,"kind":"dir_index","pages":[{"count":1,"first":"\U00040000","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},{"count":1,"first":"\U00040001","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}` |
+| name-with-bidi-override-u202e | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"invoice\u202egpj.exe","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-bidi-isolate-u2066 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2066b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-bidi-mark-u200e | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u200eb","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-arabic-letter-mark-u061c | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u061cb","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-zero-width-space-u200b | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u200bb","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-word-joiner-u2060 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2060b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-byte-order-mark-ufeff | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"\ufeffa","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| dir-entry-name-with-bidi-u202b | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","name":"a\u202bb","type":"dir"}],"format":1,"kind":"dir"}` |
+| index-first-with-bidi-u202e | `disallowed_char` | `{"format":1,"kind":"dir_index","pages":[{"count":1,"first":"a\u202e","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},{"count":1,"first":"b","hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]}` |
+| name-with-soft-hyphen-u00ad | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u00adb","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-mongolian-vowel-separator-u180e | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u180eb","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-line-separator-u2028 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2028b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-paragraph-separator-u2029 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2029b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-function-application-u2061 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2061b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-invisible-times-u2062 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2062b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-invisible-separator-u2063 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2063b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-invisible-plus-u2064 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\u2064b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-interlinear-annotation-anchor-ufff9 | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\ufff9b","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-interlinear-annotation-separator-ufffa | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\ufffab","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
+| name-with-interlinear-annotation-terminator-ufffb | `disallowed_char` | `{"entries":[{"hash":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":420,"name":"a\ufffbb","size":0,"type":"file"}],"format":1,"kind":"dir"}` |
 
 ## 4. Coverage checklist
 

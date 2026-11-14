@@ -98,7 +98,10 @@ class PathError(Exception):
 
 def _decode(raw):
     if isinstance(raw, str):
-        raw = raw.encode("utf-8")
+        try:
+            raw = raw.encode("utf-8")
+        except UnicodeEncodeError:  # a lone surrogate, e.g. from the JSON escape \ud800
+            raise PathError("invalid_utf8")
     if len(raw) == 0:
         raise PathError("empty")
     try:
@@ -107,7 +110,7 @@ def _decode(raw):
         raise PathError("invalid_utf8")
 
 
-# Fixed list (not the whole category Cf), checked at write and read time:
+# Fixed list (not the whole category Cf), checked at write time only:
 # bidirectional formatting characters U+061C, U+200E, U+200F, U+202A-U+202E,
 # U+2066-U+2069, and invisible or layout-breaking characters U+00AD, U+180E,
 # U+200B, U+2028, U+2029, U+2060, U+2061-U+2064, U+FEFF, U+FFF9-U+FFFB.
@@ -118,15 +121,24 @@ DISALLOWED = ({0x00AD, 0x061C, 0x180E, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0
               | set(range(0x2066, 0x206A)) | set(range(0xFFF9, 0xFFFC)))
 
 
+def is_noncharacter(o):
+    """The 66 noncharacters: U+FDD0-U+FDEF and U+xxFFFE/U+xxFFFF."""
+    return 0xFDD0 <= o <= 0xFDEF or (o & 0xFFFE) == 0xFFFE
+
+
 def char_problem(ch, write):
-    """Error kind for one code point, or None. Write-time rules (write=True)
-    also reject code points of general category Cn (unassigned)."""
+    """Error kind for one code point, or None. Read time (write=False) checks
+    only backslash, control characters and noncharacters; write time also
+    rejects the fixed disallowed list and code points of general category Cn
+    (unassigned)."""
     o = ord(ch)
     if ch == "\\":
         return "backslash"
     if o < 0x20 or 0x7F <= o <= 0x9F:
         return "control_char"
-    if o in DISALLOWED:
+    if is_noncharacter(o):
+        return "noncharacter"
+    if write and o in DISALLOWED:
         return "disallowed_char"
     if write and unicodedata.category(ch) == "Cn":
         return "unassigned_char"
@@ -175,8 +187,9 @@ def normalize_segment(raw):
 
 
 def check_stored_name(raw):
-    """Read-time rules for a name in a stored node: no Unicode tables involved
-    (no NFC, no case folding, no unassigned check)."""
+    """Read-time rules for a name in a stored node: structural only, no Unicode
+    tables involved (no NFC, case folding, unassigned or disallowed-list
+    check)."""
     s = _decode(raw)
     if "/" in s:
         raise PathError("contains_slash")
@@ -604,8 +617,8 @@ def write_rule_violated(obj, rule):
     if rule == "case_conflict":
         entries = [(e["name"], e["type"] == "dir") for e in obj.get("entries", [])]
         return _run(check_siblings, entries)[1] == "case_conflict"
-    if rule == "unassigned_char":
-        return any(_run(normalize_segment, n)[1] == "unassigned_char" for n in names)
+    if rule in ("unassigned_char", "disallowed_char"):
+        return any(_run(normalize_segment, n)[1] == rule for n in names)
     raise ValueError(rule)
 
 
@@ -834,7 +847,8 @@ def review_pathx(lines):
     v = load("pathx.json")
     lines += ["## 2. pathx", "",
               "Rule order: UTF-8 + non-empty → absolute → first offending character from left to right "
-              "(backslash; control_char = U+0000–U+001F, U+007F–U+009F; disallowed_char = the fixed list: bidi "
+              "(backslash; control_char = U+0000–U+001F, U+007F–U+009F; noncharacter = U+FDD0–U+FDEF and "
+              "U+xxFFFE/U+xxFFFF (66 code points); disallowed_char = the fixed list: bidi "
               "controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and invisible characters U+00AD, "
               "U+180E, U+200B, U+2028, U+2029, U+2060, U+2061–U+2064, U+FEFF, U+FFF9–U+FFFB; "
               "unassigned_char = general category Cn in Unicode 15.0.0) → NFC → "
@@ -856,10 +870,11 @@ def review_pathx(lines):
     for case in v["branch_names"]:
         lines.append("| %s | %s |" % (show_case_input(case), show_case_result(case)))
     lines += ["", "### 2.5 Stored names (read-time rules)", "",
-              "Names inside stored tree nodes are checked only with rules that do not depend on Unicode "
-              "tables: valid UTF-8, non-empty, no `/`, then the first offending character (backslash, "
-              "control_char, disallowed_char), not `.`/`..`, at most 255 bytes as stored. No NFC, case-fold "
-              "or unassigned checks, so trees stay readable after a Unicode upgrade.", "",
+              "Names inside stored tree nodes are checked only with structural rules that do not depend on "
+              "Unicode tables: valid UTF-8, non-empty, no `/`, then the first offending character (backslash, "
+              "control_char, noncharacter), not `.`/`..`, at most 255 bytes as stored. No NFC, case-fold, "
+              "unassigned or disallowed-list checks: those are write-time rules, so stored trees stay readable "
+              "when they change.", "",
               "| name | input | result |", "|---|---|---|"]
     for case in v["stored_names"]:
         res = "✗ `%s`" % case["error"] if "error" in case else "✓ accepted"

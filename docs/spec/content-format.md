@@ -53,6 +53,8 @@ step that fails determines the error kind.
    * `\` (`backslash`);
    * a control character U+0000–U+001F or U+007F–U+009F, that is C0, DEL
      and C1 (`control_char`);
+   * a noncharacter: U+FDD0–U+FDEF and the last two code points of every
+     plane, U+xxFFFE and U+xxFFFF — 66 code points in all (`noncharacter`);
    * a character of the fixed disallowed list (`disallowed_char`): the
      bidirectional formatting characters U+061C, U+200E, U+200F,
      U+202A–U+202E, U+2066–U+2069, and the invisible or layout-breaking
@@ -62,14 +64,17 @@ step that fails determines the error kind.
      mathematical operators), U+FEFF (zero width no-break space) and
      U+FFF9–U+FFFB (interlinear annotation controls);
    * a code point that is unassigned (general category Cn) in Unicode version
-     V, including the noncharacters U+FDD0–U+FDEF and U+xxFFFE/U+xxFFFF
-     (`unassigned_char`; see 2.4).
+     V (`unassigned_char`; see 2.4). The noncharacters are Cn too; the
+     previous rule reports them as `noncharacter`.
 3. It is converted to Unicode Normalization Form C (NFC).
 4. It is split on `/`. No segment may be empty (`a//b`, a trailing `/`:
    `empty_segment`) or equal to `.` or `..` (`dot_segment`).
 5. Each segment MUST be at most 255 bytes (`segment_too_long`) and the whole
    path at most 4096 bytes (`path_too_long`), counted in UTF-8 bytes of the
-   NFC form.
+   NFC form. 255 bytes is the file name limit of Linux ext4 (and of most
+   POSIX file systems), and 85 CJK characters (3 bytes each in UTF-8) are
+   enough for a file name. The limit is also a read-time rule (2.5), so
+   format 1 can never raise it.
 
 All character checks of step 2 run on the input before NFC and before the
 segment rules; for example `../a` followed by U+200B gives `disallowed_char`,
@@ -79,9 +84,11 @@ Why: control characters and the bidirectional formatting characters can make
 a name display differently from what it is (spoofing, "Trojan Source");
 invisible characters make different names look identical, and line or
 paragraph separators break listings; unassigned code points have no defined
-normalization or case folding yet (see 2.4). The disallowed list is fixed:
-other format characters (category Cf) are not rejected as a class. Because
-it consists of fixed code points, it is checked at read time as well (2.5).
+normalization or case folding yet (see 2.4); noncharacters are forbidden by
+I-JSON (RFC 7493), on which RFC 8785 builds. The disallowed list is fixed:
+other format characters (category Cf) are not rejected as a class. It is a
+write-time rule only (2.5): it may be extended later, and stored names that
+contain such characters stay readable.
 
 No other rule applies. In particular these are **allowed**:
 
@@ -163,7 +170,8 @@ golang.org/x/text, which provides NFC and case folding). Today **V =
 | valid UTF-8, non-empty | ✓ | ✓ |
 | no `/` in a name; no `\` | ✓ | ✓ |
 | no control characters (C0, DEL, C1) | ✓ | ✓ |
-| no character of the fixed disallowed list (2.1) | ✓ | ✓ |
+| no noncharacters (U+FDD0–U+FDEF, U+xxFFFE, U+xxFFFF) | ✓ | ✓ |
+| no character of the fixed disallowed list (2.1) | ✓ | — |
 | not `.` or `..` | ✓ | ✓ |
 | at most 255 bytes per name | ✓ (after NFC) | ✓ (as stored) |
 | at most 4096 bytes per path | ✓ | — |
@@ -173,10 +181,14 @@ golang.org/x/text, which provides NFC and case folding). Today **V =
 | no duplicate names, no name used as both file and directory | ✓ | ✓ (implied by strictly ascending names, 3.8) |
 
 The read-time rules are a subset of the write-time rules, so everything a
-conforming writer produces is readable. A reader MUST NOT reject a stored
-name because it is not in NFC, because two names have the same fold key, or
-because it contains a code point unassigned in the reader's Unicode version.
-The test vectors list such nodes in `decode_valid_build_rejects`.
+conforming writer produces is readable. They are structural, never use
+Unicode tables and are fixed for format 1. A reader MUST NOT reject a stored
+name because it is not in NFC, because two names have the same fold key,
+because it contains a code point unassigned in the reader's Unicode version,
+or because it contains a character of the fixed disallowed list. The
+write-time rules can therefore change (a new V, a longer disallowed list)
+without making stored data unreadable. The test vectors list such nodes in
+`decode_valid_build_rejects`.
 
 ## 3. Tree nodes
 
@@ -347,8 +359,8 @@ A reader that walks a tree MUST additionally check that no directory other
 than the root is empty, that `count` and `first` of every reference match
 the referenced node, that entries are strictly ascending across all pages of
 a directory, and that every paged directory is split exactly as section 3.5
-prescribes. Readers do not check NFC, case-fold conflicts or unassigned code
-points (2.5). Together these rules give every directory listing exactly one
+prescribes. Readers do not check NFC, case-fold conflicts, unassigned code
+points or the fixed disallowed list (2.5). Together these rules give every directory listing exactly one
 valid encoding, and the write-time rules ensure that equivalent names never
 coexist.
 

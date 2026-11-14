@@ -288,16 +288,18 @@ func TestAllowedAndRejectedCharacters(t *testing.T) {
 		0x2028: pathx.KindDisallowedChar, 0x2029: pathx.KindDisallowedChar, 0x2061: pathx.KindDisallowedChar,
 		0x2062: pathx.KindDisallowedChar, 0x2063: pathx.KindDisallowedChar, 0x2064: pathx.KindDisallowedChar,
 		0xfff9: pathx.KindDisallowedChar, 0xfffa: pathx.KindDisallowedChar, 0xfffb: pathx.KindDisallowedChar,
-		0x0378: pathx.KindUnassignedChar, 0xfffe: pathx.KindUnassignedChar,
-		0x10ffff: pathx.KindUnassignedChar,
+		0x0378: pathx.KindUnassignedChar, 0x1fffd: pathx.KindUnassignedChar,
+		0xfffe: pathx.KindNoncharacter, 0xfdd0: pathx.KindNoncharacter, 0x10ffff: pathx.KindNoncharacter,
 	}
 	for r, want := range rejected {
 		if _, err := pathx.NormalizeSegment("a" + string(r)); pathx.KindOf(err) != want {
 			t.Errorf("%U: got %v, want %s", r, err, want)
 		}
-		// Fixed code points are rejected at read time too; unassigned ones are not.
+		// Read time keeps only the structural rules: control characters and
+		// noncharacters; the disallowed list and unassigned code points are
+		// readable.
 		readWant := want
-		if want == pathx.KindUnassignedChar {
+		if want == pathx.KindDisallowedChar || want == pathx.KindUnassignedChar {
 			readWant = ""
 		}
 		if err := pathx.ValidateStoredName("a" + string(r)); pathx.KindOf(err) != readWant {
@@ -307,6 +309,40 @@ func TestAllowedAndRejectedCharacters(t *testing.T) {
 	for _, r := range allowed {
 		if err := pathx.ValidateStoredName("a" + string(r) + "b"); err != nil {
 			t.Errorf("%U must be readable: %v", r, err)
+		}
+	}
+}
+
+// TestNoncharacters: the 66 noncharacters are rejected with their own kind at
+// write time and at read time; their neighbours are not noncharacters.
+func TestNoncharacters(t *testing.T) {
+	n := 0
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		nonchar := 0xfdd0 <= r && r <= 0xfdef || r&0xfffe == 0xfffe
+		if !nonchar {
+			continue
+		}
+		n++
+		name := "x" + string(r)
+		if _, err := pathx.NormalizeSegment(name); pathx.KindOf(err) != pathx.KindNoncharacter {
+			t.Errorf("NormalizeSegment %U: %v", r, err)
+		}
+		if _, err := pathx.Normalize("d/" + name); pathx.KindOf(err) != pathx.KindNoncharacter {
+			t.Errorf("Normalize %U: %v", r, err)
+		}
+		if err := pathx.ValidateStoredName(name); pathx.KindOf(err) != pathx.KindNoncharacter {
+			t.Errorf("ValidateStoredName %U: %v", r, err)
+		}
+		if !unicode.Is(unicode.Cn, r) {
+			t.Errorf("%U: noncharacters are unassigned (Cn)", r)
+		}
+	}
+	if n != 66 {
+		t.Fatalf("%d noncharacters, want 66", n)
+	}
+	for _, r := range []rune{0xfdcf, 0xfdf0, 0xfffd, 0x1fffd, 0x10fffd} {
+		if err := pathx.ValidateStoredName("x" + string(r)); err != nil {
+			t.Errorf("%U is not a noncharacter: %v", r, err)
 		}
 	}
 }
