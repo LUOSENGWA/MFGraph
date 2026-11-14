@@ -1,7 +1,7 @@
 {
   "schema": "mfgraph-test-vectors/pathx/1",
   "review_status": "pending-human-review",
-  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), noncharacter (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), disallowed_char (fixed list of bidi controls and invisible characters), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. fold: the case-fold key NFD(casefold(NFD(input))), the canonical caseless match of Unicode 3.13 (D145) with the full case folding of CaseFolding.txt (statuses C and F); siblings: names that cannot coexist in one directory. stored_names: the read-time rules applied to names inside stored tree nodes; they are structural (valid UTF-8, non-empty, no '/', no backslash, no control characters, no noncharacters, not '.'/'..', at most 255 bytes) and do not depend on Unicode tables (no NFC, case-fold, unassigned or disallowed-list checks); they give no output, only acceptance or the error kind. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1). Cases with ucd_version depend on the Unicode version: they hold for V = 15.0.0 only (assigned or not), and a checker whose Unicode tables have another version must skip them.",
+  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), noncharacter (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), disallowed_char (fixed list of bidi controls and invisible characters), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. fold: the case-fold key NFD(casefold(NFD(input))), the canonical caseless match of Unicode 3.13 (D145) with the full case folding of CaseFolding.txt (statuses C and F); siblings: names that cannot coexist in one directory. stored_names: the read-time rules applied to names inside stored tree nodes; they are structural (valid UTF-8, non-empty, no '/', no backslash, no control characters, no noncharacters, not '.'/'..', at most 255 bytes) and do not depend on Unicode tables (no NFC, case-fold, unassigned or disallowed-list checks); they give no output, only acceptance or the error kind. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1). Cases with ucd_version depend on the Unicode version: they hold for V = 15.0.0 only (assigned or not), and a checker whose Unicode tables have another version must skip them. Cases with multiple_violations break more than one rule: their error kind is the one the reference implementation reports (the first failing step, characters from left to right) and is not normative; another implementation may report any of the violated kinds. For every other case the error kind is normative.",
   "normalize": [
     {"name": "simple", "input": "a.txt", "output": "a.txt"},
     {"name": "nested", "input": "docs/specs/v1/format.md", "output": "docs/specs/v1/format.md"},
@@ -39,7 +39,7 @@
     {"name": "invalid-utf8-surrogate", "input_hex": "eda080", "error": "invalid_utf8"},
     {"name": "absolute", "input": "/etc/passwd", "error": "absolute"},
     {"name": "root-slash", "input": "/", "error": "absolute"},
-    {"name": "absolute-wins-over-empty-segment", "input": "/a//b", "error": "absolute"},
+    {"name": "absolute-wins-over-empty-segment", "input": "/a//b", "error": "absolute", "multiple_violations": true},
     {"name": "backslash", "input": "a\\b", "error": "backslash"},
     {"name": "backslash-unc", "input": "\\\\server\\share", "error": "backslash"},
     {"name": "nul", "input": "a\u0000b", "error": "control_char"},
@@ -82,16 +82,16 @@
     {"name": "noncharacter-ufdef", "input": "a\ufdef", "error": "noncharacter"},
     {"name": "noncharacter-plane1-u1ffff", "input": "a\ud83f\udfff", "error": "noncharacter"},
     {"name": "noncharacter-plane16-u10fffe", "input": "d/a\udbff\udffe", "error": "noncharacter"},
-    {"name": "order-absolute-before-characters", "input": "/\u202e", "error": "absolute"},
-    {"name": "order-first-character-wins-disallowed", "input": "a\u202eb\\c", "error": "disallowed_char"},
-    {"name": "order-first-character-wins-backslash", "input": "a\\b\u202ec", "error": "backslash"},
-    {"name": "order-first-character-wins-unassigned", "input": "\u0378\u0085", "error": "unassigned_char"},
-    {"name": "order-first-character-wins-control", "input": "\u0085\u0378", "error": "control_char"},
-    {"name": "order-characters-before-dot-segment", "input": "../a\u200b", "error": "disallowed_char"},
+    {"name": "order-absolute-before-characters", "input": "/\u202e", "error": "absolute", "multiple_violations": true},
+    {"name": "order-first-character-wins-disallowed", "input": "a\u202eb\\c", "error": "disallowed_char", "multiple_violations": true},
+    {"name": "order-first-character-wins-backslash", "input": "a\\b\u202ec", "error": "backslash", "multiple_violations": true},
+    {"name": "order-first-character-wins-unassigned", "input": "\u0378\u0085", "error": "unassigned_char", "multiple_violations": true},
+    {"name": "order-first-character-wins-control", "input": "\u0085\u0378", "error": "control_char", "multiple_violations": true},
+    {"name": "order-characters-before-dot-segment", "input": "../a\u200b", "error": "disallowed_char", "multiple_violations": true},
     {"name": "order-characters-before-nfc", "input": "cafe\u0301\u0378", "error": "unassigned_char"},
-    {"name": "order-noncharacter-before-unassigned", "input": "\ufdd0\u0378", "error": "noncharacter"},
-    {"name": "order-first-character-wins-disallowed-before-noncharacter", "input": "a\u202eb\uffff", "error": "disallowed_char"},
-    {"name": "order-first-character-wins-noncharacter-before-disallowed", "input": "a\uffffb\u202e", "error": "noncharacter"},
+    {"name": "order-noncharacter-before-unassigned", "input": "\ufdd0\u0378", "error": "noncharacter", "multiple_violations": true},
+    {"name": "order-first-character-wins-disallowed-before-noncharacter", "input": "a\u202eb\uffff", "error": "disallowed_char", "multiple_violations": true},
+    {"name": "order-first-character-wins-noncharacter-before-disallowed", "input": "a\uffffb\u202e", "error": "noncharacter", "multiple_violations": true},
     {"name": "double-slash", "input": "a//b", "error": "empty_segment"},
     {"name": "trailing-slash", "input": "a/", "error": "empty_segment"},
     {"name": "dot", "input": ".", "error": "dot_segment"},
@@ -100,11 +100,11 @@
     {"name": "dotdot-inside", "input": "a/../b", "error": "dot_segment"},
     {"name": "dotdot-leading", "input": "../a", "error": "dot_segment"},
     {"name": "dotdot-trailing", "input": "a/..", "error": "dot_segment"},
-    {"name": "empty-segment-before-dotdot", "input": "a//b/..", "error": "empty_segment"},
+    {"name": "empty-segment-before-dotdot", "input": "a//b/..", "error": "empty_segment", "multiple_violations": true},
     {"name": "segment-256-bytes", "input_gen": {"segments": [{"unit": "a", "repeat": 256}]}, "error": "segment_too_long"},
     {"name": "segment-258-bytes-cjk", "input_gen": {"segments": [{"unit": "\u4e2d", "repeat": 86}]}, "error": "segment_too_long"},
     {"name": "nfd-segment-256-bytes-after-nfc", "input_gen": {"segments": [{"unit": "e\u0301", "repeat": 128}]}, "error": "segment_too_long"},
-    {"name": "empty-segment-wins-over-length", "input_gen": {"segments": [{"unit": "b", "repeat": 256}, {"unit": "", "repeat": 0}, {"unit": "x", "repeat": 1}]}, "error": "empty_segment"},
+    {"name": "empty-segment-wins-over-length", "input_gen": {"segments": [{"unit": "b", "repeat": 256}, {"unit": "", "repeat": 0}, {"unit": "x", "repeat": 1}]}, "error": "empty_segment", "multiple_violations": true},
     {"name": "path-4097-bytes", "input_gen": {"segments": [{"unit": "a", "repeat": 255, "times": 15}, {"unit": "b", "repeat": 255}, {"unit": "c", "repeat": 1}]}, "error": "path_too_long"}
   ],
   "fold": [
@@ -229,7 +229,7 @@
     {"name": "length-counted-as-stored-not-after-nfc", "input_gen": {"segments": [{"unit": "e\u0301", "repeat": 127}]}, "error": "segment_too_long"},
     {"name": "order-slash-before-characters", "input": "a\u202e/b", "error": "contains_slash"},
     {"name": "order-first-character-wins", "input": "a\u0085\u202e", "error": "control_char"},
-    {"name": "order-control-before-noncharacter", "input": "a\u0085\uffff", "error": "control_char"},
-    {"name": "order-noncharacter-before-control", "input": "a\uffff\u0085", "error": "noncharacter"}
+    {"name": "order-control-before-noncharacter", "input": "a\u0085\uffff", "error": "control_char", "multiple_violations": true},
+    {"name": "order-noncharacter-before-control", "input": "a\uffff\u0085", "error": "noncharacter", "multiple_violations": true}
   ]
 }

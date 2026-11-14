@@ -56,6 +56,15 @@ or `..`, at most 255 bytes) and never depend on Unicode tables, so stored
 trees stay readable when the write-time rules change.
 See [the specification](../../docs/spec/content-format.md).
 
+## Error kinds
+
+An error kind is normative only when the input breaks a single rule. Cases
+marked `"multiple_violations": true` break several rules; their kind is the
+one the reference implementation reports (the first failing step, and the
+first offending character from left to right), which the Go tests and
+`scripts/vectors.py` check, but another implementation may report any of the
+violated kinds.
+
 ## Unicode version
 
 Cases tagged `"ucd_version": "15.0.0"` depend on the Unicode version: they

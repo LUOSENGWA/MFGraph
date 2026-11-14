@@ -51,6 +51,9 @@ type ioCase struct {
 	// UCDVersion marks a case whose result depends on the Unicode version
 	// (assigned or not in V); it must equal pathx.UnicodeVersion.
 	UCDVersion string `json:"ucd_version"`
+	// MultipleViolations marks an input that breaks several rules: its error
+	// kind is the reference order (checked here), not a normative result.
+	MultipleViolations bool `json:"multiple_violations"`
 }
 
 func (c ioCase) input(t *testing.T) string {

@@ -232,7 +232,7 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | invalid-utf8-surrogate | bytes `eda080` | ✗ `invalid_utf8` |
 | absolute | `/etc/passwd` | ✗ `absolute` |
 | root-slash | `/` | ✗ `absolute` |
-| absolute-wins-over-empty-segment | `/a//b` | ✗ `absolute` |
+| absolute-wins-over-empty-segment | `/a//b` | ✗ `absolute` (several violations: reference order, not normative) |
 | backslash | `a\b` | ✗ `backslash` |
 | backslash-unc | `\\server\share` | ✗ `backslash` |
 | nul | `a\u0000b` | ✗ `control_char` |
@@ -275,16 +275,16 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | noncharacter-ufdef | `a\ufdef` | ✗ `noncharacter` |
 | noncharacter-plane1-u1ffff | `a\U0001ffff` | ✗ `noncharacter` |
 | noncharacter-plane16-u10fffe | `d/a\U0010fffe` | ✗ `noncharacter` |
-| order-absolute-before-characters | `/\u202e` | ✗ `absolute` |
-| order-first-character-wins-disallowed | `a\u202eb\c` | ✗ `disallowed_char` |
-| order-first-character-wins-backslash | `a\b\u202ec` | ✗ `backslash` |
-| order-first-character-wins-unassigned | `\u0378\u0085` | ✗ `unassigned_char` |
-| order-first-character-wins-control | `\u0085\u0378` | ✗ `control_char` |
-| order-characters-before-dot-segment | `../a\u200b` | ✗ `disallowed_char` |
+| order-absolute-before-characters | `/\u202e` | ✗ `absolute` (several violations: reference order, not normative) |
+| order-first-character-wins-disallowed | `a\u202eb\c` | ✗ `disallowed_char` (several violations: reference order, not normative) |
+| order-first-character-wins-backslash | `a\b\u202ec` | ✗ `backslash` (several violations: reference order, not normative) |
+| order-first-character-wins-unassigned | `\u0378\u0085` | ✗ `unassigned_char` (several violations: reference order, not normative) |
+| order-first-character-wins-control | `\u0085\u0378` | ✗ `control_char` (several violations: reference order, not normative) |
+| order-characters-before-dot-segment | `../a\u200b` | ✗ `disallowed_char` (several violations: reference order, not normative) |
 | order-characters-before-nfc | `cafe\u0301\u0378` | ✗ `unassigned_char` |
-| order-noncharacter-before-unassigned | `\ufdd0\u0378` | ✗ `noncharacter` |
-| order-first-character-wins-disallowed-before-noncharacter | `a\u202eb\uffff` | ✗ `disallowed_char` |
-| order-first-character-wins-noncharacter-before-disallowed | `a\uffffb\u202e` | ✗ `noncharacter` |
+| order-noncharacter-before-unassigned | `\ufdd0\u0378` | ✗ `noncharacter` (several violations: reference order, not normative) |
+| order-first-character-wins-disallowed-before-noncharacter | `a\u202eb\uffff` | ✗ `disallowed_char` (several violations: reference order, not normative) |
+| order-first-character-wins-noncharacter-before-disallowed | `a\uffffb\u202e` | ✗ `noncharacter` (several violations: reference order, not normative) |
 | double-slash | `a//b` | ✗ `empty_segment` |
 | trailing-slash | `a/` | ✗ `empty_segment` |
 | dot | `.` | ✗ `dot_segment` |
@@ -293,11 +293,11 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | dotdot-inside | `a/../b` | ✗ `dot_segment` |
 | dotdot-leading | `../a` | ✗ `dot_segment` |
 | dotdot-trailing | `a/..` | ✗ `dot_segment` |
-| empty-segment-before-dotdot | `a//b/..` | ✗ `empty_segment` |
+| empty-segment-before-dotdot | `a//b/..` | ✗ `empty_segment` (several violations: reference order, not normative) |
 | segment-256-bytes | `a`×256 (256 bytes) | ✗ `segment_too_long` |
 | segment-258-bytes-cjk | `中`×86 (258 bytes) | ✗ `segment_too_long` |
 | nfd-segment-256-bytes-after-nfc | `e\u0301`×128 (384 bytes) | ✗ `segment_too_long` |
-| empty-segment-wins-over-length | `b`×256 / (empty)×0 / `x`×1 (259 bytes) | ✗ `empty_segment` |
+| empty-segment-wins-over-length | `b`×256 / (empty)×0 / `x`×1 (259 bytes) | ✗ `empty_segment` (several violations: reference order, not normative) |
 | path-4097-bytes | (`a`×255)×15 segments / `b`×255 / `c`×1 (4097 bytes) | ✗ `path_too_long` |
 
 ### 2.2 FoldKey: NFD(casefold(NFD(name))), full case folding (C+F)

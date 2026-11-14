@@ -44,7 +44,8 @@ encoding. Names read back from stored tree nodes are checked only with the
 ### 2.1 Normalization
 
 The server normalizes every path with these steps, in this order. The first
-step that fails determines the error kind.
+step that fails determines the error kind the reference implementation
+reports.
 
 1. The input MUST be valid UTF-8 (`invalid_utf8`) and non-empty (`empty`).
 2. It MUST NOT start with `/` (`absolute`). Then its characters are scanned
@@ -79,6 +80,15 @@ step that fails determines the error kind.
 All character checks of step 2 run on the input before NFC and before the
 segment rules; for example `../a` followed by U+200B gives `disallowed_char`,
 not `dot_segment`. The result of step 3 is the canonical path.
+
+Error kinds are normative only for an input that breaks exactly one rule.
+When an input breaks several rules (for example `/a//b`, or `a\b` followed
+by U+202E), an implementation may report any of the violated kinds; the
+order above is the reference implementation's, and the test vectors that
+document it are marked `multiple_violations`. The same holds for the sibling
+rules of 2.2 (for example a set of files with both a duplicate path and a
+name used as file and directory). Whether an input is accepted, and its
+canonical form, never depend on the order.
 
 Why: control characters and the bidirectional formatting characters can make
 a name display differently from what it is (spoofing, "Trojan Source");

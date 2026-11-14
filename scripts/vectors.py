@@ -1015,7 +1015,10 @@ def show_case_input(case):
 
 
 def ucd_tag(case):
-    return " (Unicode %s only)" % case["ucd_version"] if "ucd_version" in case else ""
+    tag = " (Unicode %s only)" % case["ucd_version"] if "ucd_version" in case else ""
+    if case.get("multiple_violations"):
+        tag += " (several violations: reference order, not normative)"
+    return tag
 
 
 def show_case_result(case):
