@@ -573,6 +573,152 @@ def decode_node(b):
     return obj
 
 
+EMPTY_HASH = "sha256:" + hashlib.sha256(b"").hexdigest()
+
+
+def gen_names(g):
+    return [g["prefix"] + str(i).zfill(g["digits"]) for i in range(g["start"], g["start"] + g["count"])]
+
+
+def gen_node(g):
+    """Expand a node generator (testdata/vectors/README.md): a node of kind
+    g["kind"] with g["count"] items named prefix + zero-padded index (digits
+    wide) for index in [start, start+count): file entries (mode 420, size 0)
+    for dir/dir_page, references with count 1 for dir_index, every hash the
+    hash of the empty content. Returns the canonical bytes; the names are not
+    checked, so a generator can describe an invalid node."""
+    names = gen_names(g)
+    if g["kind"] == "dir_index":
+        items = [{"count": 1, "first": n, "hash": EMPTY_HASH} for n in names]
+    else:
+        items = [{"hash": EMPTY_HASH, "mode": 420, "name": n, "size": 0, "type": "file"} for n in names]
+    return canonical(node_obj(g["kind"], items))
+
+
+def node_case_bytes(case, label):
+    """The node bytes of a decode_* case: bytes_hex, or node_gen whose
+    expansion must hash to bytes_sha256."""
+    if "bytes_hex" in case:
+        return bytes.fromhex(case["bytes_hex"])
+    b = gen_node(case["node_gen"])
+    check(content_hash(b) == case["bytes_sha256"], "%s: generated node hashes to %s" % (label, content_hash(b)))
+    return b
+
+
+class TreeInvalid(Exception):
+    """The nodes decode, but the tree violates a whole-tree rule (spec 3.6,
+    3.8 second paragraph): vector category invalid_tree. A DecodeError is
+    category invalid_node."""
+
+
+class MissingNode(Exception):
+    pass
+
+
+def check_tree(store, root):
+    """Verify a whole tree from its root, written from the specification:
+    every node decodes strictly (3.8); a directory's top node is a dir or a
+    dir_index, never a dir_page; only the root may be empty; an index
+    references only dir_page or dir_index nodes; each reference's count and
+    first match the leaves below it; entries are strictly ascending across all
+    pages; and a paged directory is split exactly as 3.5 prescribes."""
+    def fetch(h):
+        if h not in store:
+            raise MissingNode(h)
+        b = store[h]
+        if content_hash(b) != h:
+            raise TreeInvalid("node bytes do not hash to the reference")
+        return decode_node(b)
+
+    def leaves(index):
+        out = []
+        for p in index["pages"]:
+            child = fetch(p["hash"])
+            if child["kind"] == "dir_page":
+                sub = child["entries"]
+            elif child["kind"] == "dir_index":
+                sub = leaves(child)
+            else:
+                raise TreeInvalid("an index references a dir node")
+            if len(sub) != p["count"] or sub[0]["name"] != p["first"]:
+                raise TreeInvalid("reference count/first does not match the referenced node")
+            out += sub
+        return out
+
+    def directory(h, is_root):
+        top = fetch(h)
+        if top["kind"] == "dir_page":
+            raise TreeInvalid("a directory points to a dir_page")
+        if top["kind"] == "dir":
+            ents = top["entries"]
+            if not ents and not is_root:
+                raise TreeInvalid("empty directory other than the root")
+        else:
+            ents = leaves(top)
+            names = [utf8key(e["name"]) for e in ents]
+            if any(a >= b for a, b in zip(names, names[1:])):
+                raise TreeInvalid("entries not strictly ascending across pages")
+            if layout(ents, {}) != h:
+                raise TreeInvalid("directory not split canonically")
+        for e in ents:
+            if e["type"] == "dir":
+                directory(e["hash"], False)
+
+    directory(root, True)
+
+
+def walk_store(case, label):
+    """The node store of a walk_* case; every listed hash must match."""
+    store = {}
+    for n in case["nodes"]:
+        b = bytes.fromhex(n["hex"]) if "hex" in n else gen_node(n["node_gen"])
+        h = content_hash(b)
+        check(h == n["hash"], "%s: a node hashes to %s, listed as %s" % (label, h, n["hash"]))
+        store[h] = b
+    return store
+
+
+def walk_category(store, root):
+    try:
+        check_tree(store, root)
+    except DecodeError:
+        return "invalid_node"
+    except TreeInvalid:
+        return "invalid_tree"
+    return None
+
+
+def dir_entries(store, h):
+    obj = decode_node(store[h])
+    if obj["kind"] != "dir_index":
+        return obj["entries"]
+    out = []
+
+    def expand(index):
+        for p in index["pages"]:
+            child = decode_node(store[p["hash"]])
+            if child["kind"] == "dir_index":
+                expand(child)
+            else:
+                out.extend(child["entries"])
+    expand(obj)
+    return out
+
+
+def walk_paths(store, root):
+    """Full paths in walk order: pre-order, entries of a directory in byte
+    order of their names (the path order of spec 3.3)."""
+    out = []
+
+    def visit(prefix, h):
+        for e in dir_entries(store, h):
+            out.append(prefix + e["name"])
+            if e["type"] == "dir":
+                visit(prefix + e["name"] + "/", e["hash"])
+    visit("", root)
+    return out
+
+
 def walk_nodes(store, root):
     """Yield (dir, kind, hash, bytes) in pre-order: a directory's own nodes
     (index first, then its pages in order), then its subdirectories by name."""
@@ -665,6 +811,8 @@ def expected_tree(case):
             n["canonical"] = b.decode("utf-8")
         nodes.append(n)
     exp = {"root": root, "node_count": len(store)}
+    if "walk_order" in case:
+        exp["walk_order"] = walk_paths(store, root)
     if "list_nodes" in case:
         # Large cases list only selected positions of the walk order.
         exp["walk_length"] = len(nodes)
@@ -673,7 +821,7 @@ def expected_tree(case):
     return exp
 
 
-EXPECTED_KEYS = ("root", "node_count", "walk_length", "nodes", "error")
+EXPECTED_KEYS = ("root", "node_count", "walk_length", "walk_order", "nodes", "error")
 
 
 def verify_tree(heavy, update=False):
@@ -695,24 +843,44 @@ def verify_tree(heavy, update=False):
                 check(case.get(k) == exp.get(k), "tree %s: %s differs" % (case["name"], k))
         n += 1
     for case in v["decode_invalid"]:
+        label = "tree decode_invalid %s" % case["name"]
         try:
-            decode_node(case["bytes"].encode("utf-8"))
-            check(False, "tree decode_invalid %s: accepted" % case["name"])
+            decode_node(node_case_bytes(case, label))
+            check(False, "%s: accepted" % label)
         except DecodeError:
             pass
+        if "node_gen" in case and case["node_gen"]["count"] > MAX_ENTRIES:
+            # Control: one item fewer is a valid node, so the count is the reason.
+            ok = dict(case["node_gen"], count=MAX_ENTRIES)
+            try:
+                decode_node(gen_node(ok))
+            except DecodeError as e:
+                check(False, "%s: the %d-item control node is rejected: %s" % (label, MAX_ENTRIES, e))
         n += 1
     for case in v["decode_valid_build_rejects"]:
         label = "tree decode_valid_build_rejects %s" % case["name"]
         if ucd_skip(case, label):
             continue
         try:
-            obj = decode_node(case["bytes"].encode("utf-8"))
+            obj = decode_node(node_case_bytes(case, label))
         except DecodeError as e:
             check(False, "%s: rejected by the decoder: %s" % (label, e))
             n += 1
             continue
         check(write_rule_violated(obj, case["write_rule"]), "%s: write rule %s not violated" % (label, case["write_rule"]))
         n += 1
+    for section, valid in (("walk_valid", True), ("walk_invalid", False)):
+        for case in v[section]:
+            label = "tree %s %s" % (section, case["name"])
+            store = walk_store(case, label)
+            try:
+                got = walk_category(store, case["root"])
+            except MissingNode as e:
+                check(False, "%s: references a node that is not listed: %s" % (label, e))
+                continue
+            check(got == case.get("error"), "%s: got %r, want %r" % (label, got, case.get("error")))
+            check(valid == ("error" not in case), "%s: misplaced case" % label)
+            n += 1
     if update:
         with open(path, "w", encoding="ascii", newline="\n") as f:
             f.write(dump_vectors(v))
@@ -846,13 +1014,35 @@ def show_case_input(case):
     return show(case["input"])
 
 
+def ucd_tag(case):
+    return " (Unicode %s only)" % case["ucd_version"] if "ucd_version" in case else ""
+
+
 def show_case_result(case):
     if "error" in case:
-        return "✗ `%s`" % case["error"]
+        return "✗ `%s`%s" % (case["error"], ucd_tag(case))
     if "output_gen" in case:
         out = gen_path(case["output_gen"])
-        return "✓ %s (%d bytes)" % (show_gen(case["output_gen"]), len(out.encode("utf-8")))
-    return "✓ " + show(case["output"])
+        return "✓ %s (%d bytes)%s" % (show_gen(case["output_gen"]), len(out.encode("utf-8")), ucd_tag(case))
+    return "✓ " + show(case["output"]) + ucd_tag(case)
+
+
+def show_node_bytes(b):
+    """Render node bytes: the text with invisible characters as code points,
+    or hex when they are not valid UTF-8."""
+    try:
+        text = b.decode("utf-8")
+    except UnicodeDecodeError:
+        return "bytes `%s` (not UTF-8)" % b.hex()
+    if len(b) > 400:
+        return "%d bytes" % len(b)
+    return show(text)
+
+
+def show_node_gen(g):
+    return "generated `%s` with %d %s `%s`…`%s`" % (
+        g["kind"], g["count"], "references" if g["kind"] == "dir_index" else "file entries",
+        g["prefix"] + str(g["start"]).zfill(g["digits"]), g["prefix"] + str(g["start"] + g["count"] - 1).zfill(g["digits"]))
 
 
 def review_contenthash(lines):
@@ -941,6 +1131,7 @@ def review_tree(lines):
             exp = "root `%s…`, %d node(s)" % (c["root"][:19], c["node_count"])
             if c.get("heavy"):
                 exp += " (heavy, opt-in)"
+        exp += ucd_tag(c)
         lines.append("| %s | %s | %s |" % (c["name"], "; ".join(parts) or "no files", exp))
     lines += ["", "### 3.2 Small cases in full", "",
               "Inputs and every node (directory, kind, hash, canonical bytes exactly as hashed)."
@@ -956,7 +1147,11 @@ def review_tree(lines):
                 lines.append("| %s | %s | %d |" % (show(f["path"]), show(f["content"]), f.get("mode", 420)))
         else:
             lines.append("(no files)")
-        lines += ["", "root: `%s`" % c["root"], ""]
+        lines += ["", "root: `%s`%s" % (c["root"], ucd_tag(c)), ""]
+        if "walk_order" in c:
+            lines += ["walk order (path order): " + ", ".join(show(p) for p in c["walk_order"]) +
+                      " — sorting the full paths by bytes would give " +
+                      ", ".join(show(p) for p in sorted(c["walk_order"], key=utf8key)) + ".", ""]
         for n in c["nodes"]:
             lines.append("* dir %s · `%s` · `%s` · %d bytes" % (show(n["dir"]) if n["dir"] else "`.` (root)",
                                                                n["kind"], n["hash"], n["size"]))
@@ -980,13 +1175,39 @@ def review_tree(lines):
             lines += ["", "```json", n["canonical"], "```"]
         lines.append("")
     lines += ["### 3.4 Strict decoding: inputs that must be rejected (read-time rules)", "",
-              ", ".join("`%s`" % c["name"] for c in v["decode_invalid"]) + ".", "",
-              "### 3.5 Accepted when reading, never produced when writing", "",
-              "A decoder must accept these nodes (the read-time rules do not use Unicode tables); the write "
-              "path never produces them: `tree.Build` rejects the equivalent input or normalizes the name.", "",
+              "The vector file gives the exact bytes in hex (`bytes_hex`); large nodes are given by the node "
+              "generator (`node_gen`, checked with `bytes_sha256`). For each generated node with more than 1024 "
+              "items, the same node with 1024 items must decode (checked by both implementations).", "",
+              "| name | node bytes |", "|---|---|"]
+    for c in v["decode_invalid"]:
+        desc = show_node_gen(c["node_gen"]) if "node_gen" in c else show_node_bytes(bytes.fromhex(c["bytes_hex"]))
+        lines.append("| %s | %s |" % (c["name"], desc))
+    lines += ["", "### 3.5 Accepted when reading, never produced when writing", "",
+              "A decoder must accept these nodes (the read-time rules are structural and do not use Unicode "
+              "tables); the write path never produces them: `tree.Build` rejects the equivalent input or "
+              "normalizes the name.", "",
               "| name | violated write-time rule | node |", "|---|---|---|"]
     for c in v["decode_valid_build_rejects"]:
-        lines.append("| %s | `%s` | %s |" % (c["name"], c["write_rule"], show(c["bytes"])))
+        lines.append("| %s | `%s`%s | %s |" % (c["name"], c["write_rule"], ucd_tag(c),
+                                              show_node_bytes(bytes.fromhex(c["bytes_hex"]))))
+    lines += ["", "### 3.6 Whole trees", "",
+              "Each case is a set of nodes and a root hash. A reader that walks the tree must accept "
+              "`walk_valid` and reject `walk_invalid` with the given category: `invalid_node` (a node violates "
+              "the single-node rules, spec 3.8) or `invalid_tree` (every node decodes, but the tree violates the "
+              "whole-tree rules, spec 3.6 and 3.8).", "",
+              "| section | name | root | nodes | expected |", "|---|---|---|---|---|"]
+    for section in ("walk_valid", "walk_invalid"):
+        for c in v[section]:
+            parts = []
+            for n in c["nodes"]:
+                if "node_gen" in n:
+                    parts.append("%s `%s…`" % (show_node_gen(n["node_gen"]), n["hash"][7:19]))
+                else:
+                    b = bytes.fromhex(n["hex"])
+                    parts.append("`%s…` %s" % (n["hash"][7:19], show_node_bytes(b)))
+            exp = "✗ `%s`" % c["error"] if "error" in c else "✓ valid"
+            lines.append("| %s | %s | `%s…` | %s | %s |" % (section, c["name"], c["root"][7:19],
+                                                             "<br>".join(parts), exp))
     lines.append("")
 
 
@@ -999,45 +1220,54 @@ REVIEW_COVERAGE = """## 4. Coverage checklist
 | path: NFC and NFD `café`; `Plan.dwg` vs `plan.dwg`; `ß` vs `SS` | `pathx.json` → `cafe-*`, `case-conflict`, `sharp-s-vs-ss` |
 | path: `..`, `a//b`, trailing `/`, absolute, backslash, control characters | `pathx.json` → `dot*`, `double-slash`, `trailing-slash`, `absolute`, `backslash*`, `nul`/`newline`/`tab`/`del` |
 | path: 256-byte segment, over-long path, emoji, Chinese | `segment-256-bytes`, `path-4097-bytes` (+ 255/4096 boundaries), `emoji`, `chinese` |
+| fold key NFD(casefold(NFD)): Cherokee, Georgian, `ı` vs `I`, canonical equivalence after folding | `pathx.json` → `fold`, `siblings` → `cherokee-*`, `georgian-*`, `dotless-i-vs-capital-i`, `capital-sharp-s-acute-vs-s-s-acute`, `fi-ligature-acute-vs-f-i-acute`; `tree.json` → `reject-cherokee-*`, `reject-georgian-*`, `reject-capital-sharp-s-acute-vs-s-s-acute`, `reject-fi-ligature-acute-vs-f-i-acute`, `allowed-dotless-i-and-capital-i` |
+| V = 15.0.0 pinned | `ucd_version` cases: `assigned-in-15.0-u1f6dc-allowed`, `assigned-in-15.1-u2ebf0`, `assigned-in-16.0-u1c89`, `assigned-in-16.0-u1f6d8`, two branch names, `allowed-assigned-in-15.0-u1f6dc`, `reject-assigned-in-15.1-u2ebf0`, `name-assigned-in-16.0-u1f6d8` |
 | tree: empty tree, single file, nested, Chinese/emoji/`<&>`/`"` names, executable | `empty-root`, `single-file`, `nested`, `deep-path`, `special-names`, `executable-mode` |
 | tree: exactly 1024 entries (no split), 1025 entries (2 pages) | `dir-1024-entries-one-node`, `dir-1025-entries-two-pages`, `subdir-3000-entries-three-pages` |
-| tree: page split caused by the 1 MiB limit | **no longer a required case**: it cannot be constructed under the format-1 path rules (spec §3.5, note 1); the byte rule is tested with reduced thresholds (`TestSplitByBytesGreedy`, `TestSplitByCountMultiLevel`), and `longest-names-1024-entries-still-one-node` shows the largest node real names produce |
+| tree: page split caused by the 1 MiB limit | **no longer a required case**: it cannot be constructed under the format-1 path rules (spec §3.5); the byte rule is tested with reduced thresholds (`TestSplitByBytesGreedy`, `TestSplitByCountMultiLevel`), and `longest-names-1024-entries-still-one-node` shows the largest node real names produce |
+| tree: walk order is path order, not full-path byte order | `walk-order-is-path-order-not-full-path-byte-order` (`walk_order`) |
 | tree: conflicting input rejected | `reject-*` |
 | tree: multi-level index | `two-level-index-1048577-entries` (heavy) and `TestSplitByCountMultiLevel` |
 | tree: input order does not change the root; a change rewrites only the path to the root | `internal/tree/property_test.go` |
 | tree: Build → Walk restores the input | every case in `TestTreeVectors` |
-| tree: strict decoding (read-time rules) | `decode_invalid`, `FuzzDecode` |
-| path, write time: C1 controls, the fixed disallowed list, unassigned code points; allowed ZWJ/ZWNJ, variation selectors, tag characters, CGJ | `pathx.json` → `c1-control-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `soft-hyphen-u00ad`, `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`, `function-application-u2061`, `invisible-*`, `interlinear-annotation-*`, `unassigned-*`, `noncharacter-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-noncharacter`, `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`, `reject-interlinear-annotation`, `allowed-zwj-zwnj-fullwidth-reserved-names`, `allowed-variation-selectors-tags-cgj` |
-| read time: Unicode-independent rules; NFD, case variants and unassigned code points readable | `pathx.json` → `stored_names`; `tree.json` → `decode_valid_build_rejects`, `decode_invalid` → `name-with-*`, `index-first-with-*` |
+| tree: strict decoding (read-time rules), bytes in hex, invalid UTF-8, surrogate escapes, more than 1024 items | `decode_invalid`, `FuzzDecode` |
+| tree: whole-tree rules (empty subdirectory, dir_page as a directory, index to a dir, count/first, order across pages, canonical split) | `walk_valid`, `walk_invalid` |
+| path, write time: C1 controls, noncharacters, the fixed disallowed list, unassigned code points; allowed ZWJ/ZWNJ, variation selectors, tag characters, CGJ | `pathx.json` → `c1-control-*`, `noncharacter-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `soft-hyphen-u00ad`, `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`, `function-application-u2061`, `invisible-*`, `interlinear-annotation-*`, `unassigned-*`, `assigned-in-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-noncharacter*`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`, `reject-interlinear-annotation`, `allowed-zwj-zwnj-fullwidth-reserved-names`, `allowed-variation-selectors-tags-cgj` |
+| read time: structural rules only (noncharacters and controls rejected; NFD, case variants, unassigned code points and the disallowed list readable) | `pathx.json` → `stored_names`; `tree.json` → `decode_valid_build_rejects`, `decode_invalid` → `name-with-c1-*`, `*noncharacter*`, `index-first-with-c1-control` |
+| vector files cannot be rewritten by an editor | all three JSON files are ASCII (`\\u` escapes); `verify` and the Go tests reject raw non-ASCII bytes |
 
 ## 5. Notes for the reviewer
 
 1. **The 1 MiB rule cannot trigger with valid paths** (confirmed: the rule stays as a defensive cap). A file entry is at most 651 bytes
    (255-byte name made of `"` escapes to 510 bytes, plus a 16-digit size), so 1024 entries
    encode to at most ~667 KB, and 1024 index references to at most ~644 KB. The splitting
-   therefore always happens at the 1024-entry limit. The byte rule stays in the format as a
-   guard; `longest-names-1024-entries-still-one-node` shows the largest single node
-   (649,253 bytes) that real names produce.
+   therefore always happens at the 1024-entry limit: every page except the last has exactly
+   1024 items. The byte rule stays in the format as a guard;
+   `longest-names-1024-entries-still-one-node` shows the largest single node (649,253 bytes)
+   that real names produce.
 2. **`count` in a `dir_index` reference** (confirmed definition) is the number of directory
    entries (leaves) below the referenced node (for a lower-level index: the sum of its
-   counts), and `first` is the name of the first leaf below it. The specification now states
-   this with a two-level example taken from `two-level-index-1048577-entries` (spec §3.4).
+   counts), at least 1, and `first` is the name of the first leaf below it. The specification
+   states this with a two-level example taken from `two-level-index-1048577-entries` (spec §3.4).
 3. **Integers are limited to 0…2^53−1** (confirmed) so that any RFC 8785 implementation
    reproduces the bytes: JCS serializes numbers as IEEE-754 doubles, which are exact for all
    integers only up to 2^53−1.
-4. **Unicode version V = 15.0.0.** NFC, case folding and the unassigned check depend on
-   Unicode tables. Under Go 1.26 the standard library (`unicode`) and `golang.org/x/text`
-   both use Unicode 15.0.0 (an earlier version of this file said 17.0.0; that was wrong:
-   x/text selects its 15.0.0 tables for this Go version). The Python check ran with Unicode
-   %(pyuni)s; every vector whose result depends on whether a code point is assigned uses
-   code points with the same status in both versions (U+0378, U+40000, U+FFFF, U+FDD0 are
-   unassigned in both; the 4,489 characters added in Unicode 15.0 are not used).
+4. **Unicode version V = 15.0.0, fixed by the specification.** NFC, case folding and the
+   unassigned check depend on Unicode tables. The Go standard library and `golang.org/x/text`
+   both use Unicode 15.0.0 under Go 1.26, and `TestUnicodeVersionV` fails if either changes.
+   Cases whose result depends on the version carry `ucd_version`; this Python check ran with
+   Unicode %(pyuni)s%(skipnote)s. The other vectors use code points with the same status in
+   Unicode 14.0 to 17.0.
 5. **Allowed on purpose**: ZWNJ U+200C and ZWJ U+200D (emoji sequences such as
-   `👨\\u200d👩\\u200d👧`, Persian and Indic text), variation selectors U+FE00–U+FE0F
+   `\U0001f468\\u200d\U0001f469\\u200d\U0001f467`, Persian and Indic text), variation selectors U+FE00–U+FE0F
    (emoji presentation), tag characters U+E0020–U+E007F (subdivision flags such as the flag
    of Scotland), U+034F COMBINING GRAPHEME JOINER, fullwidth solidus U+FF0F, private-use
    characters, names that are reserved on some platforms (`CON`, trailing dots or spaces).
    Platform-specific names are left to a future export layer.
+6. **golang.org/x/text folds Cherokee the wrong way round** (it swaps the two cases instead of
+   folding to the uppercase letters, as CaseFolding.txt does). The Go code corrects the 86
+   lowercase letters after folding; `TestFoldKeyExhaustive` checks every assigned code point
+   (idempotence and equal keys across each `unicode.SimpleFold` orbit).
 """
 
 
@@ -1085,7 +1315,71 @@ go test ./internal/contenthash ./internal/pathx ./internal/tree   # MFGRAPH_HEAV
 """
 
 
-REVIEW_CHANGES = """## Changes in this revision (本轮变更)
+REVIEW_FREEZE_CHANGES = """## 冻结前修复轮变更 (changes before the format freeze)
+
+No root hash or node byte of an existing positive tree case changed: all 18 positive cases of
+the previous revision were compared field by field (root, node count, nodes with canonical
+bytes).
+
+* **All vector files are ASCII.** Every non-ASCII character is a `\\u` escape
+  (`python3 scripts/vectors.py format`); `verify` and the Go tests reject raw non-ASCII bytes.
+  The decoded values did not change.
+* **Fold key = NFD(casefold(NFD(name)))**, the canonical caseless match of Unicode 3.13
+  (D145). `fold`: `café`, `cafe\\u0301` and `CAFÉ` now fold to `cafe\\u0301` (the key
+  is NFD); new fold cases for Cherokee (U+13A0/U+AB70, U+13F8/U+13F0), Georgian
+  (U+1C90/U+10D0), `ı`/`I`, U+1E9E U+0301 / `sś`, U+FB01 U+0301 / `fí` and U+1FB3.
+  New `siblings` cases `cherokee-*`, `georgian-mtavruli-vs-mkhedruli`, `dotless-i-vs-capital-i`
+  (no conflict), `capital-sharp-s-acute-vs-s-s-acute`, `fi-ligature-acute-vs-f-i-acute`; new
+  Build cases `reject-cherokee-case-conflict`, `reject-cherokee-ye-case-conflict-in-subdirectory`,
+  `reject-georgian-mtavruli-vs-mkhedruli`, `reject-capital-sharp-s-acute-vs-s-s-acute`,
+  `reject-fi-ligature-acute-vs-f-i-acute` (`case_conflict`) and the positive case
+  `allowed-dotless-i-and-capital-i`.
+* **Read-time rules are structural only; new error kind `noncharacter`.**
+  * Error kind changed: `normalize` `noncharacter-uffff`, `noncharacter-ufdd0` and the Build
+    case `reject-noncharacter` (`unassigned_char` → `noncharacter`); `stored_names`
+    `noncharacter-accepted` is now `noncharacter-uffff` and rejected (`noncharacter`); the
+    15 `stored_names` with a character of the disallowed list are now accepted and renamed
+    `<name>-accepted`.
+  * Moved: the 20 `decode_invalid` cases rejected only for a disallowed character
+    (`name-with-bidi-*`, `name-with-arabic-letter-mark-u061c`, `name-with-zero-width-space-u200b`,
+    `name-with-word-joiner-u2060`, `name-with-byte-order-mark-ufeff`, `dir-entry-name-with-bidi-u202b`,
+    `index-first-with-bidi-u202e`, `name-with-soft-hyphen-u00ad`,
+    `name-with-mongolian-vowel-separator-u180e`, `name-with-line-separator-u2028`,
+    `name-with-paragraph-separator-u2029`, `name-with-function-application-u2061`,
+    `name-with-invisible-*`, `name-with-interlinear-annotation-*`) to `decode_valid_build_rejects`
+    with `write_rule: disallowed_char`; `name-noncharacter-uffff` from
+    `decode_valid_build_rejects` to `decode_invalid`.
+  * New: noncharacter cases in `normalize` (`noncharacter-ufffe`, `-ufdef`, `-plane1-u1ffff`,
+    `-plane16-u10fffe`, three `order-*`), `branch_names`, `stored_names`, `decode_invalid`
+    (`name-with-noncharacter-ufdd0`, `dir-entry-name-with-noncharacter-u10fffe`,
+    `index-first-with-noncharacter-u1ffff`) and Build (`reject-noncharacter-plane16-in-subdirectory`).
+* **V = 15.0.0 is pinned.** Cases tagged `"ucd_version": "15.0.0"`: U+1F6DC (assigned in
+  15.0) is accepted (`assigned-in-15.0-u1f6dc-allowed`, a branch name,
+  `allowed-assigned-in-15.0-u1f6dc`); U+2EBF0 (15.1), U+1C89 and U+1F6D8 (16.0) are
+  `unassigned_char` (`assigned-in-15.1-u2ebf0`, `assigned-in-16.0-u1c89`,
+  `assigned-in-16.0-u1f6d8`, a branch name, `reject-assigned-in-15.1-u2ebf0`,
+  `name-assigned-in-16.0-u1f6d8`). `stored_names` `assigned-after-15.0-accepted` shows that
+  the read-time rules accept them. Python checks the tagged cases only with Unicode 15.0.0.
+* **Node bytes in hex.** `decode_invalid` and `decode_valid_build_rejects` give `bytes_hex`.
+  New `decode_invalid` cases: invalid UTF-8 in a name (`name-invalid-utf8-byte-ff`,
+  `-truncated-sequence`, `-overlong-solidus`, `-encoded-surrogate`, `-above-u10ffff`), lone
+  surrogate escapes (`name-lone-surrogate-escape-ud800`, `name-lone-low-surrogate-escape-udc00`),
+  `name-surrogate-pair-escape-not-canonical`, `name-escaped-noncharacter-uffff`,
+  `invalid-utf8-after-the-object`, and nodes with 1025 items (`dir-with-1025-entries`,
+  `dir-page-with-1025-entries`, `dir-index-with-1025-references`, given by the node generator).
+* **Whole-tree vectors**: `walk_valid` (`canonical-split-1025-entries`) and 13 `walk_invalid`
+  cases with the category `invalid_node` or `invalid_tree`: `subdirectory-empty`,
+  `root-is-a-dir-page`, `directory-entry-points-to-a-dir-page`, `index-references-a-dir-node`,
+  `reference-count-too-large`, `reference-count-too-small`, `reference-first-mismatch`,
+  `reference-count-zero` (`invalid_node`), `entries-out-of-order-across-pages`,
+  `duplicate-name-across-pages`, `split-not-canonical-uneven-pages`,
+  `split-not-canonical-index-over-one-small-page`, `subdirectory-split-not-canonical`.
+* **Path order**: positive case `walk-order-is-path-order-not-full-path-byte-order` locks the
+  walk order `a`, `a/x`, `a-b`, `a.txt` (full-path byte order would be `a`, `a-b`, `a.txt`, `a/x`).
+"""
+
+
+REVIEW_CHANGES = """## Earlier changes (收尾轮)
 
 Path rules are now split into **write-time rules** (applied to paths that are uploaded or
 committed, and by `tree.Build`) and **read-time rules** (applied to names inside stored tree
@@ -1157,12 +1451,24 @@ annotation controls.
 """
 
 
+def count_ucd_cases():
+    n = 0
+    for name, sections in (("pathx.json", ("normalize", "branch_names")),
+                           ("tree.json", ("cases", "decode_valid_build_rejects"))):
+        v = load(name)
+        n += sum(1 for sec in sections for c in v[sec] if "ucd_version" in c)
+    return n
+
+
 def write_review():
-    lines = [REVIEW_HEADER, REVIEW_CHANGES, REVIEW_METHOD]
+    lines = [REVIEW_HEADER, REVIEW_FREEZE_CHANGES, REVIEW_CHANGES, REVIEW_METHOD]
     review_contenthash(lines)
     review_pathx(lines)
     review_tree(lines)
-    lines.append(REVIEW_COVERAGE % {"pyuni": unicodedata.unidata_version})
+    skipnote = ("" if unicodedata.unidata_version == V else
+                " and skipped the %d tagged case(s) (they need Unicode %s; the Go tests cover them)" % (
+                    count_ucd_cases(), V))
+    lines.append(REVIEW_COVERAGE % {"pyuni": unicodedata.unidata_version, "skipnote": skipnote})
     path = os.path.join(VECTORS, "REVIEW.md")
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines).rstrip("\n") + "\n")

@@ -13,7 +13,7 @@ obtained.
 |---|---|
 | `contenthash.json` | content hash inputs (UTF-8 text, hex bytes, or the `sha256-counter` generator) with expected size and `sha256:<hex>`; strict-parsing accept/reject lists |
 | `pathx.json` | write-time path normalization (expected NFC output or error kind), case-fold keys, sibling conflicts, branch names, and `stored_names`: the read-time rules for names inside stored nodes |
-| `tree.json` | tree cases (input files → root hash, node count, nodes in walk order with canonical bytes), inputs that `Build` must reject with the expected error kind, node byte strings a strict decoder must reject (`decode_invalid`), and node byte strings a decoder must accept although the write path never produces them (`decode_valid_build_rejects`) |
+| `tree.json` | tree cases (input files → root hash, node count, nodes in walk order with canonical bytes; `walk_order` where given), inputs that `Build` must reject with the expected error kind, node bytes (hex) a strict decoder must reject (`decode_invalid`), node bytes a decoder must accept although the write path never produces them (`decode_valid_build_rejects`), and whole trees (nodes + root hash) a reader must accept (`walk_valid`) or reject with the category `invalid_node` or `invalid_tree` (`walk_invalid`) |
 | `REVIEW.md` | generated summary for reviewers |
 
 ## Generators
@@ -30,6 +30,14 @@ Large inputs are described by rules instead of being stored:
   `dir/` when `dir` is empty); the file content is the UTF-8 bytes of the path
   and the mode is 420. Explicit `files` give `path`, UTF-8 `content` and an
   optional `mode` (default 420); a file's hash is the SHA-256 of its content.
+* `tree.json`, `node_gen` (nodes too large to list as hex): a node of the given
+  `kind` with `count` items named `prefix` + the index zero-padded to `digits`
+  digits, for the index in `[start, start+count)`: file entries with the hash
+  of the empty content, mode 420 and size 0 (`dir`, `dir_page`), or references
+  with count 1, `first` = the name and the hash of the empty content
+  (`dir_index`). The bytes are the canonical encoding; the names are not
+  checked, so a generator can describe an invalid node. `bytes_sha256` (or the
+  node's `hash`) is the SHA-256 of the expansion, to check it.
 
 Cases marked `"heavy": true` (over a million entries) are skipped by default;
 run them with `MFGRAPH_HEAVY_VECTORS=1 go test ./internal/tree` and

@@ -22,7 +22,12 @@ func FuzzDecode(f *testing.F) {
 		}
 	}
 	for _, c := range v.DecodeInvalid {
-		f.Add([]byte(c.Bytes))
+		if c.BytesHex != "" {
+			f.Add(mustHex(f, c.BytesHex))
+		}
+	}
+	for _, c := range v.DecodeValidBuildRejects {
+		f.Add(mustHex(f, c.BytesHex))
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		n, err := tree.Decode(b)

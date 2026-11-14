@@ -3,11 +3,13 @@ package tree_test
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,6 +54,44 @@ type vecCase struct {
 	Nodes      []vecNode `json:"nodes"`
 	Error      string    `json:"error"`
 	UCDVersion string    `json:"ucd_version"`
+	WalkOrder  []string  `json:"walk_order"`
+}
+
+// nodeGen is the node generator of tree.json ("generators").
+type nodeGen struct {
+	Kind   string `json:"kind"`
+	Prefix string `json:"prefix"`
+	Digits int    `json:"digits"`
+	Start  int    `json:"start"`
+	Count  int    `json:"count"`
+}
+
+// bytes expands the generator (test-side re-implementation of the documented
+// rule; the expansion is checked against a hash computed independently).
+func (g nodeGen) bytes() []byte {
+	n := tree.Node{Kind: tree.Kind(g.Kind)}
+	for i := g.Start; i < g.Start+g.Count; i++ {
+		name := fmt.Sprintf("%s%0*d", g.Prefix, g.Digits, i)
+		if n.Kind == tree.KindDirIndex {
+			n.Pages = append(n.Pages, tree.PageRef{Count: 1, First: name, Hash: h0})
+		} else {
+			n.Entries = append(n.Entries, tree.Entry{Name: name, Type: tree.TypeFile, Hash: h0, Mode: tree.ModeRegular})
+		}
+	}
+	return tree.Encode(n)
+}
+
+type walkNode struct {
+	Hex     string   `json:"hex"`
+	NodeGen *nodeGen `json:"node_gen"`
+	Hash    string   `json:"hash"`
+}
+
+type walkCase struct {
+	Name  string     `json:"name"`
+	Root  string     `json:"root"`
+	Nodes []walkNode `json:"nodes"`
+	Error string     `json:"error"`
 }
 
 type vecDoc struct {
@@ -59,18 +99,32 @@ type vecDoc struct {
 	ReviewStatus  string         `json:"review_status"`
 	Description   string         `json:"description"`
 	Inputs        string         `json:"inputs"`
+	Generators    string         `json:"generators"`
 	Limits        map[string]int `json:"limits"`
 	Cases         []vecCase      `json:"cases"`
 	DecodeInvalid []struct {
-		Name  string `json:"name"`
-		Bytes string `json:"bytes"`
+		Name        string   `json:"name"`
+		BytesHex    string   `json:"bytes_hex"`
+		NodeGen     *nodeGen `json:"node_gen"`
+		BytesSHA256 string   `json:"bytes_sha256"`
 	} `json:"decode_invalid"`
 	DecodeValidBuildRejects []struct {
 		Name       string `json:"name"`
-		Bytes      string `json:"bytes"`
+		BytesHex   string `json:"bytes_hex"`
 		WriteRule  string `json:"write_rule"`
 		UCDVersion string `json:"ucd_version"`
 	} `json:"decode_valid_build_rejects"`
+	WalkValid   []walkCase `json:"walk_valid"`
+	WalkInvalid []walkCase `json:"walk_invalid"`
+}
+
+func mustHex(t testing.TB, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("bad hex: %v", err)
+	}
+	return b
 }
 
 func loadTreeVectors(t testing.TB) vecDoc {
@@ -193,6 +247,18 @@ func TestTreeVectors(t *testing.T) {
 					t.Errorf("node %d canonical bytes differ:\n got %s\nwant %s", pos, got.Canonical, *wn.Canonical)
 				}
 			}
+			if c.WalkOrder != nil {
+				var order []string
+				if err := tree.Walk(ctx, tree.MapGetter(nodes), root, func(p string, _ tree.Entry) error {
+					order = append(order, p)
+					return nil
+				}); err != nil {
+					t.Fatalf("Walk: %v", err)
+				}
+				if !slices.Equal(order, c.WalkOrder) {
+					t.Errorf("walk order %q, want %q", order, c.WalkOrder)
+				}
+			}
 			// Build -> Walk restores the (normalized) input.
 			assertRoundTrip(t, files, nodes, root)
 		})
@@ -236,9 +302,26 @@ func TestDecodeInvalidVectors(t *testing.T) {
 		t.Fatal("no decode_invalid vectors")
 	}
 	for _, c := range v.DecodeInvalid {
-		n, err := tree.Decode([]byte(c.Bytes))
+		var b []byte
+		if c.NodeGen != nil {
+			b = c.NodeGen.bytes()
+			if got := tree.HashOf(b).String(); got != c.BytesSHA256 {
+				t.Fatalf("%s: generated node hashes to %s, want %s", c.Name, got, c.BytesSHA256)
+			}
+			if c.NodeGen.Count > tree.MaxEntriesPerNode {
+				// Control: one item fewer is a valid node, so the count is the reason.
+				ok := *c.NodeGen
+				ok.Count = tree.MaxEntriesPerNode
+				if _, err := tree.Decode(ok.bytes()); err != nil {
+					t.Errorf("%s: control node with %d items: %v", c.Name, ok.Count, err)
+				}
+			}
+		} else {
+			b = mustHex(t, c.BytesHex)
+		}
+		n, err := tree.Decode(b)
 		if err == nil {
-			t.Errorf("%s: accepted %q as %+v", c.Name, c.Bytes, n)
+			t.Errorf("%s: accepted %q as %+v", c.Name, b, n)
 			continue
 		}
 		if !errors.Is(err, tree.ErrInvalidNode) && !errors.Is(err, tree.ErrNonCanonical) && !errors.Is(err, tree.ErrUnsupportedFormat) {
@@ -275,7 +358,8 @@ func TestDecodeValidBuildRejects(t *testing.T) {
 		t.Fatal("no decode_valid_build_rejects vectors")
 	}
 	for _, c := range v.DecodeValidBuildRejects {
-		n, err := tree.Decode([]byte(c.Bytes))
+		b := mustHex(t, c.BytesHex)
+		n, err := tree.Decode(b)
 		if err != nil {
 			t.Errorf("%s: read-time rules must accept it: %v", c.Name, err)
 			continue
@@ -323,7 +407,7 @@ func TestDecodeValidBuildRejects(t *testing.T) {
 		root, _, err := tree.Build(files)
 		switch c.WriteRule {
 		case "nfc":
-			if err != nil || root == tree.HashOf([]byte(c.Bytes)) {
+			if err != nil || root == tree.HashOf(b) {
 				t.Errorf("%s: Build must normalize the name (err %v)", c.Name, err)
 			}
 		default:
@@ -331,5 +415,67 @@ func TestDecodeValidBuildRejects(t *testing.T) {
 				t.Errorf("%s: Build error = %v, want %s", c.Name, err, c.WriteRule)
 			}
 		}
+	}
+}
+
+// walkCategory maps a Walk error to the vector categories: invalid_node (a
+// node violates the single-node rules) or invalid_tree (the whole-tree rules).
+func walkCategory(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, tree.ErrInvalidTree):
+		return "invalid_tree"
+	case errors.Is(err, tree.ErrInvalidNode), errors.Is(err, tree.ErrNonCanonical), errors.Is(err, tree.ErrUnsupportedFormat):
+		return "invalid_node"
+	}
+	return "unexpected: " + err.Error()
+}
+
+// TestWalkVectors: whole trees given as nodes plus a root hash. Walk and
+// WalkNodes must accept walk_valid and reject walk_invalid with the given
+// category.
+func TestWalkVectors(t *testing.T) {
+	v := loadTreeVectors(t)
+	if len(v.WalkInvalid) == 0 || len(v.WalkValid) == 0 {
+		t.Fatal("no walk vectors")
+	}
+	ctx := context.Background()
+	run := func(c walkCase, wantValid bool) {
+		g := tree.MapGetter{}
+		for _, n := range c.Nodes {
+			var b []byte
+			if n.NodeGen != nil {
+				b = n.NodeGen.bytes()
+			} else {
+				b = mustHex(t, n.Hex)
+			}
+			h := tree.HashOf(b)
+			if h.String() != n.Hash {
+				t.Fatalf("%s: a node hashes to %s, listed as %s", c.Name, h, n.Hash)
+			}
+			g[h] = b
+		}
+		if wantValid != (c.Error == "") {
+			t.Fatalf("%s: misplaced case", c.Name)
+		}
+		root := contenthash.MustParse(c.Root)
+		err := tree.Walk(ctx, g, root, func(string, tree.Entry) error { return nil })
+		if errors.Is(err, tree.ErrNodeNotFound) {
+			t.Fatalf("%s: the vector does not list every node: %v", c.Name, err)
+		}
+		if got := walkCategory(err); got != c.Error {
+			t.Errorf("%s: Walk error %v (category %q), want %q", c.Name, err, got, c.Error)
+		}
+		err = tree.WalkNodes(ctx, g, root, func(tree.NodeInfo) error { return nil })
+		if got := walkCategory(err); got != c.Error {
+			t.Errorf("%s: WalkNodes error %v (category %q), want %q", c.Name, err, got, c.Error)
+		}
+	}
+	for _, c := range v.WalkValid {
+		run(c, true)
+	}
+	for _, c := range v.WalkInvalid {
+		run(c, false)
 	}
 }
