@@ -17,6 +17,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/LUOSENGWA/MFGraph/internal/migrate"
+	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
 	"github.com/LUOSENGWA/MFGraph/migrations"
 )
 
@@ -82,6 +83,7 @@ func TestMySQL(t *testing.T) {
 		t.Fatalf("tables = %v\nwant %v", tables, want)
 	}
 	checkSchemaConventions(t, db, dbName)
+	checkByteExactColumns(t, db, dbName)
 
 	// 2. Second run: everything is skipped, nothing executed.
 	rs, err = migrate.RunAll(ctx, target, plans, time.Now)
@@ -215,4 +217,146 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func mysqlErrNo(err error) uint16 {
+	var me *mysql.MySQLError
+	if errors.As(err, &me) {
+		return me.Number
+	}
+	return 0
+}
+
+const (
+	errDupEntry    = 1062 // ER_DUP_ENTRY
+	errDataTooLong = 1406 // ER_DATA_TOO_LONG
+)
+
+// checkByteExactColumns measures, on the real server, what the VARBINARY
+// columns and the new keys are for: names that differ only in trailing
+// spaces are different rows, a 255-byte branch name fits and 256 bytes do
+// not, storage prefixes that differ only in case collide through
+// storage_prefix_key, an idempotency key is scoped by route, and
+// root_tree_hash_algo defaults to sha256.
+func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
+	t.Helper()
+	ctx := context.Background()
+	exec := func(q string, args ...any) error {
+		_, err := db.ExecContext(ctx, q, args...)
+		return err
+	}
+	const ws, wst, user = "01JD00000000000000000WS000", "01JD00000000000000000WT000", "01JD00000000000000000US000"
+	n := 0
+	branch := func(name string) error {
+		n++
+		return exec(`INSERT INTO branches (branch_id, workspace_id, project_id, workstream_id, branch_name, ref_name,
+			created_by, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+			fmt.Sprintf("01JD0000000000000000BR%04d", n), ws, ws, wst, name, "workstreams/"+wst+"/"+name, user)
+	}
+
+	// 1. "dev" and "dev " are two branches; an exact duplicate is refused.
+	if err := branch("dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := branch("dev "); err != nil {
+		t.Errorf(`branch "dev " next to "dev": %v`, err)
+	}
+	if err := branch("dev"); mysqlErrNo(err) != errDupEntry {
+		t.Errorf(`a second branch "dev": err = %v, want duplicate entry`, err)
+	}
+	var rows int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM branches WHERE workspace_id = ? AND ref_name = ?",
+		ws, "workstreams/"+wst+"/dev").Scan(&rows); err != nil || rows != 1 {
+		t.Errorf("lookup of ref workstreams/<id>/dev: %d rows, %v; want exactly 1", rows, err)
+	}
+	t.Logf(`measured: branch names "dev" and "dev " coexist, a second "dev" is a duplicate entry, the lookup of ref .../dev matches %d row`, rows)
+
+	// 2. 255-byte branch names fit (ASCII and 85 CJK characters), 256 bytes do not.
+	for _, name := range []string{strings.Repeat("a", 255), strings.Repeat("\u4e2d", 85)} {
+		if err := branch(name); err != nil {
+			t.Errorf("%d-byte branch name: %v", len(name), err)
+		}
+	}
+	err := branch(strings.Repeat("b", 256))
+	if mysqlErrNo(err) != errDataTooLong {
+		t.Errorf("256-byte branch name: err = %v, want data too long", err)
+	}
+	var longest int
+	if err := db.QueryRowContext(ctx, "SELECT MAX(LENGTH(branch_name)), MAX(LENGTH(ref_name)) FROM branches").Scan(&longest, new(int)); err != nil || longest != 255 {
+		t.Errorf("longest stored branch name: %d bytes, %v", longest, err)
+	}
+	t.Logf("measured: 255-byte branch names (ASCII, 85 CJK characters) are stored, their refs have %d bytes; 256 bytes: %v",
+		len("workstreams/"+wst+"/")+255, err)
+
+	// 3. Storage prefixes that differ only in case collide on one backend.
+	workspace := func(id, backend, prefix string) error {
+		return exec(`INSERT INTO workspaces (workspace_id, tenant_id, project_id, workspace_type, owner_principal_id,
+			storage_backend_id, storage_prefix, storage_prefix_key, created_at_us, updated_at_us)
+			VALUES (?, ?, ?, 'project', ?, ?, ?, ?, 0, 0)`, id, ws, ws, user, backend, prefix, storagekey.PrefixKey(prefix))
+	}
+	if err := workspace("01JD00000000000000000WA001", "default", "tenants/A/w"); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspace("01JD00000000000000000WA002", "default", "Tenants/a/W"); mysqlErrNo(err) != errDupEntry {
+		t.Errorf("prefix differing only in case: err = %v, want duplicate entry", err)
+	}
+	if err := workspace("01JD00000000000000000WA003", "other", "Tenants/a/W"); err != nil {
+		t.Errorf("the same prefix on another backend: %v", err)
+	}
+	if err := workspace("01JD00000000000000000WA004", "default", strings.Repeat("p", storagekey.MaxPrefixBytes)); err != nil {
+		t.Errorf("942-byte prefix: %v", err)
+	}
+	t.Log("measured: storage prefixes tenants/A/w and Tenants/a/W collide on one backend (storage_prefix_key), not across backends; a 942-byte prefix is stored")
+
+	// 4. An idempotency key is scoped by principal and route.
+	idem := func(route string) error {
+		return exec(`INSERT INTO idempotency_keys (idempotency_key, principal_uid, route, request_hash, created_at_us, expires_at_us)
+			VALUES ('k-1', ?, ?, ?, 0, 1)`, user, route, strings.Repeat("0", 64))
+	}
+	if err := idem("POST /v1/workspaces/{id}/commits"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idem("POST /v1/workspaces/{id}/branches"); err != nil {
+		t.Errorf("same key on another route: %v", err)
+	}
+	if err := idem("POST /v1/workspaces/{id}/commits"); mysqlErrNo(err) != errDupEntry {
+		t.Errorf("same key and route: err = %v, want duplicate entry", err)
+	}
+
+	// 5. root_tree_hash_algo defaults to sha256.
+	if err := exec(`INSERT INTO snapshots (snapshot_id, workspace_id, project_id, author_principal_id, trigger_kind,
+		root_tree_hash, created_at_us) VALUES (?, ?, ?, ?, 'manual', ?, 0)`, "01JD00000000000000000SN001", ws, ws, user,
+		strings.Repeat("e", 64)); err != nil {
+		t.Fatal(err)
+	}
+	var algo string
+	if err := db.QueryRowContext(ctx, "SELECT root_tree_hash_algo FROM snapshots").Scan(&algo); err != nil || algo != "sha256" {
+		t.Errorf("root_tree_hash_algo = %q, %v", algo, err)
+	}
+
+	// 6. The server created the byte columns as VARBINARY.
+	want := map[string]string{
+		"branches.branch_name": "varbinary(255)", "branches.ref_name": "varbinary(512)", "snapshots.ref_name": "varbinary(512)",
+		"workstreams.default_branch_name": "varbinary(255)", "workspaces.scope_path": "varbinary(4096)",
+		"snapshots.scope_path": "varbinary(4096)", "upload_sessions.path": "varbinary(4096)",
+		"workspaces.storage_prefix": "varbinary(942)", "blobs.storage_key": "varbinary(1024)",
+		"idempotency_keys.idempotency_key": "varbinary(128)",
+	}
+	got := map[string]string{}
+	rs, err := db.QueryContext(ctx, `SELECT table_name, column_name, column_type FROM information_schema.columns
+		WHERE table_schema = ? AND data_type = 'varbinary'`, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Close()
+	for rs.Next() {
+		var table, col, typ string
+		if err := rs.Scan(&table, &col, &typ); err != nil {
+			t.Fatal(err)
+		}
+		got[table+"."+col] = typ
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("VARBINARY columns = %v\nwant %v", got, want)
+	}
 }

@@ -25,6 +25,25 @@ var wantVersions = map[string][]string{
 		"0006_uploads", "0008_usage_outbox_idempotency"},
 }
 
+// byteColumns hold names, paths, refs and keys that are compared byte for
+// byte. They must be VARBINARY: utf8mb4_bin (a PAD SPACE collation) ignores
+// trailing spaces, so "dev" and "dev " would be the same branch, while the
+// path rules allow trailing spaces. The lengths follow the path rules: a name
+// has at most 255 bytes, a path 4096, a ref "workstreams/<id>/<name>" 294
+// (512 leaves room), a storage prefix 942.
+var byteColumns = map[string]string{
+	"branches.branch_name":             "VARBINARY(255)",
+	"branches.ref_name":                "VARBINARY(512)",
+	"snapshots.ref_name":               "VARBINARY(512)",
+	"workstreams.default_branch_name":  "VARBINARY(255)",
+	"workspaces.scope_path":            "VARBINARY(4096)",
+	"snapshots.scope_path":             "VARBINARY(4096)",
+	"upload_sessions.path":             "VARBINARY(4096)",
+	"workspaces.storage_prefix":        "VARBINARY(942)",
+	"blobs.storage_key":                "VARBINARY(1024)",
+	"idempotency_keys.idempotency_key": "VARBINARY(128)",
+}
+
 var (
 	createRe = regexp.MustCompile(`^CREATE TABLE IF NOT EXISTS ([a-z_]+) \(`)
 	columnRe = regexp.MustCompile(`^\s+([a-z_]+)\s+([A-Z]+(?:\([0-9]+\))?)(.*)$`)
@@ -38,6 +57,7 @@ var (
 func TestMigrationFiles(t *testing.T) {
 	sources := map[string]fs.FS{"kernel": migrations.Kernel(), "mysql": migrations.MySQL()}
 	seenTables := map[string]string{}
+	seenByteColumns := map[string]bool{}
 	for dir, fsys := range sources {
 		ms, err := migrate.Load(fsys)
 		if err != nil {
@@ -78,7 +98,7 @@ func TestMigrationFiles(t *testing.T) {
 				if f := forbidden.FindString(body); f != "" {
 					t.Errorf("%s: table %s uses forbidden construct %q", m.Version, table, f)
 				}
-				checkColumns(t, m.Version, table, body)
+				checkColumns(t, m.Version, table, body, seenByteColumns)
 			}
 		}
 		if strings.Join(versions, ",") != strings.Join(wantVersions[dir], ",") {
@@ -89,11 +109,17 @@ func TestMigrationFiles(t *testing.T) {
 			t.Errorf("%s tables = %v, want %v", dir, tables, wantTables[dir])
 		}
 	}
+	for col := range byteColumns {
+		if !seenByteColumns[col] {
+			t.Errorf("column %s not found", col)
+		}
+	}
 }
 
 // checkColumns enforces the type conventions: IDs and hashes are ascii_bin,
-// times are BIGINT epoch microseconds.
-func checkColumns(t *testing.T, version, table, body string) {
+// times are BIGINT epoch microseconds, names, paths, refs and keys are
+// VARBINARY (byteColumns).
+func checkColumns(t *testing.T, version, table, body string, seenByteColumns map[string]bool) {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {
 		m := columnRe.FindStringSubmatch(line)
@@ -112,6 +138,17 @@ func checkColumns(t *testing.T, version, table, body string) {
 		if (strings.HasSuffix(name, "_id") || strings.HasSuffix(name, "_uid")) && name != "storage_backend_id" &&
 			name != "backend_upload_id" && typ != "CHAR(26)" {
 			t.Errorf("%s: %s.%s must be a ULID CHAR(26), is %s", version, table, name, typ)
+		}
+		col := table + "." + name
+		if want, ok := byteColumns[col]; ok {
+			seenByteColumns[col] = true
+			if typ != want {
+				t.Errorf("%s: %s must be %s (compared byte for byte), is %s", version, col, want, typ)
+			}
+		} else if (strings.HasSuffix(name, "_name") && name != "display_name" || strings.HasSuffix(name, "path") ||
+			strings.HasPrefix(name, "storage_prefix") && name != "storage_prefix_key" || strings.HasSuffix(name, "storage_key")) &&
+			!strings.HasPrefix(typ, "VARBINARY") {
+			t.Errorf("%s: %s looks like a name, path or key: make it VARBINARY and list it in byteColumns", version, col)
 		}
 	}
 }

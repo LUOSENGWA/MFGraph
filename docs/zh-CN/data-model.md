@@ -44,7 +44,11 @@ MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBas
 - **manifest = 树**：树节点是纯内容 + 确定性编码；`snapshots.root_tree_hash` 指向根节点；v1 不保存修改时间（只保留可执行位，即 mode 420/493）——见[内容格式规范](../spec/zh-CN/content-format.md)；
 - 内容表**按 `workspace_id` 隔离** —— 不做跨 workspace 去重；
 - DB 里的存储 key 是**相对 `workspaces.storage_prefix` 的路径**（创建时写入、不可变）；
-- branch 使用 `ref_name`（`main`、`workstreams/<workstream_id>/<branch_name>`）；`workstream` 与 `branch` 是不同实体；
+- **名字、路径、ref 和 key 类的列一律为 `VARBINARY`**，按字节比较（`branch_name`、`ref_name`、`default_branch_name`、`scope_path`、`upload_sessions.path`、`storage_prefix`、`storage_key`、`idempotency_key`）：`utf8mb4_bin` 比较时忽略结尾空格，而路径规则允许结尾空格，所以 `dev` 与 `dev ` 是两个分支。长度与路径规则一致：名字 255 字节、路径 4096、ref 512、存储前缀 942；
+- `workspaces.storage_prefix_key` 是 ASCII 小写后的前缀的 SHA-256 hex，并有 `UNIQUE (storage_backend_id, storage_prefix_key)`：同一个后端上不能有只在大小写上不同的两个前缀（嵌套的前缀由应用拒绝，见[规范](../spec/zh-CN/content-format.md#4-存储-key)）；
+- `snapshots.root_tree_hash_algo` 记录 `root_tree_hash` 的算法（`sha256`）；
+- 幂等记录的主键是 `(principal_uid, route, idempotency_key)`；
+- branch 使用 `ref_name`（`main`、`workstreams/<workstream_id>/<branch_name>`）；`workstream` 与 `branch` 是不同实体；同一个 workstream 内（包括 main）不能同时存在只在大小写上不同的分支名（如 `Dev` 与 `dev`），由应用检查，不靠列约束；
 - 租约/锁的过期判定一律用 **DB 时间**（`NOW(6)`），不用应用时钟。
 
 ## Branch 引用

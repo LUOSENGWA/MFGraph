@@ -3,22 +3,25 @@
 -- branch the snapshot was created on and may be NULL. Parents are rows in
 -- snapshot_parents (0 for a root snapshot, 1 for a commit, 2 for a merge).
 -- The optional head path index (snapshot_entries) is not part of this
--- schema version.
+-- schema version. root_tree_hash_algo names the algorithm of root_tree_hash
+-- (database form: hex digest plus algorithm). scope_path and ref_name are
+-- VARBINARY (compared byte for byte).
 
 CREATE TABLE IF NOT EXISTS snapshots (
   snapshot_id          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   workspace_id         CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   project_id           CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   scope_node_id        CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
-  scope_path           VARCHAR(1024) NOT NULL DEFAULT '',
+  scope_path           VARBINARY(4096) NOT NULL DEFAULT '',
   workstream_id        CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   branch_id            CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
-  ref_name             VARCHAR(255) NOT NULL DEFAULT '',
+  ref_name             VARBINARY(512) NOT NULL DEFAULT '',
   author_principal_id  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   on_behalf_of_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   message              VARCHAR(1024) NOT NULL DEFAULT '',
   trigger_kind         VARCHAR(32) NOT NULL,
   root_tree_hash       CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  root_tree_hash_algo  VARCHAR(16) NOT NULL DEFAULT 'sha256',
   tree_format_version  INT UNSIGNED NOT NULL DEFAULT 1,
   parent_count         TINYINT UNSIGNED NOT NULL DEFAULT 0,
   entry_count          BIGINT UNSIGNED NOT NULL DEFAULT 0,

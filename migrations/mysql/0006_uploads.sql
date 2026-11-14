@@ -3,13 +3,14 @@
 -- in a single request and does not use these tables yet.
 -- status: initiated / uploading / completed / aborted / expired.
 -- part_size_bytes is chosen by the server; content identity is always the
--- whole-file SHA-256, never derived from parts.
+-- whole-file SHA-256, never derived from parts. path is the normalized path
+-- (at most 4096 bytes), VARBINARY and compared byte for byte.
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
   upload_id          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   workspace_id       CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   workstream_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
-  path               VARCHAR(1024) NOT NULL,
+  path               VARBINARY(4096) NOT NULL,
   size_bytes         BIGINT UNSIGNED NOT NULL,
   content_type       VARCHAR(255) NULL,
   checksum_sha256    CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,

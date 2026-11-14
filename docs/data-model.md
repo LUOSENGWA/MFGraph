@@ -44,7 +44,11 @@ MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase 
 - **manifest = tree**: tree nodes are pure content with deterministic encoding; `snapshots.root_tree_hash` points to the root node; v1 stores no modification times (only the executable bit, as mode 420/493) — see the [content format specification](spec/content-format.md);
 - content tables are **scoped by `workspace_id`** — no cross-workspace deduplication;
 - storage keys in the DB are **relative to `workspaces.storage_prefix`** (immutable, chosen at create time);
-- branches use `ref_name` (`main`, `workstreams/<workstream_id>/<branch_name>`); `workstream` and `branch` are separate entities;
+- **names, paths, refs and keys are `VARBINARY`** and compared byte for byte (`branch_name`, `ref_name`, `default_branch_name`, `scope_path`, `upload_sessions.path`, `storage_prefix`, `storage_key`, `idempotency_key`): `utf8mb4_bin` ignores trailing spaces, but the path rules allow them, so `dev` and `dev ` are two branches. Lengths follow the path rules: names 255 bytes, paths 4096, refs 512, storage prefixes 942;
+- `workspaces.storage_prefix_key` is the hex SHA-256 of the ASCII-lowercased prefix, with `UNIQUE (storage_backend_id, storage_prefix_key)`: two prefixes that differ only in case cannot exist on one backend (nested prefixes are rejected by the application, see the [specification](spec/content-format.md#4-storage-keys));
+- `snapshots.root_tree_hash_algo` names the algorithm of `root_tree_hash` (`sha256`);
+- idempotency records are keyed by `(principal_uid, route, idempotency_key)`;
+- branches use `ref_name` (`main`, `workstreams/<workstream_id>/<branch_name>`); `workstream` and `branch` are separate entities; branch names that only differ in case (`Dev`, `dev`) must not coexist in one workstream, including the main branch (checked by the application, not by a column);
 - lease/lock expiry always compares **DB time** (`NOW(6)`), never application clocks.
 
 ## Branch refs
