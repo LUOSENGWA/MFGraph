@@ -227,10 +227,24 @@ greedy(items, kind):                  # 保持顺序，依次填满每个节点
 | 树节点 | `tree/<hh>/<hex>.json.zst` —— 规范字节经 zstd 压缩后存储；`<hex>` 是未压缩字节的 hash |
 
 * 完整对象 key = `<storage_prefix>/<相对 key>`。数据库只保存相对 key。
-* `storage_prefix` 在创建 workspace 时确定，之后不再改变。它非空，没有首尾 `/`，每一段都满足第 2 节，已是 NFC，至多 1024 字节。
-* project 级 workspace 的默认前缀为 `tenants/<tenant_id>/projects/<project_id>/workspaces/<workspace_id>`。宿主平台可以选择其他前缀。
+* `storage_prefix` 在创建 workspace 时确定，之后不再改变。它非空，没有首尾 `/`；按 `/` 分出的每一段都非空，只由 ASCII 字符 `A`–`Z`、`a`–`z`、`0`–`9`、`.`、`_` 和 `-` 组成，且不是 `.` 或 `..`。
+* 前缀至多 **942 字节**，以保证每个完整 key 都不超过 Amazon S3 的 1024 字节 key 上限。最长的相对 key 是树节点的 key，连同分隔符共 82 字节：
+
+  ```text
+  "/tree/" + <hh> + "/" + <hex> + ".json.zst"  =  6 + 2 + 1 + 64 + 9  =  82
+  1024 - 82 = 942
+  ```
+
+  （`/objects/<hh>/<hex>` 为 76 字节。）
+* 同一个存储后端上各 workspace 的前缀不得冲突：按 ASCII 不区分大小写比较，任何前缀都不得与另一个相同，也不得是另一个按 `/` 划分的上级路径。`tenants/A` 与 `Tenants/a` 冲突，`a` 与 `a/b` 冲突，`a` 与 `ab` 不冲突。理由：对象按前缀列出（例如垃圾回收），有些后端不区分大小写，冲突会让一个 workspace 看到甚至删除另一个 workspace 的对象。
+* project 级 workspace 的默认前缀为 `tenants/<tenant_id>/projects/<project_id>/workspaces/<workspace_id>`，其中各 ID 是 ULID（26 个大写字符）。默认前缀满足以上所有规则，彼此之间也从不冲突。宿主平台可以选择满足这些规则的其他前缀。
 * 内容对象不在 workspace 之间共享。
-* 树节点的压缩方式只是存储细节，以后可以更换；读取方解压后校验规范字节的 hash。
+
+### 4.1 存储布局的演进
+
+key 布局属于 format 1 的一部分。以后更换 hash 算法或压缩方式时，在 `objects/` 和 `tree/` 旁边**新开顶层目录**；现有 key 永远不修改、不移动、不复用，format 1 写入的数据保持原位。
+
+树节点对象是一个标准 zstd 帧（RFC 8878），不使用字典。读取方解压到 1,048,576 字节（3.2 节的节点大小上限）时必须停止，解压结果超过上限的对象必须拒绝，这同时防御解压炸弹；之后校验未压缩规范字节的 hash（3.7）。
 
 ## 5. 核对一个实现
 

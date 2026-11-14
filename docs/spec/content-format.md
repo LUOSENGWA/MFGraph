@@ -393,14 +393,45 @@ lowercase SHA-256 and `<hh>` its first two characters.
 * The full object key is `<storage_prefix>/<relative key>`. Databases store
   only relative keys.
 * `storage_prefix` is chosen when a workspace is created and never changes.
-  It is non-empty, has no leading or trailing `/`, each of its segments
-  satisfies section 2, it is in NFC, and it is at most 1024 bytes.
+  It is non-empty and has no leading or trailing `/`; its `/`-separated
+  segments are non-empty, consist only of the ASCII characters `A`–`Z`,
+  `a`–`z`, `0`–`9`, `.`, `_` and `-`, and are not `.` or `..`.
+* A prefix is at most **942 bytes**, so that every full key fits the
+  1024-byte key limit of Amazon S3. The longest relative key is that of a
+  tree node, and with its separator it has 82 bytes:
+
+  ```text
+  "/tree/" + <hh> + "/" + <hex> + ".json.zst"  =  6 + 2 + 1 + 64 + 9  =  82
+  1024 - 82 = 942
+  ```
+
+  (`/objects/<hh>/<hex>` has 76 bytes.)
+* The prefixes of the workspaces on one storage backend MUST NOT conflict.
+  Compared ASCII case-insensitively, no prefix may equal another or be a
+  `/`-separated ancestor of another: `tenants/A` and `Tenants/a` conflict,
+  `a` and `a/b` conflict, `a` and `ab` do not. Reason: objects are listed
+  (for example by garbage collection) by prefix, and some backends do not
+  distinguish case, so a conflict would let one workspace see or delete the
+  objects of another.
 * The default prefix of a project-level workspace is
-  `tenants/<tenant_id>/projects/<project_id>/workspaces/<workspace_id>`.
-  A host platform may choose another prefix.
+  `tenants/<tenant_id>/projects/<project_id>/workspaces/<workspace_id>`,
+  where the IDs are ULIDs (26 uppercase characters). Default prefixes
+  satisfy all of these rules and never conflict with each other. A host
+  platform may choose another prefix that satisfies them.
 * Content objects are never shared between workspaces.
-* The compression of tree nodes is a storage detail and may change; readers
-  decompress and verify the hash of the canonical bytes.
+
+### 4.1 Evolution of the storage layout
+
+The key layout is part of format 1. A future hash algorithm or compression
+gets a **new top-level directory** next to `objects/` and `tree/`; existing
+keys are never changed, moved or reused, so data written under format 1
+stays where it is.
+
+Tree node objects are one standard zstd frame (RFC 8878) without a
+dictionary. Readers MUST stop decompressing at 1,048,576 bytes (the node
+size limit of 3.2) and reject an object that decompresses to more, which
+also protects against decompression bombs; they then verify the hash of the
+uncompressed canonical bytes (3.7).
 
 ## 5. Checking an implementation
 
