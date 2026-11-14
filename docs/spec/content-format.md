@@ -108,10 +108,26 @@ Within one directory:
   differ in Unicode normalization (`duplicate`);
 * two different names MUST NOT have the same **fold key** (`case_conflict`).
 
-The fold key of a name is the Unicode full case folding (CaseFolding.txt,
-statuses C and F, without the Turkic mappings) of its NFC form. Examples:
-`Plan.dwg` and `plan.dwg` conflict; `straße` and `STRASSE` conflict (both fold
-to `strasse`); `σ` and `ς` conflict; `İ` (U+0130) and `i` do not.
+The fold key of a name is its canonical caseless form as defined by the
+Unicode Standard (section 3.13, definition D145):
+
+```text
+fold_key(name) = NFD(casefold(NFD(name)))
+```
+
+where casefold is the Unicode full case folding (CaseFolding.txt, statuses C
+and F, without the Turkic mappings T). Two names conflict when their fold
+keys are equal. The fold key is only compared, never stored. Examples:
+
+* `Plan.dwg` and `plan.dwg` conflict; `straße` and `STRASSE` conflict (both
+  fold to `strasse`); `σ` and `ς` conflict;
+* Cherokee folds to the uppercase letters: U+13A0 and U+AB70 conflict, and so
+  do U+13F0 and U+13F8;
+* Georgian Mtavruli folds to Mkhedruli: U+1C90 and U+10D0 conflict;
+* the outer NFD makes the key closed under canonical equivalence: U+1E9E
+  U+0301 and `s` U+015B conflict (both give `s s` U+0301), and so do U+FB01
+  U+0301 and `f` U+00ED;
+* `İ` (U+0130) and `i` do not conflict, and neither do `ı` (U+0131) and `I`.
 
 ### 2.3 Branch names
 

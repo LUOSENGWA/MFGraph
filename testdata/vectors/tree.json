@@ -517,6 +517,30 @@
    ]
   },
   {
+   "name": "allowed-dotless-i-and-capital-i",
+   "files": [
+    {
+     "path": "\u0131.txt",
+     "content": "dotless i\n"
+    },
+    {
+     "path": "I.txt",
+     "content": "capital I\n"
+    }
+   ],
+   "root": "sha256:7eb119347970622518e95de17c202b2b23aed29aaa643c3bcd49ad46339cc94f",
+   "node_count": 1,
+   "nodes": [
+    {
+     "dir": "",
+     "kind": "dir",
+     "hash": "sha256:7eb119347970622518e95de17c202b2b23aed29aaa643c3bcd49ad46339cc94f",
+     "size": 304,
+     "canonical": "{\"entries\":[{\"hash\":\"sha256:807140de6b4dddde6688492707d4a15be02a47582db95e01fd7b7eda5f10f13d\",\"mode\":420,\"name\":\"I.txt\",\"size\":10,\"type\":\"file\"},{\"hash\":\"sha256:22abc6b3320f7a027146fe506026fcf785f4034140de693f768c55dd17d88a63\",\"mode\":420,\"name\":\"\u0131.txt\",\"size\":10,\"type\":\"file\"}],\"format\":1,\"kind\":\"dir\"}"
+    }
+   ]
+  },
+  {
    "name": "dir-1024-entries-one-node",
    "generate": [
     {
@@ -925,6 +949,76 @@
     }
    ],
    "error": "disallowed_char"
+  },
+  {
+   "name": "reject-cherokee-case-conflict",
+   "files": [
+    {
+     "path": "\u13a0.txt",
+     "content": "upper\n"
+    },
+    {
+     "path": "\uab70.txt",
+     "content": "lower\n"
+    }
+   ],
+   "error": "case_conflict"
+  },
+  {
+   "name": "reject-cherokee-ye-case-conflict-in-subdirectory",
+   "files": [
+    {
+     "path": "d/\u13f8",
+     "content": "small\n"
+    },
+    {
+     "path": "d/\u13f0",
+     "content": "capital\n"
+    }
+   ],
+   "error": "case_conflict"
+  },
+  {
+   "name": "reject-georgian-mtavruli-vs-mkhedruli",
+   "files": [
+    {
+     "path": "\u1c90.txt",
+     "content": "mtavruli\n"
+    },
+    {
+     "path": "\u10d0.txt",
+     "content": "mkhedruli\n"
+    }
+   ],
+   "error": "case_conflict"
+  },
+  {
+   "name": "reject-capital-sharp-s-acute-vs-s-s-acute",
+   "files": [
+    {
+     "path": "\u1e9e\u0301.txt",
+     "content": "1\n"
+    },
+    {
+     "path": "s\u015b.txt",
+     "content": "2\n"
+    }
+   ],
+   "error": "case_conflict"
+  },
+  {
+   "name": "reject-fi-ligature-acute-vs-f-i-acute",
+   "files": [
+    {
+     "path": "\ufb01\u0301.txt",
+     "content": "1\n"
+    },
+    {
+     "path": "fi\u0301.txt",
+     "content": "2\n"
+    }
+   ],
+   "error": "case_conflict"
   }
  ],
  "decode_invalid": [

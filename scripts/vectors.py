@@ -189,7 +189,9 @@ def check_stored_name(raw):
 
 
 def fold_key(name):
-    return unicodedata.normalize("NFC", name).casefold()
+    """Canonical caseless match (Unicode 3.13, D145): NFD(casefold(NFD(x))).
+    str.casefold is the full case folding of CaseFolding.txt (C+F)."""
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", name).casefold())
 
 
 def check_siblings(entries):
@@ -840,7 +842,7 @@ def review_pathx(lines):
               "### 2.1 Normalize", "", "| name | input | result |", "|---|---|---|"]
     for case in v["normalize"]:
         lines.append("| %s | %s | %s |" % (case["name"], show_case_input(case), show_case_result(case)))
-    lines += ["", "### 2.2 FoldKey (NFC, then Unicode full case folding)", "",
+    lines += ["", "### 2.2 FoldKey: NFD(casefold(NFD(name))), full case folding (C+F)", "",
               "| input | fold key |", "|---|---|"]
     for case in v["fold"]:
         lines.append("| %s | %s |" % (show(case["input"]), show(case["fold"])))

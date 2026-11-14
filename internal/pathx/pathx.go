@@ -283,14 +283,40 @@ func ValidateBranchName(s string) error {
 	return err
 }
 
-// folder implements Unicode full case folding. cases.Fold is documented to be
+// folder implements Unicode full case folding (CaseFolding.txt statuses C
+// and F, without the Turkic mappings). cases.Fold is documented to be
 // stateless and safe for concurrent use.
 var folder = cases.Fold()
 
-// FoldKey returns the case-insensitive comparison key of a name: NFC, then
-// Unicode full case folding. Two siblings with the same FoldKey conflict.
+// FoldKey returns the case-insensitive comparison key of a name: the
+// canonical caseless match of the Unicode Standard (section 3.13, D145),
+//
+//	NFD(casefold(NFD(name)))
+//
+// where casefold is the full case folding of CaseFolding.txt (statuses C and
+// F). Two siblings with the same FoldKey conflict. The key is only compared,
+// never stored, so its NFD form does not matter. TestFoldKeyExhaustive checks
+// it against the Unicode tables of version V for every assigned code point.
 func FoldKey(name string) string {
-	return folder.String(norm.NFC.String(name))
+	return norm.NFD.String(foldCherokee(folder.String(norm.NFD.String(name))))
+}
+
+// foldCherokee corrects the case folding of golang.org/x/text for Cherokee,
+// which swaps the two cases instead of folding both to the uppercase letters
+// as CaseFolding.txt does. Mapping the 86 lowercase letters U+AB70-U+ABBF and
+// U+13F8-U+13FD to U+13A0-U+13EF and U+13F0-U+13F5 after x/text's folding
+// gives the CaseFolding.txt result for either input case (and is a no-op if a
+// later x/text version folds Cherokee correctly).
+func foldCherokee(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case 0xab70 <= r && r <= 0xabbf:
+			return r - 0xab70 + 0x13a0
+		case 0x13f8 <= r && r <= 0x13fd:
+			return r - 0x13f8 + 0x13f0
+		}
+		return r
+	}, s)
 }
 
 // Sibling is one name in a directory, used by CheckSiblings.

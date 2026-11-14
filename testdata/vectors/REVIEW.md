@@ -227,7 +227,7 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | empty-segment-wins-over-length | `b`×256 / (empty)×0 / `x`×1 (259 bytes) | ✗ `empty_segment` |
 | path-4097-bytes | (`a`×255)×15 segments / `b`×255 / `c`×1 (4097 bytes) | ✗ `path_too_long` |
 
-### 2.2 FoldKey (NFC, then Unicode full case folding)
+### 2.2 FoldKey: NFD(casefold(NFD(name))), full case folding (C+F)
 
 | input | fold key |
 |---|---|
@@ -236,9 +236,9 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | `straße` | `strasse` |
 | `STRASSE` | `strasse` |
 | `ẞ` | `ss` |
-| `café` | `café` |
-| `cafe\u0301` | `café` |
-| `CAFÉ` | `café` |
+| `café` | `cafe\u0301` |
+| `cafe\u0301` | `cafe\u0301` |
+| `CAFÉ` | `cafe\u0301` |
 | `Σ` | `σ` |
 | `ς` | `σ` |
 | `\u212a` | `k` |
@@ -246,6 +246,19 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | `İ` | `i\u0307` |
 | `文档` | `文档` |
 | `🚀` | `🚀` |
+| `Ꭰ` | `Ꭰ` |
+| `ꭰ` | `Ꭰ` |
+| `ᏸ` | `Ᏸ` |
+| `Ᏸ` | `Ᏸ` |
+| `Ა` | `ა` |
+| `ა` | `ა` |
+| `ı` | `ı` |
+| `I` | `i` |
+| `ẞ\u0301` | `ss\u0301` |
+| `sś` | `ss\u0301` |
+| `\ufb01\u0301` | `fi\u0301` |
+| `fí` | `fi\u0301` |
+| `ᾳ` | `αι` |
 
 ### 2.3 Sibling conflicts
 
@@ -261,6 +274,12 @@ Rule order: UTF-8 + non-empty → absolute → first offending character from le
 | ligature-fi | `\ufb01le`, `file` | ✗ `case_conflict` |
 | kelvin-sign | `\u212a`, `k` | ✗ `case_conflict` |
 | dotted-capital-i-vs-i | `İ`, `i` | ✓ ok |
+| cherokee-a-upper-vs-lower | `Ꭰ`, `ꭰ` | ✗ `case_conflict` |
+| cherokee-ye-small-vs-capital | `ᏸ`, `Ᏸ`/ | ✗ `case_conflict` |
+| georgian-mtavruli-vs-mkhedruli | `Ა`, `ა` | ✗ `case_conflict` |
+| dotless-i-vs-capital-i | `ı`, `I` | ✓ ok |
+| capital-sharp-s-acute-vs-s-s-acute | `ẞ\u0301`, `sś` | ✗ `case_conflict` |
+| fi-ligature-acute-vs-f-i-acute | `\ufb01\u0301`, `fí` | ✗ `case_conflict` |
 
 (a trailing `/` marks a directory)
 
@@ -365,6 +384,7 @@ Rules checked by these vectors:
 | shared-subtree | 2 file(s) | root `sha256:b73fb86088a2…`, 2 node(s) |
 | allowed-zwj-zwnj-fullwidth-reserved-names | 7 file(s) | root `sha256:f0a0a8007714…`, 1 node(s) |
 | allowed-variation-selectors-tags-cgj | 4 file(s) | root `sha256:dff2084c04f5…`, 1 node(s) |
+| allowed-dotless-i-and-capital-i | 2 file(s) | root `sha256:7eb119347970…`, 1 node(s) |
 | dir-1024-entries-one-node | generated `f` + 5-digit index, 0…1023 | root `sha256:84d212b37a4d…`, 1 node(s) |
 | dir-1025-entries-two-pages | generated `f` + 5-digit index, 0…1024 | root `sha256:bc1eec93a002…`, 3 node(s) |
 | subdir-3000-entries-three-pages | 1 file(s); generated `big`/`f` + 5-digit index, 0…2999 | root `sha256:43b5f3318a5b…`, 5 node(s) |
@@ -390,6 +410,11 @@ Rules checked by these vectors:
 | reject-line-separator | 1 file(s) | ✗ `disallowed_char` |
 | reject-invisible-times | 1 file(s) | ✗ `disallowed_char` |
 | reject-interlinear-annotation | 1 file(s) | ✗ `disallowed_char` |
+| reject-cherokee-case-conflict | 2 file(s) | ✗ `case_conflict` |
+| reject-cherokee-ye-case-conflict-in-subdirectory | 2 file(s) | ✗ `case_conflict` |
+| reject-georgian-mtavruli-vs-mkhedruli | 2 file(s) | ✗ `case_conflict` |
+| reject-capital-sharp-s-acute-vs-s-s-acute | 2 file(s) | ✗ `case_conflict` |
+| reject-fi-ligature-acute-vs-f-i-acute | 2 file(s) | ✗ `case_conflict` |
 
 ### 3.2 Small cases in full
 
@@ -732,6 +757,21 @@ root: `sha256:dff2084c04f5d18640cb1e56effe73f8516efa068fb9b3c6c120786473ba5710`
   ```
 
   The same bytes with invisible characters shown as code points: `{"entries":[{"hash":"sha256:6b0f7f0ec1ba5c3ca08b69f9e166dc10760e6bbac04cc193bd4fbcb3c7fc4426","mode":420,"name":"a\u034fb.txt","size":26,"type":"file"},{"hash":"sha256:3650533e698039a823cc86dfb3efbd4b3b918763f15e117f5f50f980a4863d9a","mode":420,"name":"☎\ufe0e.txt","size":33,"type":"file"},{"hash":"sha256:ddb924940a181d1fb9a3a33e8c66f2a760aa0aa5053a4febf93ac6c29587361b","mode":420,"name":"❤\ufe0f.txt","size":30,"type":"file"},{"hash":"sha256:74738303aa4d69c55f4ef506f9090f04dca92f744d26466055b14c351ca11494","mode":420,"name":"🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f.txt","size":17,"type":"file"}],"format":1,"kind":"dir"}`
+
+#### `allowed-dotless-i-and-capital-i`
+
+| path | content | mode |
+|---|---|---:|
+| `ı.txt` | `dotless i\u000a` | 420 |
+| `I.txt` | `capital I\u000a` | 420 |
+
+root: `sha256:7eb119347970622518e95de17c202b2b23aed29aaa643c3bcd49ad46339cc94f`
+
+* dir `.` (root) · `dir` · `sha256:7eb119347970622518e95de17c202b2b23aed29aaa643c3bcd49ad46339cc94f` · 304 bytes
+
+  ```json
+  {"entries":[{"hash":"sha256:807140de6b4dddde6688492707d4a15be02a47582db95e01fd7b7eda5f10f13d","mode":420,"name":"I.txt","size":10,"type":"file"},{"hash":"sha256:22abc6b3320f7a027146fe506026fcf785f4034140de693f768c55dd17d88a63","mode":420,"name":"ı.txt","size":10,"type":"file"}],"format":1,"kind":"dir"}
+  ```
 
 ### 3.3 Large cases (root and selected nodes)
 

@@ -57,7 +57,19 @@
 * 同一路径不得出现两次——包括只在 Unicode 规范化形式上不同的两个输入（`duplicate`）；
 * 两个不同的名字不得具有相同的**折叠键**（`case_conflict`）。
 
-名字的折叠键 = 对其 NFC 形式做 Unicode 完全大小写折叠（CaseFolding.txt 中状态为 C 和 F 的映射，不含土耳其语映射）。例如：`Plan.dwg` 与 `plan.dwg` 冲突；`straße` 与 `STRASSE` 冲突（都折叠为 `strasse`）；`σ` 与 `ς` 冲突；`İ`（U+0130）与 `i` 不冲突。
+名字的折叠键是 Unicode 标准定义的规范大小写无关形式（第 3.13 节，定义 D145）：
+
+```text
+fold_key(name) = NFD(casefold(NFD(name)))
+```
+
+其中 casefold 是 Unicode 完全大小写折叠（CaseFolding.txt 中状态为 C 和 F 的映射，不含土耳其语映射 T）。两个名字的折叠键相等即为冲突。折叠键只用于比较，不会存储。例如：
+
+* `Plan.dwg` 与 `plan.dwg` 冲突；`straße` 与 `STRASSE` 冲突（都折叠为 `strasse`）；`σ` 与 `ς` 冲突；
+* Cherokee 字母折叠到大写：U+13A0 与 U+AB70 冲突，U+13F0 与 U+13F8 也冲突；
+* 格鲁吉亚文 Mtavruli 折叠到 Mkhedruli：U+1C90 与 U+10D0 冲突；
+* 外层的 NFD 使折叠键对规范等价封闭：U+1E9E U+0301 与 `s` U+015B 冲突（都得到 `s s` U+0301），U+FB01 U+0301 与 `f` U+00ED 也冲突；
+* `İ`（U+0130）与 `i` 不冲突，`ı`（U+0131）与 `I` 也不冲突。
 
 ### 2.3 分支名
 

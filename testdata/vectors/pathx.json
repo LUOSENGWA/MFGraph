@@ -1,7 +1,7 @@
 {
   "schema": "mfgraph-test-vectors/pathx/1",
   "review_status": "pending-human-review",
-  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), disallowed_char (fixed list of bidi controls and invisible characters), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. stored_names: the read-time rules applied to names inside stored tree nodes; they do not depend on Unicode tables (no NFC, case-fold or unassigned checks) and give no output, only acceptance or the error kind. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1).",
+  "description": "Path grammar vectors (write-time rules). normalize: valid inputs give the canonical NFC output; invalid inputs give the error kind of the first failing rule (rule order: UTF-8/non-empty; absolute; then the first offending character from left to right: backslash, control_char (C0, DEL, C1), disallowed_char (fixed list of bidi controls and invisible characters), unassigned_char (Unicode 15.0.0 Cn); NFC; empty/dot segments; segment and path byte limits). Lengths are counted in bytes of the NFC form. Inputs that cannot be written as JSON strings use input_hex. fold: the case-fold key NFD(casefold(NFD(input))), the canonical caseless match of Unicode 3.13 (D145) with the full case folding of CaseFolding.txt (statuses C and F); siblings: names that cannot coexist in one directory. stored_names: the read-time rules applied to names inside stored tree nodes; they do not depend on Unicode tables (no NFC, case-fold or unassigned checks) and give no output, only acceptance or the error kind. Long inputs use a generator: segments joined by '/', each segment = unit repeated `repeat` times, emitted `times` times (default 1).",
   "normalize": [
     {"name": "simple", "input": "a.txt", "output": "a.txt"},
     {"name": "nested", "input": "docs/specs/v1/format.md", "output": "docs/specs/v1/format.md"},
@@ -102,16 +102,29 @@
     {"input": "stra\u00dfe", "fold": "strasse"},
     {"input": "STRASSE", "fold": "strasse"},
     {"input": "\u1e9e", "fold": "ss"},
-    {"input": "caf\u00e9", "fold": "caf\u00e9"},
-    {"input": "cafe\u0301", "fold": "caf\u00e9"},
-    {"input": "CAF\u00c9", "fold": "caf\u00e9"},
+    {"input": "caf\u00e9", "fold": "cafe\u0301"},
+    {"input": "cafe\u0301", "fold": "cafe\u0301"},
+    {"input": "CAF\u00c9", "fold": "cafe\u0301"},
     {"input": "\u03a3", "fold": "\u03c3"},
     {"input": "\u03c2", "fold": "\u03c3"},
     {"input": "\u212a", "fold": "k"},
     {"input": "\ufb01le", "fold": "file"},
     {"input": "\u0130", "fold": "i\u0307"},
     {"input": "\u6587\u6863", "fold": "\u6587\u6863"},
-    {"input": "\ud83d\ude80", "fold": "\ud83d\ude80"}
+    {"input": "\ud83d\ude80", "fold": "\ud83d\ude80"},
+    {"input": "\u13a0", "fold": "\u13a0"},
+    {"input": "\uab70", "fold": "\u13a0"},
+    {"input": "\u13f8", "fold": "\u13f0"},
+    {"input": "\u13f0", "fold": "\u13f0"},
+    {"input": "\u1c90", "fold": "\u10d0"},
+    {"input": "\u10d0", "fold": "\u10d0"},
+    {"input": "\u0131", "fold": "\u0131"},
+    {"input": "I", "fold": "i"},
+    {"input": "\u1e9e\u0301", "fold": "ss\u0301"},
+    {"input": "s\u015b", "fold": "ss\u0301"},
+    {"input": "\ufb01\u0301", "fold": "fi\u0301"},
+    {"input": "f\u00ed", "fold": "fi\u0301"},
+    {"input": "\u1fb3", "fold": "\u03b1\u03b9"}
   ],
   "siblings": [
     {"name": "distinct", "entries": [{"name": "a", "dir": false}, {"name": "b", "dir": false}, {"name": "c", "dir": true}]},
@@ -123,7 +136,13 @@
     {"name": "final-sigma", "entries": [{"name": "\u03c3", "dir": false}, {"name": "\u03c2", "dir": false}], "error": "case_conflict"},
     {"name": "ligature-fi", "entries": [{"name": "\ufb01le", "dir": false}, {"name": "file", "dir": false}], "error": "case_conflict"},
     {"name": "kelvin-sign", "entries": [{"name": "\u212a", "dir": false}, {"name": "k", "dir": false}], "error": "case_conflict"},
-    {"name": "dotted-capital-i-vs-i", "entries": [{"name": "\u0130", "dir": false}, {"name": "i", "dir": false}]}
+    {"name": "dotted-capital-i-vs-i", "entries": [{"name": "\u0130", "dir": false}, {"name": "i", "dir": false}]},
+    {"name": "cherokee-a-upper-vs-lower", "entries": [{"name": "\u13a0", "dir": false}, {"name": "\uab70", "dir": false}], "error": "case_conflict"},
+    {"name": "cherokee-ye-small-vs-capital", "entries": [{"name": "\u13f8", "dir": false}, {"name": "\u13f0", "dir": true}], "error": "case_conflict"},
+    {"name": "georgian-mtavruli-vs-mkhedruli", "entries": [{"name": "\u1c90", "dir": false}, {"name": "\u10d0", "dir": false}], "error": "case_conflict"},
+    {"name": "dotless-i-vs-capital-i", "entries": [{"name": "\u0131", "dir": false}, {"name": "I", "dir": false}]},
+    {"name": "capital-sharp-s-acute-vs-s-s-acute", "entries": [{"name": "\u1e9e\u0301", "dir": false}, {"name": "s\u015b", "dir": false}], "error": "case_conflict"},
+    {"name": "fi-ligature-acute-vs-f-i-acute", "entries": [{"name": "\ufb01\u0301", "dir": false}, {"name": "f\u00ed", "dir": false}], "error": "case_conflict"}
   ],
   "branch_names": [
     {"input": "main", "output": "main"},

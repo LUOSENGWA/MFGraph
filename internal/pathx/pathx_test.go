@@ -162,7 +162,7 @@ func TestFoldVectors(t *testing.T) {
 	v := loadVectors(t)
 	for _, c := range v.Fold {
 		if got := pathx.FoldKey(c.Input); got != c.Fold {
-			t.Errorf("FoldKey(%q) = %q, want %q", c.Input, got, c.Fold)
+			t.Errorf("FoldKey(%+q) = %+q, want %+q", c.Input, got, c.Fold)
 		}
 	}
 }
@@ -308,6 +308,65 @@ func TestAllowedAndRejectedCharacters(t *testing.T) {
 		if err := pathx.ValidateStoredName("a" + string(r) + "b"); err != nil {
 			t.Errorf("%U must be readable: %v", r, err)
 		}
+	}
+}
+
+// TestFoldKeyExhaustive checks FoldKey against the standard library's Unicode
+// tables (version V, see TestUnicodeVersionV) for every assigned code point c:
+//
+//  1. FoldKey is idempotent: FoldKey(FoldKey(c)) == FoldKey(c);
+//  2. every character of the unicode.SimpleFold orbit of c has the same
+//     FoldKey as c.
+//
+// A case folding that disagrees with CaseFolding.txt breaks one of the two,
+// for example the Cherokee folding of golang.org/x/text (which swaps the two
+// cases and fails both checks for 172 code points without the correction in
+// FoldKey).
+func TestFoldKeyExhaustive(t *testing.T) {
+	idem, orbit := 0, 0
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if 0xd800 <= r && r <= 0xdfff || unicode.Is(unicode.Cn, r) {
+			continue // surrogates are not valid UTF-8; unassigned code points are rejected at write time
+		}
+		k := pathx.FoldKey(string(r))
+		if again := pathx.FoldKey(k); again != k {
+			if idem++; idem <= 10 {
+				t.Errorf("FoldKey not idempotent for %U: %+q, then %+q", r, k, again)
+			}
+		}
+		for o := unicode.SimpleFold(r); o != r; o = unicode.SimpleFold(o) {
+			if ko := pathx.FoldKey(string(o)); ko != k {
+				if orbit++; orbit <= 10 {
+					t.Errorf("SimpleFold orbit of %U: FoldKey(%U) = %+q, FoldKey(%U) = %+q", r, r, k, o, ko)
+				}
+			}
+		}
+	}
+	if idem+orbit > 0 {
+		t.Errorf("%d idempotence and %d orbit failures", idem, orbit)
+	}
+}
+
+// TestFoldKeyCherokeeAndCanonicalEquivalence pins the cases that the former
+// key (NFC, then golang.org/x/text folding) got wrong.
+func TestFoldKeyCherokeeAndCanonicalEquivalence(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"\u13a0", "\uab70"},        // CHEROKEE LETTER A / SMALL LETTER A
+		{"\u13f0", "\u13f8"},        // CHEROKEE LETTER YE / SMALL LETTER YE
+		{"\u13ef", "\uabbf"},        // last pair of the U+AB70 block
+		{"\u1e9e\u0301", "s\u015b"}, // capital sharp s + acute / s + s with acute
+		{"\ufb01\u0301", "f\u00ed"}, // fi ligature + acute / f + i with acute
+		{"\u1c90", "\u10d0"},        // Georgian Mtavruli / Mkhedruli
+	} {
+		if a, b := pathx.FoldKey(pair[0]), pathx.FoldKey(pair[1]); a != b {
+			t.Errorf("FoldKey(%+q) = %+q, FoldKey(%+q) = %+q: want equal", pair[0], a, pair[1], b)
+		}
+	}
+	if got := pathx.FoldKey("\uab70"); got != "\u13a0" {
+		t.Errorf("Cherokee folds to the uppercase letter (CaseFolding.txt): got %+q", got)
+	}
+	if pathx.FoldKey("\u0131") == pathx.FoldKey("I") {
+		t.Error("dotless i U+0131 and I must not fold together (no Turkic mappings)")
 	}
 }
 
