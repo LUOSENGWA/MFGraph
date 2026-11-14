@@ -51,10 +51,13 @@ func NewBlobTreeStore(blobs ports.BlobStore, prefixes PrefixResolver) (*TreeStor
 	if err != nil {
 		return nil, err
 	}
-	// Decoded nodes are never larger than tree.MaxNodeBytes; the cap also
-	// protects against decompression bombs.
-	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1),
-		zstd.WithDecoderMaxMemory(tree.MaxNodeBytes), zstd.WithDecodeAllCapLimit(true))
+	// Decoded nodes are never larger than tree.MaxNodeBytes. The decoder
+	// refuses a frame that declares a larger content size and stops after
+	// the first block that takes the output beyond the limit (also for
+	// frames without a declared size), so a decompression bomb costs at most
+	// the limit plus one block. DecodeAll sizes its output from the frame
+	// header; no fixed-capacity destination is needed.
+	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(tree.MaxNodeBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +117,12 @@ func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.H
 	if len(z) > maxCompressedNode {
 		return nil, fmt.Errorf("memory: stored tree node %s is too large", h)
 	}
-	canonical, err := s.dec.DecodeAll(z, make([]byte, 0, 4096))
+	canonical, err := s.dec.DecodeAll(z, nil)
 	if err != nil {
 		return nil, fmt.Errorf("memory: decompress tree node %s: %w", h, err)
+	}
+	if len(canonical) > tree.MaxNodeBytes {
+		return nil, fmt.Errorf("memory: stored tree node %s decompresses to more than %d bytes", h, tree.MaxNodeBytes)
 	}
 	if got := tree.HashOf(canonical); got != h {
 		return nil, fmt.Errorf("%w: stored node %s decompresses to %s", ports.ErrHashMismatch, h, got)

@@ -3,7 +3,9 @@ package memory_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -201,6 +203,73 @@ func TestTreeStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTreeStoreRoundTripsLargeNodes: nodes of every size up to the 1 MiB
+// limit are read back (the decoder once had a 4096-byte output limit, so a
+// directory of 31 entries, 4160 bytes, could be stored but not read).
+func TestTreeStoreRoundTripsLargeNodes(t *testing.T) {
+	const ws = "W"
+	ts, _ := memory.NewTreeStore(memory.StaticPrefixes(map[string]string{ws: "p"}))
+	files := func(n int, name func(int) string) []tree.FileEntry {
+		var out []tree.FileEntry
+		for i := 0; i < n; i++ {
+			p := name(i)
+			out = append(out, tree.FileEntry{Path: p, Hash: contenthash.SumBytes([]byte(p)), Size: int64(len(p)), Mode: tree.ModeRegular})
+		}
+		return out
+	}
+	roundTrip := func(label string, nodes map[contenthash.Hash][]byte) {
+		t.Helper()
+		for h, b := range nodes {
+			if err := ts.Put(ctx, ws, h, b); err != nil {
+				t.Fatalf("%s: Put: %v", label, err)
+			}
+		}
+		for h, b := range nodes {
+			got, err := ts.Get(ctx, ws, h)
+			if err != nil || !bytes.Equal(got, b) {
+				t.Fatalf("%s: Get %d-byte node: %v", label, len(b), err)
+			}
+		}
+	}
+	build := func(label string, fs []tree.FileEntry, minNodeBytes int) {
+		t.Helper()
+		root, nodes, err := tree.Build(fs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		largest := 0
+		for _, b := range nodes {
+			largest = max(largest, len(b))
+		}
+		if largest < minNodeBytes {
+			t.Fatalf("%s: largest node has %d bytes, want at least %d", label, largest, minNodeBytes)
+		}
+		roundTrip(label, nodes)
+		n := 0
+		if err := tree.Walk(ctx, ts.Getter(ws), root, func(string, tree.Entry) error { n++; return nil }); err != nil || n != len(fs) {
+			t.Fatalf("%s: walk through the store: %d entries, %v", label, n, err)
+		}
+	}
+	build("31 entries", files(31, func(i int) string { return fmt.Sprintf("file%02d", i) }), 4097)
+	build("1025 entries (paged)", files(1025, func(i int) string { return fmt.Sprintf("f%04d", i) }), 100_000)
+	// The largest node valid names produce: 1024 entries with 255-byte names
+	// that consist of '"' (each escaped to two bytes) and a number.
+	build("largest valid node", files(1024, func(i int) string { return strings.Repeat(`"`, 251) + fmt.Sprintf("%04d", i) }), 640_000)
+
+	// The store treats nodes as opaque bytes: exactly tree.MaxNodeBytes of
+	// incompressible data round-trip, one byte more is refused.
+	big := make([]byte, tree.MaxNodeBytes)
+	for i := 0; i < len(big); i += 32 {
+		sum := sha256.Sum256([]byte(fmt.Sprint(i)))
+		copy(big[i:], sum[:])
+	}
+	roundTrip("1 MiB", map[contenthash.Hash][]byte{tree.HashOf(big): big})
+	tooBig := append(big, 'x')
+	if err := ts.Put(ctx, ws, tree.HashOf(tooBig), tooBig); err == nil {
+		t.Fatal("Put accepted a node above tree.MaxNodeBytes")
+	}
+}
+
 func TestTreeStoreDetectsCorruptionAndBombs(t *testing.T) {
 	const ws = "W"
 	blobs := memory.NewBlobStore()
@@ -230,6 +299,37 @@ func TestTreeStoreDetectsCorruptionAndBombs(t *testing.T) {
 	}
 	if err := ts.Put(ctx, ws, hb, bomb); err == nil {
 		t.Fatal("oversized node accepted by Put")
+	}
+	// The same without a content size in the frame header (streaming encoder).
+	var streamed bytes.Buffer
+	w, _ := zstd.NewWriter(&streamed)
+	if _, err := w.Write(bomb); err != nil || w.Close() != nil {
+		t.Fatal(err)
+	}
+	var hdr zstd.Header
+	if err := hdr.Decode(streamed.Bytes()); err != nil || hdr.HasFCS {
+		t.Fatalf("streamed frame header: %+v, %v", hdr, err)
+	}
+	hs := contenthash.SumBytes(append([]byte("streamed"), bomb...))
+	if _, err := blobs.PutIfAbsent(ctx, storagekey.Join("p", storagekey.TreeKey(hs)), bytes.NewReader(streamed.Bytes()), int64(streamed.Len()), contenthash.SumBytes(streamed.Bytes())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.Get(ctx, ws, hs); err == nil {
+		t.Fatal("streamed decompression beyond the node limit was accepted")
+	}
+	// A streamed frame within the limit decodes.
+	ok := tree.Encode(tree.Node{Kind: tree.KindDir, Entries: []tree.Entry{{Name: "s", Type: tree.TypeFile, Hash: contenthash.SumBytes(nil), Mode: tree.ModeRegular}}})
+	streamed.Reset()
+	w.Reset(&streamed)
+	if _, err := w.Write(ok); err != nil || w.Close() != nil {
+		t.Fatal(err)
+	}
+	ho := contenthash.SumBytes(ok)
+	if _, err := blobs.PutIfAbsent(ctx, storagekey.Join("p", storagekey.TreeKey(ho)), bytes.NewReader(streamed.Bytes()), int64(streamed.Len()), contenthash.SumBytes(streamed.Bytes())); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ts.Get(ctx, ws, ho); err != nil || !bytes.Equal(got, ok) {
+		t.Fatalf("streamed frame: %q, %v", got, err)
 	}
 }
 
