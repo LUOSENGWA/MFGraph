@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -330,6 +331,138 @@ func TestTreeStoreDetectsCorruptionAndBombs(t *testing.T) {
 	}
 	if got, err := ts.Get(ctx, ws, ho); err != nil || !bytes.Equal(got, ok) {
 		t.Fatalf("streamed frame: %q, %v", got, err)
+	}
+}
+
+// TestTreeStoreFrameLimits: the zstd window and the output are limited
+// independently (content format 4.1). Frames of a streaming compressor that
+// declare an 8 MiB window and no content size read back for nodes from the
+// 38-byte empty root to the 1 MiB limit; a window above 8 MiB, output above
+// tree.MaxNodeBytes, a dictionary and a hash mismatch are rejected. Put
+// writes one frame with Frame_Content_Size and no dictionary.
+func TestTreeStoreFrameLimits(t *testing.T) {
+	const ws = "W"
+	// read stores z as the object of node h in a new store and reads it back.
+	read := func(h contenthash.Hash, z []byte) ([]byte, error) {
+		t.Helper()
+		blobs := memory.NewBlobStore()
+		ts, err := memory.NewBlobTreeStore(blobs, memory.StaticPrefixes(map[string]string{ws: "p"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := storagekey.Join("p", storagekey.TreeKey(h))
+		if _, err := blobs.PutIfAbsent(ctx, key, bytes.NewReader(z), int64(len(z)), contenthash.SumBytes(z)); err != nil {
+			t.Fatal(err)
+		}
+		return ts.Get(ctx, ws, h)
+	}
+	// stream compresses raw like a streaming compressor that does not know
+	// the input size: one frame that declares the window and no content size.
+	stream := func(raw []byte, window int, opts ...zstd.EOption) []byte {
+		t.Helper()
+		var buf bytes.Buffer
+		w, err := zstd.NewWriter(&buf, append([]zstd.EOption{zstd.WithWindowSize(window), zstd.WithEncoderConcurrency(1)}, opts...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Flush writes the frame header before the end of the input is
+		// known; on Close alone the encoder compresses a small input in one
+		// shot and picks a window that just fits it.
+		if _, err := w.Write(raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		var hdr zstd.Header
+		if err := hdr.Decode(buf.Bytes()); err != nil || hdr.HasFCS || hdr.SingleSegment || hdr.WindowSize != uint64(window) {
+			t.Fatalf("streamed frame header: %+v, %v", hdr, err)
+		}
+		return buf.Bytes()
+	}
+	// dir returns the single node of a directory of n files.
+	dir := func(n int, name func(int) string) []byte {
+		t.Helper()
+		var fs []tree.FileEntry
+		for i := 0; i < n; i++ {
+			fs = append(fs, tree.FileEntry{Path: name(i), Hash: contenthash.SumBytes([]byte(name(i))), Size: 1, Mode: tree.ModeRegular})
+		}
+		root, nodes, err := tree.Build(fs)
+		if err != nil || len(nodes) != 1 {
+			t.Fatalf("%d files: %d nodes, %v", n, len(nodes), err)
+		}
+		return nodes[root]
+	}
+	emptyRoot := []byte(`{"entries":[],"format":1,"kind":"dir"}`)
+	limit := make([]byte, tree.MaxNodeBytes) // opaque and incompressible
+	for i := 0; i < len(limit); i += 32 {
+		sum := sha256.Sum256([]byte(fmt.Sprint(i)))
+		copy(limit[i:], sum[:])
+	}
+	nodes := []struct {
+		name string
+		raw  []byte
+	}{
+		{"empty root", emptyRoot},
+		{"1024 entries", dir(1024, func(i int) string { return fmt.Sprintf("f%04d", i) })},
+		// 1024 entries with 255-byte names of '"' (escaped to two bytes).
+		{"largest valid node", dir(1024, func(i int) string { return strings.Repeat(`"`, 251) + fmt.Sprintf("%04d", i) })},
+		{"1 MiB", limit},
+	}
+	if len(emptyRoot) != 38 || len(nodes[2].raw) < 640_000 {
+		t.Fatalf("test nodes have %d and %d bytes", len(emptyRoot), len(nodes[2].raw))
+	}
+	for _, n := range nodes {
+		h := tree.HashOf(n.raw)
+		// Accepted: an 8 MiB window and no content size, whatever the size.
+		if got, err := read(h, stream(n.raw, memory.MaxFrameWindow)); err != nil || !bytes.Equal(got, n.raw) {
+			t.Errorf("%s (%d bytes) in a frame with an 8 MiB window: %v", n.name, len(n.raw), err)
+		}
+		// Put writes one frame with Frame_Content_Size and no dictionary.
+		ts, blobs := memory.NewTreeStore(memory.StaticPrefixes(map[string]string{ws: "p"}))
+		if err := ts.Put(ctx, ws, h, n.raw); err != nil {
+			t.Fatal(err)
+		}
+		z := readAll(t)(blobs.Get(ctx, storagekey.Join("p", storagekey.TreeKey(h)), 0, -1))
+		var hdr zstd.Header
+		if err := hdr.Decode([]byte(z)); err != nil || !hdr.HasFCS || hdr.FrameContentSize != uint64(len(n.raw)) || hdr.DictionaryID != 0 || hdr.Skippable {
+			t.Errorf("%s: Put wrote the frame header %+v, %v", n.name, hdr, err)
+		}
+	}
+
+	h := tree.HashOf(emptyRoot)
+	// Rejected: a window above 8 MiB, even for the 38-byte empty root.
+	if _, err := read(h, stream(emptyRoot, 2*memory.MaxFrameWindow)); !errors.Is(err, zstd.ErrWindowSizeExceeded) {
+		t.Errorf("16 MiB window: %v", err)
+	}
+	// Rejected: output above the node limit, from a frame with an 8 MiB
+	// window and no content size. Decoding stops at the limit: reading a
+	// frame of a few kilobytes that expands to 64 MiB allocates a few MiB
+	// (about 3.6 MiB measured; 17.5 MiB if only the 8 MiB memory limit held).
+	for _, size := range []int{tree.MaxNodeBytes + 1, 64 << 20} {
+		bomb := make([]byte, size)
+		hb, z := tree.HashOf(bomb), stream(bomb, memory.MaxFrameWindow)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, err := read(hb, z)
+		runtime.ReadMemStats(&after)
+		if !errors.Is(err, zstd.ErrDecoderSizeExceeded) {
+			t.Errorf("%d bytes from a %d-byte frame: %v", size, len(z), err)
+		}
+		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 8<<20 {
+			t.Errorf("%d bytes from a %d-byte frame: reading allocated %d bytes", size, len(z), alloc)
+		}
+	}
+	// Rejected: content that does not match the hash in the key.
+	if _, err := read(h, stream(dir(1, func(int) string { return "x" }), memory.MaxFrameWindow)); !errors.Is(err, ports.ErrHashMismatch) {
+		t.Errorf("hash mismatch: %v", err)
+	}
+	// Rejected: a frame that needs a dictionary.
+	if _, err := read(h, stream(emptyRoot, memory.MaxFrameWindow, zstd.WithEncoderDictRaw(7, []byte(`{"entries":[`)))); !errors.Is(err, zstd.ErrUnknownDictionary) {
+		t.Errorf("dictionary: %v", err)
 	}
 }
 

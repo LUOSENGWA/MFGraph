@@ -29,13 +29,29 @@ func StaticPrefixes(m map[string]string) PrefixResolver {
 	}
 }
 
-// maxCompressedNode bounds the compressed object read back from storage.
-const maxCompressedNode = 2 * tree.MaxNodeBytes
+const (
+	// maxCompressedNode bounds the compressed object read back from storage.
+	maxCompressedNode = 2 * tree.MaxNodeBytes
+
+	// MaxFrameWindow is the largest zstd window a stored tree node may
+	// declare: 8 MiB, up to which RFC 8878 recommends that decoders support
+	// windows. The window depends on how the writer was configured, not on
+	// the size of the node, so it is limited independently of the output
+	// (tree.MaxNodeBytes): a 38-byte node written by a streaming compressor
+	// typically declares a window of 2 MiB or more.
+	MaxFrameWindow = 8 << 20
+)
 
 // TreeStore is the default ports.TreeStore: nodes are zstd-compressed and
 // stored in a BlobStore at <storage_prefix>/tree/<hh>/<hex>.json.zst, where
 // <hex> is the hash of the uncompressed canonical bytes. It works with any
 // BlobStore (NewTreeStore uses the in-memory one).
+//
+// Put writes one standard zstd frame without a dictionary and with
+// Frame_Content_Size in the frame header. Get accepts any frame whose window
+// is at most MaxFrameWindow, with or without a content size, and stops
+// decompressing at tree.MaxNodeBytes of output; the two limits are
+// independent, and exceeding either rejects the object.
 type TreeStore struct {
 	blobs    ports.BlobStore
 	prefixes PrefixResolver
@@ -47,17 +63,22 @@ var _ ports.TreeStore = (*TreeStore)(nil)
 
 // NewBlobTreeStore returns a TreeStore on top of blobs.
 func NewBlobTreeStore(blobs ports.BlobStore, prefixes PrefixResolver) (*TreeStore, error) {
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+	// Single-segment frames always carry Frame_Content_Size. Without the
+	// option the encoder writes inputs of up to 1024 bytes as frames with a
+	// window descriptor, and those leave the content size out below 256
+	// bytes (the empty root has 38).
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1), zstd.WithSingleSegment(true))
 	if err != nil {
 		return nil, err
 	}
-	// Decoded nodes are never larger than tree.MaxNodeBytes. The decoder
-	// refuses a frame that declares a larger content size and stops after
-	// the first block that takes the output beyond the limit (also for
-	// frames without a declared size), so a decompression bomb costs at most
-	// the limit plus one block. DecodeAll sizes its output from the frame
-	// header; no fixed-capacity destination is needed.
-	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(tree.MaxNodeBytes))
+	// Two independent limits. The window: WithDecoderMaxWindow, and
+	// WithDecoderMaxMemory at the same value because the decoder also caps
+	// the window at the memory limit (with a memory limit of 1 MiB, every
+	// frame that declares a larger window would be rejected, whatever the
+	// size of the node). The output: DecodeAll decodes into a destination
+	// whose capacity is the limit (WithDecodeAllCapLimit), see Get.
+	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(MaxFrameWindow),
+		zstd.WithDecoderMaxMemory(MaxFrameWindow), zstd.WithDecodeAllCapLimit(true))
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +138,38 @@ func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.H
 	if len(z) > maxCompressedNode {
 		return nil, fmt.Errorf("memory: stored tree node %s is too large", h)
 	}
-	canonical, err := s.dec.DecodeAll(z, nil)
+	// Check the frame header first: no dictionary, a window of at most
+	// MaxFrameWindow and, if the content size is declared, at most
+	// tree.MaxNodeBytes. A single-segment frame has no window field; its
+	// window is the content size. The decoder repeats these checks for
+	// every frame; doing them here gives a clearer error.
+	var hdr zstd.Header
+	if err := hdr.Decode(z); err != nil {
+		return nil, fmt.Errorf("memory: stored tree node %s is not a zstd frame: %w", h, err)
+	}
+	window := hdr.WindowSize
+	if hdr.SingleSegment {
+		window = hdr.FrameContentSize
+	}
+	switch {
+	case hdr.DictionaryID != 0:
+		return nil, fmt.Errorf("memory: stored tree node %s needs a dictionary: %w", h, zstd.ErrUnknownDictionary)
+	case window > MaxFrameWindow:
+		return nil, fmt.Errorf("memory: stored tree node %s declares a window of %d bytes, the limit is %d: %w",
+			h, window, MaxFrameWindow, zstd.ErrWindowSizeExceeded)
+	case hdr.HasFCS && hdr.FrameContentSize > tree.MaxNodeBytes:
+		return nil, fmt.Errorf("memory: stored tree node %s declares %d bytes, the limit is %d: %w",
+			h, hdr.FrameContentSize, tree.MaxNodeBytes, zstd.ErrDecoderSizeExceeded)
+	}
+	// The output limit: DecodeAll fails after the block that takes the output
+	// beyond the capacity of the destination (the declared content size, or
+	// else tree.MaxNodeBytes), so decoding a decompression bomb stops within
+	// one block (at most 128 KiB) of the limit.
+	capacity := tree.MaxNodeBytes
+	if hdr.HasFCS {
+		capacity = int(hdr.FrameContentSize)
+	}
+	canonical, err := s.dec.DecodeAll(z, make([]byte, 0, capacity))
 	if err != nil {
 		return nil, fmt.Errorf("memory: decompress tree node %s: %w", h, err)
 	}

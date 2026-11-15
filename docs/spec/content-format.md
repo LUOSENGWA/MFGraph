@@ -501,11 +501,26 @@ gets a **new top-level directory** next to `objects/` and `tree/`; existing
 keys are never changed, moved or reused, so data written under format 1
 stays where it is.
 
-Tree node objects are one standard zstd frame (RFC 8878) without a
-dictionary. Readers MUST stop decompressing at 1,048,576 bytes (the node
-size limit of 3.2) and reject an object that decompresses to more, which
-also protects against decompression bombs; they then verify the hash of the
-uncompressed canonical bytes (3.7).
+A tree node object is one standard zstd frame (RFC 8878):
+
+* Writers MUST write exactly one frame, without a dictionary and with
+  `Frame_Content_Size` in the frame header. (A single-segment frame always
+  has it, and the reference writer sets `Single_Segment_flag`; some encoders
+  leave the size out of small frames unless told otherwise.)
+* Readers MUST accept every frame whose window is at most **8 MiB**
+  (8,388,608 bytes; RFC 8878 recommends that decoders support windows up to
+  8 MB), with or without `Frame_Content_Size`, and MUST limit the output to
+  **1,048,576 bytes** (the node size limit of 3.2): they stop decompressing
+  there. The window of a single-segment frame is its `Frame_Content_Size`.
+* The two limits are independent. The window depends on how the object was
+  compressed, not on the size of the node: a streaming compressor that does
+  not know the input size typically declares a window of 2 MiB or more, even
+  for the 38-byte empty root. A reader MUST NOT reject a frame because its
+  window is larger than the output limit.
+* Readers MUST reject an object whose window exceeds 8 MiB, that
+  decompresses to more than 1,048,576 bytes (which also protects against
+  decompression bombs) or that needs a dictionary. They then verify the hash
+  of the uncompressed canonical bytes (3.7) and reject a mismatch.
 
 ## 5. Checking an implementation
 
