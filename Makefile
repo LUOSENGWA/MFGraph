@@ -7,13 +7,17 @@ COMPOSE ?= $(DOCKER) compose -f deploy/docker-compose.dev.yml
 BIN     ?= bin
 # DSN of a MySQL user that may create/drop databases (the dev container's root).
 MYSQL_TEST_DSN ?= root:mfgraph@tcp(127.0.0.1:3306)/
+# DSN of the seekdb dev container (root without a password) and how long the
+# tests wait for it to answer.
+SEEKDB_TEST_DSN ?= root@tcp(127.0.0.1:2881)/
+SEEKDB_WAIT ?= 300s
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build test test-e2e e2e-compile test-heavy test-mysql generate generate-check openapi-check run vet fmt fmt-check clean \
-	dev-db-up dev-db-down dev-db-reset \
+.PHONY: all build test test-e2e e2e-compile test-heavy test-mysql test-seekdb generate generate-check openapi-check run vet fmt fmt-check clean \
+	dev-db-up dev-db-down dev-db-reset dev-seekdb-up \
 	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review \
-	tidy-check deps-check docs-check ci ci-mysql
+	tidy-check deps-check docs-check ci ci-mysql ci-seekdb
 
 all: build test
 
@@ -23,6 +27,9 @@ ci: tidy-check fmt-check vet e2e-compile build test test-heavy deps-check \
 
 ## ci-mysql: the CI migration job against the local Docker MySQL (requires Docker)
 ci-mysql: dev-db-up test-mysql
+
+## ci-seekdb: the CI seekdb job against the local Docker seekdb (requires Docker)
+ci-seekdb: dev-seekdb-up test-seekdb
 
 ## tidy-check: go.mod/go.sum are tidy and verified
 tidy-check:
@@ -64,6 +71,11 @@ test-heavy:
 ## test-mysql: migration tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
 test-mysql:
 	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v ./internal/migrate/... ./cmd/mfgraph-server/...
+
+## test-seekdb: the same migration tests against seekdb (start it with `make dev-seekdb-up`);
+## the tests first wait up to SEEKDB_WAIT for the server to answer queries
+test-seekdb:
+	MFGRAPH_TEST_MYSQL_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_TEST_DB_WAIT=$(SEEKDB_WAIT) $(GO) test -count=1 -run MySQL -v ./internal/migrate/... ./cmd/mfgraph-server/...
 
 ## generate: regenerate internal/api/gen from contracts/openapi.yaml (needs network for oapi-codegen)
 generate:
@@ -112,9 +124,14 @@ vectors-generate:
 vectors-review:
 	python3 scripts/vectors.py review
 
-## dev-db-up / dev-db-down / dev-db-reset: local MySQL 8.0 via Docker
+## dev-db-up / dev-db-down / dev-db-reset: local MySQL 8.0 via Docker (down and reset
+## also stop seekdb; reset deletes the data of both)
 dev-db-up:
 	$(COMPOSE) up -d --wait mysql
+
+## dev-seekdb-up: local seekdb via Docker (image pinned in deploy/docker-compose.dev.yml)
+dev-seekdb-up:
+	$(COMPOSE) up -d --wait seekdb
 
 dev-db-down:
 	$(COMPOSE) down

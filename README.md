@@ -51,7 +51,7 @@ workflow (external, optional)
 
 ## Storage and database
 
-- **Database:** MySQL-compatible dialect for v1 (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset). State and indexes only; no file bytes in the database.
+- **Database:** MySQL-compatible dialect for v1 (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset); CI tests the migrations on MySQL 8.0 and seekdb. State and indexes only; no file bytes in the database.
 - **Object storage:** S3-compatible (AWS S3, RustFS, MinIO, Ceph RGW, R2, B2, OSS S3 mode, IBM COS, Oracle Object Storage S3) and POSIX/NFS. Azure Blob and GCS adapters are planned.
 - **Binary/large files:** chunk + packfile + manifest; lock-based concurrency for binary content.
 
@@ -77,7 +77,7 @@ License: **Apache-2.0** (see [LICENSE](LICENSE)).
 
 ## Development
 
-Prerequisites: Go (version in `go.mod`), `make`, Python 3 (stdlib only, for the doc and vector scripts). Docker is needed **only** for the MySQL-backed targets; everything else runs without it.
+Prerequisites: Go (version in `go.mod`), `make`, Python 3 (stdlib only, for the doc and vector scripts). Docker is needed **only** for the database-backed targets (MySQL 8.0 and seekdb); everything else runs without it.
 
 ```bash
 make build        # compile all packages; binaries go to ./bin
@@ -91,12 +91,14 @@ make run          # start mfgraph-server on 127.0.0.1:8080 with a development to
 
 The server is configured with `MFGRAPH_*` environment variables: `MFGRAPH_HTTP_ADDR`, `MFGRAPH_DB_DSN` (MySQL DSN, optional in this build), `MFGRAPH_MIGRATE_ON_START`, `MFGRAPH_KERNEL_MIGRATIONS`, `MFGRAPH_AUTH_TOKENS` (`token=ACTOR_REF,...`, for example `token=alice` or `token=<ULID>`; see [actor references](docs/api.md#actor-references)), `MFGRAPH_LOG_LEVEL`, `MFGRAPH_LOG_FORMAT`, `MFGRAPH_SHUTDOWN_TIMEOUT`. `mfgraph-server migrate` applies pending migrations and exits. In this build only `/healthz` and `/readyz` are implemented; every other endpoint of [`contracts/openapi.yaml`](contracts/openapi.yaml) answers `501 not_implemented`.
 
-MySQL 8.0 for development runs in Docker (`deploy/docker-compose.dev.yml`, bound to `127.0.0.1`, throwaway credentials):
+MySQL 8.0 and seekdb for development run in Docker (`deploy/docker-compose.dev.yml`, bound to `127.0.0.1`, throwaway credentials; see [deployment](docs/deployment.md#database)):
 
 ```bash
-make dev-db-up    # start MySQL 8.0 and wait until healthy (requires Docker)
-make dev-db-down  # stop it (data kept); make dev-db-reset also deletes the data volume
-make test-mysql   # migration tests against it: empty database, re-run, tampered file
+make dev-db-up      # start MySQL 8.0 and wait until healthy (requires Docker)
+make dev-seekdb-up  # start seekdb (MySQL 5.7 subset, port 2881) and wait until healthy
+make dev-db-down    # stop them (data kept); make dev-db-reset also deletes the data volumes
+make test-mysql     # migration tests against MySQL: empty database, re-run, tampered file, ...
+make test-seekdb    # the same migration tests against seekdb
 ```
 
 Other checks:
@@ -104,11 +106,12 @@ Other checks:
 ```bash
 make ci           # everything the CI workflow runs except the MySQL job (no Docker needed)
 make ci-mysql     # the CI MySQL job against the local container (requires Docker)
+make ci-seekdb    # the CI seekdb job against the local container (requires Docker)
 make test-e2e     # end-to-end acceptance tests; they fail with 501 until the first core slice exists
 make vectors-verify vectors-crosscheck   # independent checks of testdata/vectors
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same Make targets on GitHub Actions, with a MySQL 8.0 service container for the migration job.
+CI (`.github/workflows/ci.yml`) runs the same Make targets on GitHub Actions, with a MySQL 8.0 service container and a seekdb service container for the two migration jobs.
 
 ## Contributing
 

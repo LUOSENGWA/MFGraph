@@ -51,7 +51,7 @@ workflow (外部，可选)
 
 ## 存储与数据库
 
-- **数据库：** v1 采用 MySQL 兼容方言（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）。只存状态与索引，不把文件字节存进数据库。
+- **数据库：** v1 采用 MySQL 兼容方言（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）；CI 在 MySQL 8.0 和 seekdb 上测试迁移。只存状态与索引，不把文件字节存进数据库。
 - **对象存储：** S3 兼容（AWS S3、RustFS、MinIO、Ceph RGW、R2、B2、OSS S3 模式、IBM COS、Oracle Object Storage S3）与 POSIX/NFS。Azure Blob 与 GCS 适配器为后续计划。
 - **二进制/大文件：** chunk + packfile + manifest；二进制内容使用锁并发控制。
 
@@ -77,7 +77,7 @@ workflow (外部，可选)
 
 ## 开发
 
-前置条件：Go（版本见 `go.mod`）、`make`、Python 3（仅标准库，用于文档与测试向量脚本）。**只有** MySQL 相关目标需要 Docker，其余都不需要。
+前置条件：Go（版本见 `go.mod`）、`make`、Python 3（仅标准库，用于文档与测试向量脚本）。**只有**数据库相关目标（MySQL 8.0 与 seekdb）需要 Docker，其余都不需要。
 
 ```bash
 make build        # 编译全部包；二进制输出到 ./bin
@@ -91,12 +91,14 @@ make run          # 用开发 token 在 127.0.0.1:8080 启动 mfgraph-server
 
 服务端用 `MFGRAPH_*` 环境变量配置：`MFGRAPH_HTTP_ADDR`、`MFGRAPH_DB_DSN`（MySQL DSN，本版本可不配）、`MFGRAPH_MIGRATE_ON_START`、`MFGRAPH_KERNEL_MIGRATIONS`、`MFGRAPH_AUTH_TOKENS`（`token=ACTOR_REF,...`，例如 `token=alice` 或 `token=<ULID>`；见[身份引用](docs/zh-CN/api.md#身份引用actor-reference)）、`MFGRAPH_LOG_LEVEL`、`MFGRAPH_LOG_FORMAT`、`MFGRAPH_SHUTDOWN_TIMEOUT`。`mfgraph-server migrate` 执行待执行的迁移后退出。本版本只实现了 `/healthz` 和 `/readyz`；[`contracts/openapi.yaml`](contracts/openapi.yaml) 中的其他接口都返回 `501 not_implemented`。
 
-开发用 MySQL 8.0 通过 Docker 运行（`deploy/docker-compose.dev.yml`，只绑定 `127.0.0.1`，一次性本地口令）：
+开发用的 MySQL 8.0 和 seekdb 通过 Docker 运行（`deploy/docker-compose.dev.yml`，只绑定 `127.0.0.1`，一次性本地口令；见[部署](docs/zh-CN/deployment.md#数据库)）：
 
 ```bash
-make dev-db-up    # 启动 MySQL 8.0 并等待就绪（需要 Docker）
-make dev-db-down  # 停止（保留数据）；make dev-db-reset 会同时删除数据卷
-make test-mysql   # 在其上跑迁移测试：空库执行、重跑跳过、篡改报错
+make dev-db-up      # 启动 MySQL 8.0 并等待就绪（需要 Docker）
+make dev-seekdb-up  # 启动 seekdb（MySQL 5.7 子集，端口 2881）并等待就绪
+make dev-db-down    # 停止（保留数据）；make dev-db-reset 会同时删除数据卷
+make test-mysql     # 在 MySQL 上跑迁移测试：空库执行、重跑跳过、篡改报错等
+make test-seekdb    # 在 seekdb 上跑同样的迁移测试
 ```
 
 其他检查：
@@ -104,11 +106,12 @@ make test-mysql   # 在其上跑迁移测试：空库执行、重跑跳过、篡
 ```bash
 make ci           # 在本地跑 CI 工作流中除 MySQL 任务以外的全部步骤（不需要 Docker）
 make ci-mysql     # 用本地容器跑 CI 的 MySQL 任务（需要 Docker）
+make ci-seekdb    # 用本地容器跑 CI 的 seekdb 任务（需要 Docker）
 make test-e2e     # 端到端验收测试；第一个核心切片实现之前会以 501 失败
 make vectors-verify vectors-crosscheck   # 对 testdata/vectors 做独立核对
 ```
 
-CI（`.github/workflows/ci.yml`）在 GitHub Actions 上运行同样的 Make 目标，迁移任务使用 MySQL 8.0 服务容器。
+CI（`.github/workflows/ci.yml`）在 GitHub Actions 上运行同样的 Make 目标，两个迁移任务分别使用 MySQL 8.0 和 seekdb 服务容器。
 
 ## 贡献
 

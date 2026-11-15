@@ -2,7 +2,7 @@
 
 [English](../data-model.md) | **简体中文**
 
-MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）。schema 只存状态与索引，不存文件字节。对象存储存字节，数据库存引用、租约与标记——两者之间没有跨存储事务。
+MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）；CI 在 MySQL 8.0 和 seekdb 上执行迁移，由于 seekdb 没有 `ascii` 字符集，ID 和 hash 列使用 `utf8mb4_bin`。schema 只存状态与索引，不存文件字节。对象存储存字节，数据库存引用、租约与标记——两者之间没有跨存储事务。
 
 ## 核心表
 

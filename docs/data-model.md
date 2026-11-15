@@ -2,7 +2,7 @@
 
 [English](data-model.md) | [简体中文](zh-CN/data-model.md)
 
-MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset). The schema stores state and indexes, not file bytes. Object storage keeps the bytes; the database keeps references, leases and markers — there is no cross-store transaction.
+MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset); CI applies the migrations on MySQL 8.0 and on seekdb, and ID and hash columns use `utf8mb4_bin` because seekdb has no `ascii` character set. The schema stores state and indexes, not file bytes. Object storage keeps the bytes; the database keeps references, leases and markers — there is no cross-store transaction.
 
 ## Core tables
 

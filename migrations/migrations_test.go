@@ -2,6 +2,8 @@ package migrations_test
 
 import (
 	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -259,4 +261,36 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// TestSeekdbImagePinned: the migrations are tested on seekdb with one exact
+// image tag, the same in the development compose file and in the CI
+// workflow, and never "latest".
+func TestSeekdbImagePinned(t *testing.T) {
+	re := regexp.MustCompile(`oceanbase/seekdb:([A-Za-z0-9._-]+)`)
+	tags := map[string][]string{}
+	for _, f := range []string{
+		filepath.Join("..", "deploy", "docker-compose.dev.yml"),
+		filepath.Join("..", ".github", "workflows", "ci.yml"),
+	} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := re.FindAllSubmatch(b, -1)
+		if len(m) == 0 {
+			t.Errorf("%s does not use an oceanbase/seekdb:<tag> image", f)
+		}
+		for _, x := range m {
+			tags[string(x[1])] = append(tags[string(x[1])], f)
+		}
+	}
+	if len(tags) != 1 {
+		t.Errorf("seekdb image tags differ: %v", tags)
+	}
+	for tag := range tags {
+		if tag == "latest" {
+			t.Error("pin the seekdb image to an exact tag, not latest")
+		}
+	}
 }

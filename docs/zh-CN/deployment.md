@@ -11,6 +11,17 @@
 | HA | 多个 `mfgraph-server` + MySQL HA + S3 | 企业 |
 | dev | compose + MySQL + MinIO/POSIX | 本地/CI |
 
+## 数据库
+
+支持的 SQL 方言是 **MySQL**。CI 每次都在两种服务器上执行迁移：**MySQL 8.0** 和 **seekdb**（兼容 MySQL 5.7 子集的单机数据库，宿主平台单机部署时使用）。两者建出的表结构完全相同。为了落在两者的公共子集内，ID 和 hash 列使用 `utf8mb4_bin`，而不是 seekdb 不支持的 `ascii` 字符集；迁移 lint 会检查这一点。
+
+开发时，`deploy/docker-compose.dev.yml` 在 `127.0.0.1` 上同时提供两者：MySQL 8.0 在 3306 端口，seekdb 在 2881 端口（用户 `root`，无密码；镜像固定到具体 tag，提供 `linux/amd64` 与 `linux/arm64` 版本，仅供测试使用，至少需要 2 GB 内存）。
+
+```bash
+make ci-mysql     # 启动 MySQL 8.0 并在其上跑迁移测试
+make ci-seekdb    # 启动 seekdb 并在其上跑同样的测试
+```
+
 ## 最小 compose（概念示例）
 
 ```yaml

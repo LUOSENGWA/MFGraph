@@ -79,6 +79,46 @@ jobs:
           go-version-file: go.mod
       - run: make test-mysql MYSQL_TEST_DSN='root:mfgraph@tcp(127.0.0.1:3306)/'
 
+  migrations-seekdb:
+    name: migrations on seekdb
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      seekdb:
+        # MySQL-5.7-compatible single-node database (test image). Keep the tag
+        # in sync with deploy/docker-compose.dev.yml (checked by
+        # TestSeekdbImagePinned).
+        image: oceanbase/seekdb:1.4.0-100000172026082615
+        ports:
+          - 2881:2881
+        options: >-
+          --health-cmd "mysql -h127.0.0.1 -P2881 -uroot --connect-timeout=2 -e 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-start-period 60s
+          --health-retries 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: wait until seekdb answers queries
+        run: |
+          # A fresh seekdb initializes its data directory first; if this ever
+          # gets flaky, raise the limits instead of removing the job.
+          for i in $(seq 1 120); do
+            if command -v mysql >/dev/null 2>&1; then
+              if mysql -h127.0.0.1 -P2881 -uroot --connect-timeout=2 -e 'SELECT 1' >/dev/null 2>&1; then
+                echo "seekdb answers queries (attempt $i)"; exit 0
+              fi
+            elif (exec 3<>/dev/tcp/127.0.0.1/2881) 2>/dev/null; then
+              echo "seekdb port is open (attempt $i); the tests wait for queries"; exit 0
+            fi
+            sleep 5
+          done
+          echo "seekdb did not become ready within 10 minutes"; exit 1
+      - run: make test-seekdb SEEKDB_TEST_DSN='root@tcp(127.0.0.1:2881)/' SEEKDB_WAIT=600s
+
   docs:
     name: links and sensitive-data scan
     runs-on: ubuntu-latest

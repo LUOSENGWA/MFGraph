@@ -11,6 +11,17 @@
 | HA | multiple `mfgraph-server` + MySQL HA + S3 | enterprise |
 | dev | compose + MySQL + MinIO/POSIX | local/CI |
 
+## Database
+
+The supported SQL dialect is **MySQL**. CI applies the migrations on two servers in every run: **MySQL 8.0** and **seekdb** (a single-node database compatible with a subset of MySQL 5.7, which host platforms use for single-machine deployments). Both build the same schema. To stay inside the common subset, ID and hash columns use `utf8mb4_bin` rather than the `ascii` character set, which seekdb does not provide; the migration lint enforces this.
+
+For development, `deploy/docker-compose.dev.yml` runs both on `127.0.0.1`: MySQL 8.0 on port 3306 and seekdb on port 2881 (user `root` without a password; the image is pinned to an exact tag, is published for `linux/amd64` and `linux/arm64`, and is meant for tests only; it needs at least 2 GB of memory).
+
+```bash
+make ci-mysql     # start MySQL 8.0 and run the migration tests on it
+make ci-seekdb    # start seekdb and run the same tests on it
+```
+
 ## Minimal compose (conceptual)
 
 ```yaml
