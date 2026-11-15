@@ -493,8 +493,11 @@ lowercase SHA-256 and `<hh>` its first two characters.
   only relative keys.
 * `storage_prefix` is chosen when a workspace is created and never changes.
   It is non-empty and has no leading or trailing `/`; its `/`-separated
-  segments are non-empty, consist only of the ASCII characters `A`–`Z`,
-  `a`–`z`, `0`–`9`, `.`, `_` and `-`, and are not `.` or `..`.
+  segments are non-empty and at most 255 bytes, consist only of the ASCII
+  characters `A`–`Z`, `a`–`z`, `0`–`9`, `.`, `_` and `-`, are not `.` or
+  `..`, and do not end with `.`. (255 bytes is the name limit of common file
+  systems; Windows file systems and SMB shares drop trailing dots, so `a.`
+  and `a` would be the same directory there.)
 * A prefix is at most **942 bytes**, so that every full key fits the
   1024-byte key limit of Amazon S3. The longest relative key is that of a
   tree node, and with its separator it has 82 bytes:

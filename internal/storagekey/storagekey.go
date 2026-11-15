@@ -28,6 +28,11 @@ const (
 	// prefix + "/" + TreeKey(h) (and the shorter content key) never exceeds
 	// MaxKeyBytes. The workspaces.storage_prefix column is VARBINARY(942).
 	MaxPrefixBytes = MaxKeyBytes - longestRelativeKey
+
+	// MaxPrefixSegmentBytes bounds one '/'-separated segment of a storage
+	// prefix: 255 bytes, the name limit of common file systems, so that a
+	// backend that stores segments as directory names can hold every prefix.
+	MaxPrefixSegmentBytes = 255
 )
 
 // ErrInvalidPrefix is returned (wrapped) for an unusable storage prefix.
@@ -92,11 +97,16 @@ func isULID(s string) bool {
 }
 
 // ValidatePrefix checks a storage prefix: non-empty, at most MaxPrefixBytes
-// bytes, no leading or trailing '/', and '/'-separated segments that are
-// non-empty, consist only of ASCII letters, digits, '.', '_' and '-', and are
-// not "." or "..". Prefixes are immutable once a workspace exists. Whether a
-// prefix conflicts with the prefix of another workspace is decided by
-// PrefixesConflict.
+// bytes, no leading or trailing '/', and '/'-separated segments that
+//
+//   - are non-empty and at most MaxPrefixSegmentBytes (255) bytes;
+//   - consist only of ASCII letters, digits, '.', '_' and '-';
+//   - are not "." or ".." and do not end with '.': Windows file systems and
+//     SMB shares drop trailing dots, so "a." and "a" would name the same
+//     directory there, although PrefixesConflict treats them as different.
+//
+// Prefixes are immutable once a workspace exists. Whether a prefix conflicts
+// with the prefix of another workspace is decided by PrefixesConflict.
 func ValidatePrefix(p string) error {
 	if p == "" {
 		return fmt.Errorf("%w: empty", ErrInvalidPrefix)
@@ -114,10 +124,16 @@ func ValidatePrefix(p string) error {
 		case ".", "..":
 			return fmt.Errorf("%w: %q has a %q segment", ErrInvalidPrefix, p, seg)
 		}
+		if len(seg) > MaxPrefixSegmentBytes {
+			return fmt.Errorf("%w: %q has a segment of %d bytes; at most %d", ErrInvalidPrefix, p, len(seg), MaxPrefixSegmentBytes)
+		}
 		for i := 0; i < len(seg); i++ {
 			if !isPrefixChar(seg[i]) {
 				return fmt.Errorf("%w: %q contains %q; segments use only A-Z a-z 0-9 . _ -", ErrInvalidPrefix, p, seg[i])
 			}
+		}
+		if seg[len(seg)-1] == '.' {
+			return fmt.Errorf("%w: %q has a segment ending with '.'", ErrInvalidPrefix, p)
 		}
 	}
 	return nil

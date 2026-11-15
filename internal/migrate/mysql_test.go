@@ -308,7 +308,12 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 	if err := workspace("01JD00000000000000000WA003", "other", "Tenants/a/W"); err != nil {
 		t.Errorf("the same prefix on another backend: %v", err)
 	}
-	if err := workspace("01JD00000000000000000WA004", "default", strings.Repeat("p", storagekey.MaxPrefixBytes)); err != nil {
+	// The longest valid prefix: 942 bytes in segments of at most 255.
+	longestPrefix := strings.Join([]string{strings.Repeat("p", 255), strings.Repeat("q", 255), strings.Repeat("r", 255), strings.Repeat("s", 174)}, "/")
+	if err := storagekey.ValidatePrefix(longestPrefix); err != nil || len(longestPrefix) != storagekey.MaxPrefixBytes {
+		t.Fatalf("test prefix of %d bytes: %v", len(longestPrefix), err)
+	}
+	if err := workspace("01JD00000000000000000WA004", "default", longestPrefix); err != nil {
 		t.Errorf("942-byte prefix: %v", err)
 	}
 	t.Log("measured: storage prefixes tenants/A/w and Tenants/a/W collide on one backend (storage_prefix_key), not across backends; a 942-byte prefix is stored")

@@ -59,7 +59,8 @@ func TestMaxPrefixBytes(t *testing.T) {
 func TestValidatePrefix(t *testing.T) {
 	ok := []string{
 		"projects/01JD00000000000000000000P0", "a", "tenants/t/projects/p/workspaces/w",
-		"A-b_c.d/E9", "..a/b..", "-", "_", "...", "v1.2", "Tenants/A",
+		"A-b_c.d/E9", "..a/b", "-", "_", ".a", "v1.2", "Tenants/A", "x/a.b",
+		strings.Repeat("s", storagekey.MaxPrefixSegmentBytes) + "/" + strings.Repeat("t", storagekey.MaxPrefixSegmentBytes),
 	}
 	for _, p := range ok {
 		if err := storagekey.ValidatePrefix(p); err != nil {
@@ -70,6 +71,10 @@ func TestValidatePrefix(t *testing.T) {
 		"", "/a", "a/", "/", "a//b", "a/../b", "a/./b", ".", "..", "a/..", "a\\b", "a/\x00", "a\x7f",
 		"café", "文档/空间", "a b", "a#b", "a?b", "a%20b", "a+b", "a:b", "a~b", "a*b",
 		"aKb", strings.Repeat("a", storagekey.MaxPrefixBytes+1),
+		// A segment of 256 bytes, although the prefix is short enough.
+		strings.Repeat("s", storagekey.MaxPrefixSegmentBytes+1), "x/" + strings.Repeat("s", storagekey.MaxPrefixSegmentBytes+1) + "/y",
+		// A segment ending with '.'.
+		"x/a.", "a./x", "...", "..a/b..", "v1.",
 	}
 	for _, p := range bad {
 		if err := storagekey.ValidatePrefix(p); !errors.Is(err, storagekey.ErrInvalidPrefix) {
