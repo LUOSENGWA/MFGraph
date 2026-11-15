@@ -97,6 +97,8 @@ type walkCase struct {
 type vecDoc struct {
 	Schema        string         `json:"schema"`
 	ReviewStatus  string         `json:"review_status"`
+	ReviewedBy    string         `json:"reviewed_by"`
+	ReviewedOn    string         `json:"reviewed_on"`
 	Description   string         `json:"description"`
 	Inputs        string         `json:"inputs"`
 	Generators    string         `json:"generators"`

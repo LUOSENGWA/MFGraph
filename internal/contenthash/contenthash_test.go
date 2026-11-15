@@ -19,6 +19,8 @@ import (
 type vectorFile struct {
 	Schema       string            `json:"schema"`
 	ReviewStatus string            `json:"review_status"`
+	ReviewedBy   string            `json:"reviewed_by"`
+	ReviewedOn   string            `json:"reviewed_on"`
 	Description  string            `json:"description"`
 	Inputs       map[string]string `json:"inputs"`
 	Vectors      []struct {

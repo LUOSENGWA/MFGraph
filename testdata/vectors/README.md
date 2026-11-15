@@ -5,9 +5,11 @@ of the format can check itself against these files; the Go tests and an
 independent Python implementation (`scripts/vectors.py`, standard library
 only) both do.
 
-**Status: pending human review** — see [REVIEW.md](REVIEW.md) for the
-human-readable summary of every vector and how the expected values were
-obtained.
+**Status: reviewed** by expldfsh on 2026-11-14 (`review_status`,
+`reviewed_by` and `reviewed_on` in each file) — see [REVIEW.md](REVIEW.md)
+for the human-readable summary of every vector and how the expected values
+were obtained. A change to an expected value needs a new review: set
+`review_status` back to `pending-human-review` and remove the two fields.
 
 | file | contents |
 |---|---|
