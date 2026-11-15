@@ -72,7 +72,8 @@ violated kinds.
 Cases tagged `"ucd_version": "15.0.0"` depend on the Unicode version: they
 hold for V = 15.0.0 (the version fixed by the specification) only. They pin
 V: U+1F6DC (assigned in Unicode 15.0) is accepted, and U+2EBF0 (assigned in
-15.1), U+1C89 and U+1F6D8 (assigned in 16.0) are rejected as unassigned. The
+15.1), U+1C89 (assigned in 16.0) and U+1F6D8 (assigned in 17.0) are rejected
+as unassigned. The
 Go tests always check them (they fail if the Unicode tables are not V);
 `scripts/vectors.py` checks them only when Python's `unicodedata` has
 version 15.0.0 (Python 3.12) and otherwise skips them and prints the number

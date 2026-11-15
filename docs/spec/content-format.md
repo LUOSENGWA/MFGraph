@@ -204,7 +204,8 @@ NFC and case folding from golang.org/x/text, both at Unicode 15.0.0 with Go
   unreadable.
 * Test vectors whose result depends on V carry `"ucd_version": "15.0.0"`:
   U+1F6DC (assigned in Unicode 15.0) is accepted, and U+2EBF0 (assigned in
-  15.1), U+1C89 and U+1F6D8 (assigned in 16.0) are `unassigned_char`.
+  15.1), U+1C89 (assigned in 16.0) and U+1F6D8 (assigned in 17.0) are
+  `unassigned_char`.
 
 ### 2.5 Write-time and read-time rules
 

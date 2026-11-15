@@ -1288,7 +1288,7 @@ REVIEW_COVERAGE = """## 4. Coverage checklist
 | path: `..`, `a//b`, trailing `/`, absolute, backslash, control characters | `pathx.json` → `dot*`, `double-slash`, `trailing-slash`, `absolute`, `backslash*`, `nul`/`newline`/`tab`/`del` |
 | path: 256-byte segment, over-long path, emoji, Chinese | `segment-256-bytes`, `path-4097-bytes` (+ 255/4096 boundaries), `emoji`, `chinese` |
 | fold key NFD(casefold(NFD)): Cherokee, Georgian, `ı` vs `I`, canonical equivalence after folding | `pathx.json` → `fold`, `siblings` → `cherokee-*`, `georgian-*`, `dotless-i-vs-capital-i`, `capital-sharp-s-acute-vs-s-s-acute`, `fi-ligature-acute-vs-f-i-acute`; `tree.json` → `reject-cherokee-*`, `reject-georgian-*`, `reject-capital-sharp-s-acute-vs-s-s-acute`, `reject-fi-ligature-acute-vs-f-i-acute`, `allowed-dotless-i-and-capital-i` |
-| V = 15.0.0 pinned | `ucd_version` cases: `assigned-in-15.0-u1f6dc-allowed`, `assigned-in-15.1-u2ebf0`, `assigned-in-16.0-u1c89`, `assigned-in-16.0-u1f6d8`, two branch names, `allowed-assigned-in-15.0-u1f6dc`, `reject-assigned-in-15.1-u2ebf0`, `name-assigned-in-16.0-u1f6d8` |
+| V = 15.0.0 pinned | `ucd_version` cases: `assigned-in-15.0-u1f6dc-allowed`, `assigned-in-15.1-u2ebf0`, `assigned-in-16.0-u1c89`, `assigned-in-17.0-u1f6d8`, two branch names, `allowed-assigned-in-15.0-u1f6dc`, `reject-assigned-in-15.1-u2ebf0`, `name-assigned-in-17.0-u1f6d8` |
 | tree: empty tree, single file, nested, Chinese/emoji/`<&>`/`"` names, executable | `empty-root`, `single-file`, `nested`, `deep-path`, `special-names`, `executable-mode` |
 | tree: exactly 1024 entries (no split), 1025 entries (2 pages) | `dir-1024-entries-one-node`, `dir-1025-entries-two-pages`, `subdir-3000-entries-three-pages` |
 | tree: page split caused by the 1 MiB limit | **no longer a required case**: it cannot be constructed under the format-1 path rules (spec §3.5); the byte rule is tested with reduced thresholds (`TestSplitByBytesGreedy`, `TestSplitByCountMultiLevel`), and `longest-names-1024-entries-still-one-node` shows the largest node real names produce |
@@ -1411,6 +1411,14 @@ No expected value of an existing case changed, and no root hash or node byte of 
   segments too long after NFC (`nfd-hangul-774-bytes-is-258-after-nfc`,
   `segment-255-bytes-is-510-after-nfc-u0958`: 255 bytes as given, 510 after NFC). These cases
   were added after the review of 2026-11-14.
+* **Cases renamed: U+1F6D8 is assigned in Unicode 17.0, not 16.0.** `pathx.json` `normalize`
+  `assigned-in-16.0-u1f6d8` is now `assigned-in-17.0-u1f6d8`, and `tree.json`
+  `decode_valid_build_rejects` `name-assigned-in-16.0-u1f6d8` is now
+  `name-assigned-in-17.0-u1f6d8`. 用例改名，期望值没有变化 (only the names changed; the
+  expected values did not). The other `assigned-in-*` names were checked against the Unicode
+  tables of Python 3.11, 3.12, 3.14 and 3.15 (Unicode 14.0, 15.0, 16.0, 17.0): U+1F6DC (15.0)
+  and U+1C89 (16.0) are right; U+2EBF0 is unassigned in 15.0 and assigned in 16.0, which agrees
+  with 15.1 (no Python has the tables of 15.1).
 """
 
 
@@ -1454,10 +1462,10 @@ bytes).
     `index-first-with-noncharacter-u1ffff`) and Build (`reject-noncharacter-plane16-in-subdirectory`).
 * **V = 15.0.0 is pinned.** Cases tagged `"ucd_version": "15.0.0"`: U+1F6DC (assigned in
   15.0) is accepted (`assigned-in-15.0-u1f6dc-allowed`, a branch name,
-  `allowed-assigned-in-15.0-u1f6dc`); U+2EBF0 (15.1), U+1C89 and U+1F6D8 (16.0) are
+  `allowed-assigned-in-15.0-u1f6dc`); U+2EBF0 (15.1), U+1C89 (16.0) and U+1F6D8 (17.0) are
   `unassigned_char` (`assigned-in-15.1-u2ebf0`, `assigned-in-16.0-u1c89`,
-  `assigned-in-16.0-u1f6d8`, a branch name, `reject-assigned-in-15.1-u2ebf0`,
-  `name-assigned-in-16.0-u1f6d8`). `stored_names` `assigned-after-15.0-accepted` shows that
+  `assigned-in-17.0-u1f6d8`, a branch name, `reject-assigned-in-15.1-u2ebf0`,
+  `name-assigned-in-17.0-u1f6d8`). `stored_names` `assigned-after-15.0-accepted` shows that
   the read-time rules accept them. Python checks the tagged cases only with Unicode 15.0.0.
 * **Node bytes in hex.** `decode_invalid` and `decode_valid_build_rejects` give `bytes_hex`.
   New `decode_invalid` cases: invalid UTF-8 in a name (`name-invalid-utf8-byte-ff`,

@@ -77,7 +77,7 @@
     {"name": "assigned-in-15.0-u1f6dc-allowed", "input": "\ud83d\udedc.txt", "output": "\ud83d\udedc.txt", "ucd_version": "15.0.0"},
     {"name": "assigned-in-15.1-u2ebf0", "input": "\ud87a\udff0.txt", "error": "unassigned_char", "ucd_version": "15.0.0"},
     {"name": "assigned-in-16.0-u1c89", "input": "a\u1c89", "error": "unassigned_char", "ucd_version": "15.0.0"},
-    {"name": "assigned-in-16.0-u1f6d8", "input": "d/\ud83d\uded8.txt", "error": "unassigned_char", "ucd_version": "15.0.0"},
+    {"name": "assigned-in-17.0-u1f6d8", "input": "d/\ud83d\uded8.txt", "error": "unassigned_char", "ucd_version": "15.0.0"},
     {"name": "noncharacter-uffff", "input": "a\uffff", "error": "noncharacter"},
     {"name": "noncharacter-ufdd0", "input": "a\ufdd0", "error": "noncharacter"},
     {"name": "noncharacter-ufffe", "input": "a\ufffe", "error": "noncharacter"},
