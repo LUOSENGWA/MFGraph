@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS projects (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- kind: human / agent / service / team (MFGraph treats them alike).
+-- principal_uid is the identity of a principal in a standalone deployment:
+-- there, the actor reference stored in the *_ref columns of the MFGraph
+-- tables is the string form of this ULID (and *_principal_uid is the same
+-- value). Embedded in a host platform, actor references are the host's own
+-- identity strings and this table is not used.
 CREATE TABLE IF NOT EXISTS principals (
   principal_uid  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   tenant_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

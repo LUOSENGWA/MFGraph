@@ -9,14 +9,18 @@
 -- spaces). Branch names that differ only in case ('Dev', 'dev') must not
 -- coexist in one workstream; the application checks that (the fold key is not
 -- a column).
+-- Owners and creators are actor references (*_ref, VARBINARY(255), compared
+-- byte for byte) with an optional *_principal_uid; see 0001_workspaces.sql.
 
 CREATE TABLE IF NOT EXISTS workstreams (
   workstream_id       CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   project_id          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   scope_node_id       CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   workspace_id        CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  owner_principal_id  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  created_by          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  owner_ref           VARBINARY(255) NOT NULL,
+  owner_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  created_by_ref      VARBINARY(255) NOT NULL,
+  created_by_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   display_name        VARCHAR(255) NOT NULL DEFAULT '',
   default_branch_name VARBINARY(255) NOT NULL DEFAULT 'main',
   status              VARCHAR(32) NOT NULL DEFAULT 'active',
@@ -25,7 +29,7 @@ CREATE TABLE IF NOT EXISTS workstreams (
   updated_at_us       BIGINT NOT NULL,
   PRIMARY KEY (workstream_id),
   KEY idx_workstreams_project (project_id, scope_node_id, status),
-  KEY idx_workstreams_owner (owner_principal_id, status),
+  KEY idx_workstreams_owner (owner_ref, status),
   KEY idx_workstreams_status (status, updated_at_us),
   KEY idx_workstreams_workspace (workspace_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
@@ -42,7 +46,8 @@ CREATE TABLE IF NOT EXISTS branches (
   head_snapshot_id  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   generation        BIGINT UNSIGNED NOT NULL DEFAULT 1,
   status            VARCHAR(32) NOT NULL DEFAULT 'active',
-  created_by        CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_by_ref    VARBINARY(255) NOT NULL,
+  created_by_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   created_at_us     BIGINT NOT NULL,
   updated_at_us     BIGINT NOT NULL,
   PRIMARY KEY (branch_id),

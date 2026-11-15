@@ -44,6 +44,23 @@ var byteColumns = map[string]string{
 	"idempotency_keys.idempotency_key": "VARBINARY(128)",
 }
 
+// actorColumns record who did something. They are actor references
+// (VARBINARY(255), stored as given and compared byte for byte), never ULID
+// columns, because a host platform identifies callers by its own strings.
+// Each has an optional sibling <name without _ref>_principal_uid CHAR(26)
+// NULL for a ULID the host platform may provide later; the idempotency
+// record needs none. The value is the required nullability.
+var actorColumns = map[string]string{
+	"workspaces.owner_ref":           "NOT NULL",
+	"workstreams.owner_ref":          "NOT NULL",
+	"workstreams.created_by_ref":     "NOT NULL",
+	"branches.created_by_ref":        "NOT NULL",
+	"snapshots.author_ref":           "NOT NULL",
+	"snapshots.on_behalf_of_ref":     "NULL",
+	"upload_sessions.created_by_ref": "NOT NULL",
+	"idempotency_keys.actor_ref":     "NOT NULL",
+}
+
 var (
 	createRe = regexp.MustCompile(`^CREATE TABLE IF NOT EXISTS ([a-z_]+) \(`)
 	columnRe = regexp.MustCompile(`^\s+([a-z_]+)\s+([A-Z]+(?:\([0-9]+\))?)(.*)$`)
@@ -58,6 +75,7 @@ func TestMigrationFiles(t *testing.T) {
 	sources := map[string]fs.FS{"kernel": migrations.Kernel(), "mysql": migrations.MySQL()}
 	seenTables := map[string]string{}
 	seenByteColumns := map[string]bool{}
+	seenActorColumns := map[string]bool{}
 	for dir, fsys := range sources {
 		ms, err := migrate.Load(fsys)
 		if err != nil {
@@ -99,6 +117,7 @@ func TestMigrationFiles(t *testing.T) {
 					t.Errorf("%s: table %s uses forbidden construct %q", m.Version, table, f)
 				}
 				checkColumns(t, m.Version, table, body, seenByteColumns)
+				checkActorColumns(t, m.Version, table, body, seenActorColumns)
 			}
 		}
 		if strings.Join(versions, ",") != strings.Join(wantVersions[dir], ",") {
@@ -112,6 +131,68 @@ func TestMigrationFiles(t *testing.T) {
 	for col := range byteColumns {
 		if !seenByteColumns[col] {
 			t.Errorf("column %s not found", col)
+		}
+	}
+	for col := range actorColumns {
+		if !seenActorColumns[col] {
+			t.Errorf("actor column %s not found", col)
+		}
+	}
+}
+
+type column struct{ typ, rest string }
+
+func columns(body string) map[string]column {
+	out := map[string]column{}
+	for _, line := range strings.Split(body, "\n") {
+		m := columnRe.FindStringSubmatch(line)
+		if m == nil || m[1] == "key" || m[1] == "primary" || m[1] == "unique" {
+			continue
+		}
+		out[m[1]] = column{typ: m[2], rest: m[3]}
+	}
+	return out
+}
+
+func nullability(rest string) string {
+	if strings.Contains(rest, "NOT NULL") {
+		return "NOT NULL"
+	}
+	return "NULL"
+}
+
+// checkActorColumns enforces actorColumns: *_ref columns are VARBINARY(255)
+// with the listed nullability and a nullable CHAR(26) *_principal_uid
+// sibling, and the old ULID-typed identity names (created_by,
+// *_principal_id, on_behalf_of_id, principal_uid outside the kernel
+// principals table) do not come back.
+func checkActorColumns(t *testing.T, version, table, body string, seen map[string]bool) {
+	t.Helper()
+	cols := columns(body)
+	for name, c := range cols {
+		col := table + "." + name
+		if name == "created_by" || name == "on_behalf_of_id" || strings.HasSuffix(name, "_principal_id") ||
+			name == "principal_uid" && table != "principals" {
+			t.Errorf("%s: %s: actors are actor references, name the column *_ref (plus *_principal_uid)", version, col)
+		}
+		if !strings.HasSuffix(name, "_ref") {
+			continue
+		}
+		seen[col] = true
+		want, ok := actorColumns[col]
+		if !ok {
+			t.Errorf("%s: %s is not listed in actorColumns", version, col)
+			continue
+		}
+		if c.typ != "VARBINARY(255)" || nullability(c.rest) != want {
+			t.Errorf("%s: %s must be VARBINARY(255) %s, is %s%s", version, col, want, c.typ, c.rest)
+		}
+		if col == "idempotency_keys.actor_ref" {
+			continue
+		}
+		sib := strings.TrimSuffix(name, "_ref") + "_principal_uid"
+		if u, ok := cols[sib]; !ok || u.typ != "CHAR(26)" || nullability(u.rest) != "NULL" {
+			t.Errorf("%s: %s needs a nullable CHAR(26) sibling %s.%s", version, col, table, sib)
 		}
 	}
 }

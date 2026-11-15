@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
+	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/migrate"
 	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
 	"github.com/LUOSENGWA/MFGraph/migrations"
@@ -250,7 +251,7 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 	branch := func(name string) error {
 		n++
 		return exec(`INSERT INTO branches (branch_id, workspace_id, project_id, workstream_id, branch_name, ref_name,
-			created_by, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+			created_by_ref, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)`,
 			fmt.Sprintf("01JD0000000000000000BR%04d", n), ws, ws, wst, name, "workstreams/"+wst+"/"+name, user)
 	}
 
@@ -290,7 +291,7 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 
 	// 3. Storage prefixes that differ only in case collide on one backend.
 	workspace := func(id, backend, prefix string) error {
-		return exec(`INSERT INTO workspaces (workspace_id, tenant_id, project_id, workspace_type, owner_principal_id,
+		return exec(`INSERT INTO workspaces (workspace_id, tenant_id, project_id, workspace_type, owner_ref,
 			storage_backend_id, storage_prefix, storage_prefix_key, created_at_us, updated_at_us)
 			VALUES (?, ?, ?, 'project', ?, ?, ?, ?, 0, 0)`, id, ws, ws, user, backend, prefix, storagekey.PrefixKey(prefix))
 	}
@@ -308,9 +309,9 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 	}
 	t.Log("measured: storage prefixes tenants/A/w and Tenants/a/W collide on one backend (storage_prefix_key), not across backends; a 942-byte prefix is stored")
 
-	// 4. An idempotency key is scoped by principal and route.
+	// 4. An idempotency key is scoped by actor and route.
 	idem := func(route string) error {
-		return exec(`INSERT INTO idempotency_keys (idempotency_key, principal_uid, route, request_hash, created_at_us, expires_at_us)
+		return exec(`INSERT INTO idempotency_keys (idempotency_key, actor_ref, route, request_hash, created_at_us, expires_at_us)
 			VALUES ('k-1', ?, ?, ?, 0, 1)`, user, route, strings.Repeat("0", 64))
 	}
 	if err := idem("POST /v1/workspaces/{id}/commits"); err != nil {
@@ -324,7 +325,7 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 	}
 
 	// 5. root_tree_hash_algo defaults to sha256.
-	if err := exec(`INSERT INTO snapshots (snapshot_id, workspace_id, project_id, author_principal_id, trigger_kind,
+	if err := exec(`INSERT INTO snapshots (snapshot_id, workspace_id, project_id, author_ref, trigger_kind,
 		root_tree_hash, created_at_us) VALUES (?, ?, ?, ?, 'manual', ?, 0)`, "01JD00000000000000000SN001", ws, ws, user,
 		strings.Repeat("e", 64)); err != nil {
 		t.Fatal(err)
@@ -334,6 +335,8 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 		t.Errorf("root_tree_hash_algo = %q, %v", algo, err)
 	}
 
+	checkActorRefs(t, db)
+
 	// 6. The server created the byte columns as VARBINARY.
 	want := map[string]string{
 		"branches.branch_name": "varbinary(255)", "branches.ref_name": "varbinary(512)", "snapshots.ref_name": "varbinary(512)",
@@ -341,6 +344,11 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 		"snapshots.scope_path": "varbinary(4096)", "upload_sessions.path": "varbinary(4096)",
 		"workspaces.storage_prefix": "varbinary(942)", "blobs.storage_key": "varbinary(1024)",
 		"idempotency_keys.idempotency_key": "varbinary(128)",
+		// Actor references.
+		"workspaces.owner_ref": "varbinary(255)", "workstreams.owner_ref": "varbinary(255)",
+		"workstreams.created_by_ref": "varbinary(255)", "branches.created_by_ref": "varbinary(255)",
+		"snapshots.author_ref": "varbinary(255)", "snapshots.on_behalf_of_ref": "varbinary(255)",
+		"upload_sessions.created_by_ref": "varbinary(255)", "idempotency_keys.actor_ref": "varbinary(255)",
 	}
 	got := map[string]string{}
 	rs, err := db.QueryContext(ctx, `SELECT table_name, column_name, column_type FROM information_schema.columns
@@ -359,4 +367,60 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("VARBINARY columns = %v\nwant %v", got, want)
 	}
+}
+
+// checkActorRefs measures that actor references of the forms a host platform
+// passes are stored exactly: a user name, a 253-character worker name, an
+// @user:server ID (also one of 255 bytes) and a ULID go into
+// snapshots.author_ref and idempotency_keys.actor_ref and read back
+// byte for byte; "a" and "a " are two different values; 256 bytes do not fit.
+func checkActorRefs(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ctx := context.Background()
+	const ws = "01JD00000000000000000WS000"
+	refs := []string{
+		"manager",
+		"worker-" + strings.Repeat("a", 243) + "-01",                         // 253 characters
+		"@alice:example.com",                                                 // @user:server
+		"@" + strings.Repeat("u", 255-len("@:example.com")) + ":example.com", // 255 bytes
+		"01JD3X5Q8Z9W2V4T6R8P0N2M4K",                                         // ULID
+		"a", "a ",                                                            // differ only by a trailing space
+	}
+	for i, ref := range refs {
+		if err := actorref.Validate(ref); err != nil {
+			t.Fatalf("test value %d: %v", i, err)
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO snapshots (snapshot_id, workspace_id, project_id, author_ref,
+			on_behalf_of_ref, trigger_kind, root_tree_hash, created_at_us) VALUES (?, ?, ?, ?, ?, 'manual', ?, 0)`,
+			fmt.Sprintf("01JD00000000000000000SA%03d", i), ws, ws, ref, ref, strings.Repeat("e", 64)); err != nil {
+			t.Errorf("snapshots.author_ref = %d-byte %q: %v", len(ref), ref, err)
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO idempotency_keys (idempotency_key, actor_ref, route, request_hash,
+			created_at_us, expires_at_us) VALUES ('k-actor', ?, 'POST /x', ?, 0, 1)`, ref, strings.Repeat("0", 64)); err != nil {
+			t.Errorf("idempotency_keys.actor_ref = %d-byte %q: %v", len(ref), ref, err)
+		}
+	}
+	for i, ref := range refs {
+		var author, behalf string
+		var n int
+		if err := db.QueryRowContext(ctx, "SELECT author_ref, on_behalf_of_ref FROM snapshots WHERE snapshot_id = ?",
+			fmt.Sprintf("01JD00000000000000000SA%03d", i)).Scan(&author, &behalf); err != nil || author != ref || behalf != ref {
+			t.Errorf("read back %q: author %q, on behalf of %q, %v", ref, author, behalf, err)
+		}
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM snapshots WHERE author_ref = ?", ref).Scan(&n); err != nil || n != 1 {
+			t.Errorf("snapshots with author_ref %q: %d, %v; want exactly 1", ref, n, err)
+		}
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM idempotency_keys WHERE actor_ref = ? AND idempotency_key = 'k-actor'",
+			ref).Scan(&n); err != nil || n != 1 {
+			t.Errorf("idempotency records of %q: %d, %v; want exactly 1", ref, n, err)
+		}
+	}
+	_, err := db.ExecContext(ctx, `INSERT INTO idempotency_keys (idempotency_key, actor_ref, route, request_hash, created_at_us,
+		expires_at_us) VALUES ('k-long', ?, 'POST /x', ?, 0, 1)`, strings.Repeat("x", actorref.MaxBytes+1), strings.Repeat("0", 64))
+	if mysqlErrNo(err) != errDataTooLong {
+		t.Errorf("256-byte actor_ref: err = %v, want data too long", err)
+	}
+	t.Logf("measured: actor references manager, a 253-character worker name, @alice:example.com, a 255-byte @user:server ID "+
+		"and a ULID are stored in snapshots.author_ref and idempotency_keys.actor_ref and read back exactly; \"a\" and \"a \" "+
+		"are two values; a 256-byte reference: %v", err)
 }

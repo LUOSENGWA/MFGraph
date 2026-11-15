@@ -4,7 +4,8 @@
 -- status: initiated / uploading / completed / aborted / expired.
 -- part_size_bytes is chosen by the server; content identity is always the
 -- whole-file SHA-256, never derived from parts. path is the normalized path
--- (at most 4096 bytes), VARBINARY and compared byte for byte.
+-- (at most 4096 bytes), VARBINARY and compared byte for byte. The creator is
+-- an actor reference with an optional principal UID (see 0001_workspaces.sql).
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
   upload_id          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -19,7 +20,8 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
   storage_backend_id VARCHAR(64) NOT NULL,
   backend_upload_id  VARCHAR(1024) NOT NULL,
   status             VARCHAR(16) NOT NULL DEFAULT 'initiated',
-  created_by         CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_by_ref     VARBINARY(255) NOT NULL,
+  created_by_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   created_at_us      BIGINT NOT NULL,
   expires_at_us      BIGINT NOT NULL,
   completed_at_us    BIGINT NULL,

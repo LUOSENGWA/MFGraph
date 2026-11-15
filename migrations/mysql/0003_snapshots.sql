@@ -5,7 +5,9 @@
 -- The optional head path index (snapshot_entries) is not part of this
 -- schema version. root_tree_hash_algo names the algorithm of root_tree_hash
 -- (database form: hex digest plus algorithm). scope_path and ref_name are
--- VARBINARY (compared byte for byte).
+-- VARBINARY (compared byte for byte). The author and the optional actor it
+-- acted on behalf of are actor references (*_ref, VARBINARY(255), compared
+-- byte for byte) with an optional *_principal_uid; see 0001_workspaces.sql.
 
 CREATE TABLE IF NOT EXISTS snapshots (
   snapshot_id          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -16,8 +18,10 @@ CREATE TABLE IF NOT EXISTS snapshots (
   workstream_id        CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   branch_id            CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   ref_name             VARBINARY(512) NOT NULL DEFAULT '',
-  author_principal_id  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  on_behalf_of_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  author_ref           VARBINARY(255) NOT NULL,
+  author_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  on_behalf_of_ref     VARBINARY(255) NULL,
+  on_behalf_of_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
   message              VARCHAR(1024) NOT NULL DEFAULT '',
   trigger_kind         VARCHAR(32) NOT NULL,
   root_tree_hash       CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
