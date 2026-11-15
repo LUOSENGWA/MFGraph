@@ -151,7 +151,7 @@ func testTransactions(t *testing.T, s Store) {
 
 func testProjects(t *testing.T, s Store) {
 	want := project(projA, "@alice:example.com")
-	want.Name = "Zeichnungen 图纸 é "
+	want.Name = "Zeichnungen \u56fe\u7eb8 \u00e9 "
 	want.OwnerPrincipalUID = "01JD3X5Q8Z9W2V4T6R8P0N2M4K"
 	tx(t, s, func(tx ports.Tx) error { return s.InsertProject(ctx, tx, want) })
 	got, err := s.GetProject(ctx, nil, projA)
@@ -224,7 +224,7 @@ func testBranches(t *testing.T, s Store) {
 	wantErr(t, "second main ref in one workspace", err, ports.ErrAlreadyExists)
 
 	// Listing: ordered by ref bytes, after a ref, limited.
-	refs := []string{"main ", "workstreams/W/b", "workstreams/W/a", "workstreams/W/中", "workstreams/W/A"}
+	refs := []string{"main ", "workstreams/W/b", "workstreams/W/a", "workstreams/W/\u4e2d", "workstreams/W/A"}
 	tx(t, s, func(tx ports.Tx) error {
 		for i, r := range refs {
 			b := mainBranch(fmt.Sprintf("01JD3X5Q8Z9W2V4T6R8P0N2C%02d", i), wsA, projA)
@@ -253,7 +253,7 @@ func testBranches(t *testing.T, s Store) {
 	if err != nil || len(page) != 2 || page[0].RefName != "main " || page[1].RefName != "workstreams/W/A" {
 		t.Fatalf("ListBranches after main, limit 2 = %+v, %v", page, err)
 	}
-	if page, err := s.ListBranches(ctx, nil, wsA, "workstreams/W/中", 10); err != nil || len(page) != 0 {
+	if page, err := s.ListBranches(ctx, nil, wsA, "workstreams/W/\u4e2d", 10); err != nil || len(page) != 0 {
 		t.Fatalf("ListBranches after the last ref = %+v, %v", page, err)
 	}
 }
@@ -316,7 +316,7 @@ func testSnapshots(t *testing.T, s Store) {
 	root.ParentIDs = []string{}
 	child := snapshot("01JD3X5Q8Z9W2V4T6R8P0N2S02", 20, brA, root.ID)
 	child.AuthorRef, child.AuthorPrincipalUID = "01JD3X5Q8Z9W2V4T6R8P0N2M4K", "01JD3X5Q8Z9W2V4T6R8P0N2M4K"
-	child.Message = "中文 message with trailing space "
+	child.Message = "\u4e2d\u6587 message with trailing space "
 	child.TriggerKind = ports.TriggerRestore
 	merge := snapshot("01JD3X5Q8Z9W2V4T6R8P0N2S03", 30, "", child.ID, root.ID)
 	merge.EntryCount, merge.TotalBytes = 1<<40, 1<<52
@@ -468,7 +468,7 @@ func testIdempotency(t *testing.T, s Store) {
 		return s.CompleteIdempotency(ctx, tx, rec.ActorRef, rec.Route, rec.Key, 99, []byte(`{}`))
 	})
 	wantErr(t, "complete another instance", err, ports.ErrNotFound)
-	response := []byte(`{"snapshot_id":"01JD3X5Q8Z9W2V4T6R8P0N2S01","path":"中"}`)
+	response := []byte("{\"snapshot_id\":\"01JD3X5Q8Z9W2V4T6R8P0N2S01\",\"path\":\"\u4e2d\"}")
 	tx(t, s, func(tx ports.Tx) error {
 		return s.CompleteIdempotency(ctx, tx, rec.ActorRef, rec.Route, rec.Key, 100, response)
 	})
@@ -503,7 +503,7 @@ func testIdempotency(t *testing.T, s Store) {
 func testOutbox(t *testing.T, s Store) {
 	ev := func(id, typ string) ports.Event {
 		return ports.Event{ID: id, Type: typ, WorkspaceID: wsA, AggregateID: "01JD3X5Q8Z9W2V4T6R8P0N2S01",
-			Payload: []byte(`{"snapshot_id":"01JD3X5Q8Z9W2V4T6R8P0N2S01","actor_ref":"中"}`), CreatedAtUs: 9}
+			Payload: []byte("{\"snapshot_id\":\"01JD3X5Q8Z9W2V4T6R8P0N2S01\",\"actor_ref\":\"\u4e2d\"}"), CreatedAtUs: 9}
 	}
 	tx(t, s, func(tx ports.Tx) error {
 		if err := s.Append(ctx, tx, ev("01JD3X5Q8Z9W2V4T6R8P0N2E01", ports.EventSnapshotCreated)); err != nil {
