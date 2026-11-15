@@ -77,12 +77,16 @@ as unassigned. The
 Go tests always check them (they fail if the Unicode tables are not V);
 `scripts/vectors.py` checks them only when Python's `unicodedata` has
 version 15.0.0 (Python 3.12) and otherwise skips them and prints the number
-skipped. `generate` keeps their stored expected values in that case.
+skipped; `verify --require-ucd 15.0.0` fails instead of skipping, and CI runs
+it with Python 3.12, so the tagged cases are checked there by both
+implementations. `generate` keeps their stored expected values when it runs
+with another version.
 
 ## Workflow
 
 ```bash
 python3 scripts/vectors.py verify [--heavy]   # Python reference vs. the files
+python3.12 scripts/vectors.py verify --require-ucd 15.0.0   # fail instead of skipping V cases
 python3 scripts/vectors.py crosscheck         # Go CLI on materialized inputs + shasum
 python3 scripts/vectors.py generate           # recompute expected values in tree.json
 python3 scripts/vectors.py format             # rewrite the files as ASCII (\u escapes)

@@ -1390,6 +1390,7 @@ Re-run everything:
 
 ```bash
 python3 scripts/vectors.py verify [--heavy]   # Python reference vs. vector files
+python3.12 scripts/vectors.py verify --require-ucd 15.0.0   # Unicode 15.0.0 tables: nothing skipped (CI)
 python3 scripts/vectors.py crosscheck         # Go CLI + shasum on every small/large case
 go test ./internal/contenthash ./internal/pathx ./internal/tree   # MFGRAPH_HEAVY_VECTORS=1 for the heavy case
 ```
@@ -1640,6 +1641,10 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     vp = sub.add_parser("verify", help="check every vector file")
     vp.add_argument("--heavy", action="store_true", help="include heavy cases")
+    vp.add_argument("--require-ucd", metavar="VERSION",
+                    help="fail unless Python's unicodedata has exactly this Unicode version and no case "
+                         "is skipped (CI passes V = %s with Python 3.12); without it, cases that need "
+                         "another version are skipped" % V)
     sub.add_parser("review", help="regenerate testdata/vectors/REVIEW.md")
     sub.add_parser("generate", help="(re)compute the expected values in tree.json from its inputs")
     sub.add_parser("format", help="rewrite the vector files in their ASCII-only layout")
@@ -1673,6 +1678,11 @@ def main():
         write_review()
         return 0
     if args.cmd == "verify":
+        if args.require_ucd and unicodedata.unidata_version != args.require_ucd:
+            print("FAIL: --require-ucd %s: this Python %s has Unicode %s; run a Python whose unicodedata "
+                  "has %s (Python 3.12 has 15.0.0)" % (args.require_ucd, sys.version.split()[0],
+                                                     unicodedata.unidata_version, args.require_ucd))
+            return 1
         counts = {
             "ascii_files": verify_ascii(),
             "review_fields": verify_review_fields(),
@@ -1680,6 +1690,9 @@ def main():
             "pathx": verify_pathx(),
             "tree": verify_tree(args.heavy),
         }
+        if args.require_ucd:
+            check(not UCD_SKIPPED, "--require-ucd %s: %d case(s) were skipped (they need Unicode %s)"
+                  % (args.require_ucd, len(UCD_SKIPPED), V))
         for msg in FAILURES:
             print("FAIL:", msg)
         print("checked: " + ", ".join("%s=%d" % kv for kv in counts.items()))

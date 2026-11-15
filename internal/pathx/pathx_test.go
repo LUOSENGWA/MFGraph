@@ -299,6 +299,30 @@ func TestUnicodeVersionV(t *testing.T) {
 
 // TestCheckUnicodeVersions: the standard library must have exactly V, the
 // x/text tables V or later; malformed versions are rejected.
+// TestCIRequiresV: the CI vectors job runs the Python reference with a
+// pinned Python and --require-ucd V (VECTORS_REQUIRE_UCD), so the cases
+// tagged with ucd_version are checked there, not skipped. Raising V fails
+// this test until CI requires the new version (and then CI fails until it
+// uses a Python with those tables).
+func TestCIRequiresV(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`VECTORS_REQUIRE_UCD=([0-9]+\.[0-9]+\.[0-9]+)`).FindAllSubmatch(b, -1)
+	if len(m) == 0 {
+		t.Fatal("ci.yml does not run the vectors with VECTORS_REQUIRE_UCD")
+	}
+	for _, x := range m {
+		if string(x[1]) != pathx.UnicodeVersion {
+			t.Errorf("ci.yml requires Unicode %s for the vectors, V is %s", x[1], pathx.UnicodeVersion)
+		}
+	}
+	if !regexp.MustCompile(`(?m)uses: actions/setup-python@v[0-9]+\n\s+with:\n\s+python-version: '[0-9.]+'`).Match(b) {
+		t.Error("ci.yml does not pin the Python version with actions/setup-python")
+	}
+}
+
 func TestCheckUnicodeVersions(t *testing.T) {
 	v := pathx.UnicodeVersion
 	for _, ok := range [][3]string{

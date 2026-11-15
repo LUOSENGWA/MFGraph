@@ -11,6 +11,10 @@ MYSQL_TEST_DSN ?= root:mfgraph@tcp(127.0.0.1:3306)/
 # tests wait for it to answer.
 SEEKDB_TEST_DSN ?= root@tcp(127.0.0.1:2881)/
 SEEKDB_WAIT ?= 300s
+# Unicode version that the Python of vectors-verify* must have; empty: any
+# (cases that need another version are skipped). CI sets 15.0.0 (V).
+VECTORS_REQUIRE_UCD ?=
+VECTORS_VERIFY_FLAGS = $(if $(VECTORS_REQUIRE_UCD),--require-ucd $(VECTORS_REQUIRE_UCD))
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
@@ -107,10 +111,10 @@ fmt-check:
 
 ## vectors-verify: independent Python cross-check of testdata/vectors
 vectors-verify:
-	python3 scripts/vectors.py verify
+	python3 scripts/vectors.py verify $(VECTORS_VERIFY_FLAGS)
 
 vectors-verify-heavy:
-	python3 scripts/vectors.py verify --heavy
+	python3 scripts/vectors.py verify --heavy $(VECTORS_VERIFY_FLAGS)
 
 ## vectors-crosscheck: run the Go CLI on every tree case and check node files with shasum
 vectors-crosscheck:

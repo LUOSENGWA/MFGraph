@@ -189,6 +189,7 @@ Re-run everything:
 
 ```bash
 python3 scripts/vectors.py verify [--heavy]   # Python reference vs. vector files
+python3.12 scripts/vectors.py verify --require-ucd 15.0.0   # Unicode 15.0.0 tables: nothing skipped (CI)
 python3 scripts/vectors.py crosscheck         # Go CLI + shasum on every small/large case
 go test ./internal/contenthash ./internal/pathx ./internal/tree   # MFGRAPH_HEAVY_VECTORS=1 for the heavy case
 ```
