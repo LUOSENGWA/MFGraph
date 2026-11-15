@@ -27,7 +27,7 @@ MFGraph 关注的是这些能力的组合缺口：
 3. **二进制/大文件是一等公民** — 内容寻址 chunk、packfile、manifest、独占锁；不做不安全的自动合并。
 4. **格式与行业模板** — 文本/Office/PDF/图片/音视频/CAD/BIM/数据集/归档/DICOM 以模板配置，不硬编码垂直分支。
 5. **工作流可选** — 内置 HTTP 适配器可连接外部工作流引擎；没有引擎时，REST/CLI/MCP 仍可用。
-6. **人与 Agent 中立** — 统一 `principal_uid` 身份；不依赖特定 Agent 运行时或 Matrix。
+6. **人与 Agent 中立** — 每个调用者都是一个操作者，用身份引用记录（宿主平台的身份字符串，独立部署时是 ULID）；不依赖特定 Agent 运行时或 Matrix。
 
 ## 它不是什么
 
@@ -89,7 +89,7 @@ make generate     # 由契约重新生成 internal/api/gen（需要网络）
 make run          # 用开发 token 在 127.0.0.1:8080 启动 mfgraph-server
 ```
 
-服务端用 `MFGRAPH_*` 环境变量配置：`MFGRAPH_HTTP_ADDR`、`MFGRAPH_DB_DSN`（MySQL DSN，本版本可不配）、`MFGRAPH_MIGRATE_ON_START`、`MFGRAPH_KERNEL_MIGRATIONS`、`MFGRAPH_AUTH_TOKENS`（`token=PRINCIPAL_ULID,...`）、`MFGRAPH_LOG_LEVEL`、`MFGRAPH_LOG_FORMAT`、`MFGRAPH_SHUTDOWN_TIMEOUT`。`mfgraph-server migrate` 执行待执行的迁移后退出。本版本只实现了 `/healthz` 和 `/readyz`；[`contracts/openapi.yaml`](contracts/openapi.yaml) 中的其他接口都返回 `501 not_implemented`。
+服务端用 `MFGRAPH_*` 环境变量配置：`MFGRAPH_HTTP_ADDR`、`MFGRAPH_DB_DSN`（MySQL DSN，本版本可不配）、`MFGRAPH_MIGRATE_ON_START`、`MFGRAPH_KERNEL_MIGRATIONS`、`MFGRAPH_AUTH_TOKENS`（`token=ACTOR_REF,...`，例如 `token=alice` 或 `token=<ULID>`；见[身份引用](docs/zh-CN/api.md#身份引用actor-reference)）、`MFGRAPH_LOG_LEVEL`、`MFGRAPH_LOG_FORMAT`、`MFGRAPH_SHUTDOWN_TIMEOUT`。`mfgraph-server migrate` 执行待执行的迁移后退出。本版本只实现了 `/healthz` 和 `/readyz`；[`contracts/openapi.yaml`](contracts/openapi.yaml) 中的其他接口都返回 `501 not_implemented`。
 
 开发用 MySQL 8.0 通过 Docker 运行（`deploy/docker-compose.dev.yml`，只绑定 `127.0.0.1`，一次性本地口令）：
 

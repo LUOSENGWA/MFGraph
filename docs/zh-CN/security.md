@@ -4,7 +4,7 @@
 
 ## 身份
 
-- `principal_uid`（ULID）是权威身份。
+- 每个调用者都是一个操作者，用**身份引用**标识：宿主平台传入的身份字符串（worker 名、用户名、`@alice:example.com` 这样的 ID），独立部署时是该 principal 的 `principal_uid`（ULID）的字符串形式。身份引用至多 255 字节 UTF-8、不含控制字符，按原样保存、按字节比较（见[身份引用](api.md#身份引用actor-reference)）。操作者的 ULID（`*_principal_uid`）是可选的。
 - 人、Agent、服务、团队都是 principal；授权不按 `kind` 分支。
 - 外部身份：OIDC `sub`、Matrix MXID、email；均为可选。
 - Agent/服务 token 是短时能力 token。

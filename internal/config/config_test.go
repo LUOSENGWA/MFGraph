@@ -30,7 +30,7 @@ func TestAllVariables(t *testing.T) {
 		config.EnvDBDSN:            "u:p@tcp(127.0.0.1:3306)/mfgraph",
 		config.EnvMigrateOnStart:   "true",
 		config.EnvKernelMigrations: "false",
-		config.EnvAuthTokens:       "token-aaaaaaaaaaaaaaaa=" + uidA + ", token-bbbbbbbbbbbbbbbb=" + uidA,
+		config.EnvAuthTokens:       "token-aaaaaaaaaaaaaaaa=" + uidA + ", token-bbbbbbbbbbbbbbbb=" + uidA + ",token-cccccccccccccccc=alice",
 		config.EnvLogLevel:         "debug",
 		config.EnvLogFormat:        "text",
 		config.EnvShutdownTimeout:  "3s",
@@ -38,8 +38,9 @@ func TestAllVariables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.HTTPAddr != ":9090" || !c.MigrateOnStart || c.KernelMigrations || len(c.AuthTokens) != 2 ||
-		c.AuthTokens["token-bbbbbbbbbbbbbbbb"] != uidA || c.LogLevel != slog.LevelDebug || c.LogFormat != "text" || c.ShutdownTimeout != 3*time.Second {
+	if c.HTTPAddr != ":9090" || !c.MigrateOnStart || c.KernelMigrations || len(c.AuthTokens) != 3 ||
+		c.AuthTokens["token-bbbbbbbbbbbbbbbb"] != uidA || c.AuthTokens["token-cccccccccccccccc"] != "alice" ||
+		c.LogLevel != slog.LevelDebug || c.LogFormat != "text" || c.ShutdownTimeout != 3*time.Second {
 		t.Fatalf("parsed: %+v", c)
 	}
 	for _, v := range c.Summary() {
@@ -54,9 +55,11 @@ func TestInvalid(t *testing.T) {
 		"bad bool":           {config.EnvMigrateOnStart: "yes please"},
 		"migrate without db": {config.EnvMigrateOnStart: "true"},
 		"short token":        {config.EnvAuthTokens: "short=" + uidA},
-		"missing uid":        {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa"},
-		"bad uid":            {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=not-a-ulid"},
-		"lowercase uid":      {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + strings.ToLower(uidA)},
+		"missing actor":      {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa"},
+		"empty actor":        {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa="},
+		"actor too long":     {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + strings.Repeat("x", 256)},
+		"control character":  {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\x01b"},
+		"invalid utf-8":      {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\xffb"},
 		"duplicate token":    {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + uidA + ",token-aaaaaaaaaaaaaaaa=" + uidA},
 		"bad level":          {config.EnvLogLevel: "loud"},
 		"bad format":         {config.EnvLogFormat: "xml"},
@@ -70,6 +73,24 @@ func TestInvalid(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "token-aaaaaaaaaaaaaaaa") {
 			t.Errorf("%s: error message leaks the token: %v", name, err)
+		}
+	}
+}
+
+// TestActorRefTokens: a static token maps to any valid actor reference, not
+// only to a ULID.
+func TestActorRefTokens(t *testing.T) {
+	worker := "worker-" + strings.Repeat("a", 243) + "-01"                        // 253 characters
+	id255 := "@" + strings.Repeat("u", 255-len("@:example.com")) + ":example.com" // 255 bytes
+	for _, ref := range []string{"manager", "alice", worker, "@alice:example.com", "@a=b:example.com", id255, uidA,
+		strings.ToLower(uidA), "not-a-ulid"} {
+		c, err := config.Load(env(map[string]string{config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + ref}))
+		if err != nil {
+			t.Errorf("actor %q: %v", ref, err)
+			continue
+		}
+		if got := c.AuthTokens["token-aaaaaaaaaaaaaaaa"]; got != ref {
+			t.Errorf("actor %q parsed as %q", ref, got)
 		}
 	}
 }

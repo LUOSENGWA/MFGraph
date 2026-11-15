@@ -334,10 +334,10 @@ func TestTreeStoreDetectsCorruptionAndBombs(t *testing.T) {
 }
 
 func TestAuthenticatorAndAuthorizer(t *testing.T) {
-	a := &memory.Authenticator{Tokens: map[string]ports.Principal{"tok": {UID: "U1", TenantID: "T"}}}
+	a := &memory.Authenticator{Tokens: map[string]ports.Principal{"tok": {Ref: "U1", TenantID: "T"}}}
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Header.Set("Authorization", "Bearer tok")
-	if p, err := a.Authenticate(r); err != nil || p.UID != "U1" {
+	if p, err := a.Authenticate(r); err != nil || p.Ref != "U1" {
 		t.Fatalf("Authenticate = %+v %v", p, err)
 	}
 	r.Header.Set("Authorization", "Bearer other")
@@ -346,9 +346,9 @@ func TestAuthenticatorAndAuthorizer(t *testing.T) {
 	}
 
 	z := &memory.Authorizer{}
-	z.Allow(memory.Grant{PrincipalUID: "U1", WorkspaceID: "WA", Actions: []ports.Action{ports.ActionWorkspaceRead}})
-	z.Allow(memory.Grant{PrincipalUID: "U2", ProjectID: "P", Actions: []ports.Action{ports.ActionWorkspaceRead, ports.ActionWorkspaceWrite}})
-	u1, u2 := ports.Principal{UID: "U1"}, ports.Principal{UID: "U2"}
+	z.Allow(memory.Grant{ActorRef: "U1", WorkspaceID: "WA", Actions: []ports.Action{ports.ActionWorkspaceRead}})
+	z.Allow(memory.Grant{ActorRef: "U2", ProjectID: "P", Actions: []ports.Action{ports.ActionWorkspaceRead, ports.ActionWorkspaceWrite}})
+	u1, u2 := ports.Principal{Ref: "U1"}, ports.Principal{Ref: "U2"}
 	wa := ports.Resource{Type: ports.ResourceSnapshot, ID: "S1", ProjectID: "P", WorkspaceID: "WA"}
 	wb := ports.Resource{Type: ports.ResourceSnapshot, ID: "S2", ProjectID: "P", WorkspaceID: "WB"}
 	cases := []struct {
@@ -361,7 +361,8 @@ func TestAuthenticatorAndAuthorizer(t *testing.T) {
 		{u1, ports.ActionWorkspaceWrite, wa, ports.ErrForbidden}, // visible, not allowed
 		{u1, ports.ActionWorkspaceRead, wb, ports.ErrNotFound},   // other workspace: hidden
 		{u2, ports.ActionWorkspaceWrite, wb, nil},                // project-wide grant
-		{ports.Principal{UID: "U3"}, ports.ActionWorkspaceRead, wa, ports.ErrNotFound},
+		{ports.Principal{Ref: "U3"}, ports.ActionWorkspaceRead, wa, ports.ErrNotFound},
+		{ports.Principal{Ref: "U1 "}, ports.ActionWorkspaceRead, wa, ports.ErrNotFound}, // byte for byte
 	}
 	for i, c := range cases {
 		if err := z.Check(ctx, c.p, c.act, c.res); !errors.Is(err, c.want) || (c.want == nil && err != nil) {

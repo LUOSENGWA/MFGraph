@@ -36,10 +36,12 @@ type Resource struct {
 	WorkspaceID string // empty for tenant- and project-level resources
 }
 
-// Authorizer decides whether a principal may perform an action. It returns
-// nil, ErrForbidden (the principal can see the resource but not do this) or
-// ErrNotFound (the principal cannot see the resource; existence is hidden,
-// which is also what callers answer for resources of other workspaces).
+// Authorizer decides whether a principal may perform an action. Principals
+// are identified by their actor reference (Principal.Ref, compared byte for
+// byte). It returns nil, ErrForbidden (the principal can see the resource but
+// not do this) or ErrNotFound (the principal cannot see the resource;
+// existence is hidden, which is also what callers answer for resources of
+// other workspaces).
 type Authorizer interface {
 	Check(ctx context.Context, p Principal, action Action, res Resource) error
 }

@@ -6,26 +6,37 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
 
 // StaticTokens authenticates "Authorization: Bearer <token>" against a fixed
-// token -> principal_uid map from the configuration (first core slice).
+// token -> actor reference map from the configuration (first core slice).
 // Tokens are kept only as SHA-256 digests, so lookups do not compare secret
 // strings directly.
 type StaticTokens struct {
 	byDigest map[[sha256.Size]byte]ports.Principal
 }
 
-// NewStaticTokens builds the authenticator. Principal UIDs must be ULIDs.
+// NewStaticTokens builds the authenticator. Every token maps to an actor
+// reference (internal/actorref), for example "alice" or a ULID. In a
+// standalone deployment a reference that is a ULID is the principal_uid of a
+// kernel principal, so it is also returned as Principal.PrincipalUID.
 func NewStaticTokens(tokens map[string]string) (*StaticTokens, error) {
 	s := &StaticTokens{byDigest: make(map[[sha256.Size]byte]ports.Principal, len(tokens))}
-	for tok, uid := range tokens {
-		if tok == "" || !ids.Valid(uid) {
-			return nil, fmt.Errorf("api: invalid static token entry for principal %q", uid)
+	for tok, ref := range tokens {
+		if tok == "" {
+			return nil, fmt.Errorf("api: empty static token")
 		}
-		s.byDigest[sha256.Sum256([]byte(tok))] = ports.Principal{UID: uid}
+		if err := actorref.Validate(ref); err != nil {
+			return nil, fmt.Errorf("api: static token entry for actor %q: %w", ref, err)
+		}
+		p := ports.Principal{Ref: ref}
+		if ids.Valid(ref) {
+			p.PrincipalUID = ref
+		}
+		s.byDigest[sha256.Sum256([]byte(tok))] = p
 	}
 	return s, nil
 }

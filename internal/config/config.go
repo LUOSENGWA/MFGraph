@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LUOSENGWA/MFGraph/internal/ids"
+	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 )
 
 // Environment variables.
@@ -40,8 +40,13 @@ type Config struct {
 	// principals) when migrating. True for standalone deployments; set it to
 	// false when a host platform owns those tables.
 	KernelMigrations bool
-	// AuthTokens maps static bearer tokens to principal UIDs. Format of
-	// MFGRAPH_AUTH_TOKENS: "token=PRINCIPAL_UID[,token=PRINCIPAL_UID...]".
+	// AuthTokens maps static bearer tokens to actor references (any valid
+	// actor reference: a name such as "alice", an ID such as
+	// "@alice:example.com", or a principal's ULID). Format of
+	// MFGRAPH_AUTH_TOKENS: "token=ACTOR_REF[,token=ACTOR_REF...]". Entries
+	// are separated by ',', the first '=' of an entry separates the token
+	// from the actor reference, and whitespace around an entry is ignored;
+	// an actor reference given here therefore cannot contain ','.
 	AuthTokens map[string]string
 	// LogLevel and LogFormat ("json" or "text") configure log/slog.
 	LogLevel  slog.Level
@@ -111,28 +116,28 @@ func parseBool(getenv func(string) string, name string, def bool) (bool, error) 
 	return b, nil
 }
 
-// parseTokens parses "token=UID,token=UID". Tokens are never echoed in
-// errors.
+// parseTokens parses "token=ACTOR_REF,token=ACTOR_REF". Tokens are never
+// echoed in errors.
 func parseTokens(s string) (map[string]string, error) {
 	out := map[string]string{}
 	if strings.TrimSpace(s) == "" {
 		return out, nil
 	}
 	for i, pair := range strings.Split(s, ",") {
-		tok, uid, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		tok, ref, ok := strings.Cut(strings.TrimSpace(pair), "=")
 		if !ok {
-			return nil, fmt.Errorf("config: %s entry %d: want token=PRINCIPAL_UID", EnvAuthTokens, i+1)
+			return nil, fmt.Errorf("config: %s entry %d: want token=ACTOR_REF", EnvAuthTokens, i+1)
 		}
 		if len(tok) < MinTokenLength || strings.ContainsAny(tok, " \t\r\n") {
 			return nil, fmt.Errorf("config: %s entry %d: token must have at least %d characters and no whitespace", EnvAuthTokens, i+1, MinTokenLength)
 		}
-		if !ids.Valid(uid) {
-			return nil, fmt.Errorf("config: %s entry %d: %q is not a ULID", EnvAuthTokens, i+1, uid)
+		if err := actorref.Validate(ref); err != nil {
+			return nil, fmt.Errorf("config: %s entry %d: %w", EnvAuthTokens, i+1, err)
 		}
 		if _, dup := out[tok]; dup {
 			return nil, fmt.Errorf("config: %s entry %d: duplicate token", EnvAuthTokens, i+1)
 		}
-		out[tok] = uid
+		out[tok] = ref
 	}
 	return out, nil
 }

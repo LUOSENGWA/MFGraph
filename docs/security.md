@@ -4,7 +4,7 @@
 
 ## Identity
 
-- `principal_uid` (ULID) is the canonical identity.
+- Every caller is an actor, identified by its **actor reference**: the identity string the host platform passes (a worker name, a user name, an ID such as `@alice:example.com`), or in a standalone deployment the string form of the principal's `principal_uid` (ULID). Actor references are at most 255 bytes of UTF-8 without control characters, stored as given and compared byte for byte (see [actor references](api.md#actor-references)). A ULID for an actor (`*_principal_uid`) is optional.
 - Human, agent, service, and team are all principals; authorization does not branch on `kind`.
 - External identities: OIDC `sub`, Matrix MXID, email; optional.
 - Agent/service tokens are short-lived capability tokens.

@@ -22,7 +22,7 @@ MFGRAPH_E2E_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/' make test-e2e   # with My
 | `TestModeKeptWhenOmitted` | replacing a 493 file without `mode` keeps 493; new files get 420; an explicit `mode` wins |
 
 Environment passed to the server: `MFGRAPH_HTTP_ADDR` (a free local port),
-`MFGRAPH_AUTH_TOKENS` (two principals), `MFGRAPH_STORAGE_ROOT` (a temporary
+`MFGRAPH_AUTH_TOKENS` (two principals, one with a plain-name actor reference and one with a ULID), `MFGRAPH_STORAGE_ROOT` (a temporary
 directory for the POSIX blob store of the first core slice), and, when
 `MFGRAPH_E2E_DB_DSN` is set, `MFGRAPH_DB_DSN` pointing at a fresh database plus
 `MFGRAPH_MIGRATE_ON_START=true`. Set `MFGRAPH_E2E_SERVER_BIN` to test a

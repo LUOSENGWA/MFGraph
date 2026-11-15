@@ -35,14 +35,15 @@ func (a *Authenticator) Authenticate(r *http.Request) (ports.Principal, error) {
 	return p, nil
 }
 
-// Grant gives a principal actions on a scope: one workspace, all workspaces
-// of a project, or a whole tenant (the most specific non-empty field wins).
+// Grant gives a principal, identified by its actor reference, actions on a
+// scope: one workspace, all workspaces of a project, or a whole tenant (the
+// most specific non-empty field wins).
 type Grant struct {
-	PrincipalUID string
-	TenantID     string
-	ProjectID    string
-	WorkspaceID  string
-	Actions      []ports.Action
+	ActorRef    string // compared byte for byte with Principal.Ref
+	TenantID    string
+	ProjectID   string
+	WorkspaceID string
+	Actions     []ports.Action
 }
 
 func (g Grant) covers(res ports.Resource) bool {
@@ -80,7 +81,7 @@ func (a *Authorizer) Check(_ context.Context, p ports.Principal, action ports.Ac
 	defer a.mu.RUnlock()
 	visible := false
 	for _, g := range a.grants {
-		if g.PrincipalUID != p.UID || !g.covers(res) {
+		if g.ActorRef != p.Ref || !g.covers(res) {
 			continue
 		}
 		visible = true

@@ -26,8 +26,10 @@ import (
 const (
 	tokenA = "e2e-token-principal-a-0123456789"
 	tokenB = "e2e-token-principal-b-0123456789"
-	uidA   = "01JD3X5Q8Z9W2V4T6R8P0N2MA0"
-	uidB   = "01JD3X5Q8Z9W2V4T6R8P0N2MB0"
+	// The actor references of the two principals: one is a plain name (as a
+	// host platform passes it), the other the ULID of a standalone principal.
+	actorA = "e2e-alice"
+	actorB = "01JD3X5Q8Z9W2V4T6R8P0N2MB0"
 )
 
 var serverBin string
@@ -62,7 +64,7 @@ type env map[string]string
 func newEnv(t *testing.T) env {
 	t.Helper()
 	e := env{
-		"MFGRAPH_AUTH_TOKENS":  tokenA + "=" + uidA + "," + tokenB + "=" + uidB,
+		"MFGRAPH_AUTH_TOKENS":  tokenA + "=" + actorA + "," + tokenB + "=" + actorB,
 		"MFGRAPH_STORAGE_ROOT": t.TempDir(),
 		"MFGRAPH_LOG_FORMAT":   "text",
 	}

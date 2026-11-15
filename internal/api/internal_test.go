@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
@@ -87,7 +88,27 @@ func TestBearerToken(t *testing.T) {
 			t.Errorf("bearerToken(%q) accepted", h)
 		}
 	}
-	if _, err := NewStaticTokens(map[string]string{"tok": "not-a-ulid"}); err == nil {
-		t.Error("NewStaticTokens accepted an invalid UID")
+	for _, ref := range []string{"", "a\nb", "a\xffb", strings.Repeat("x", 256)} {
+		if _, err := NewStaticTokens(map[string]string{"tok": ref}); err == nil {
+			t.Errorf("NewStaticTokens accepted the invalid actor reference %q", ref)
+		}
+	}
+	if _, err := NewStaticTokens(map[string]string{"": "alice"}); err == nil {
+		t.Error("NewStaticTokens accepted an empty token")
+	}
+	// Any valid actor reference is accepted; a ULID is also the principal UID.
+	s, err := NewStaticTokens(map[string]string{"tok-a": "alice", "tok-b": "01JD3X5Q8Z9W2V4T6R8P0N2M4K"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for tok, want := range map[string]ports.Principal{
+		"tok-a": {Ref: "alice"},
+		"tok-b": {Ref: "01JD3X5Q8Z9W2V4T6R8P0N2M4K", PrincipalUID: "01JD3X5Q8Z9W2V4T6R8P0N2M4K"},
+	} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer "+tok)
+		if p, err := s.Authenticate(r); err != nil || p != want {
+			t.Errorf("token %s: %+v, %v; want %+v", tok, p, err, want)
+		}
 	}
 }

@@ -101,7 +101,10 @@ func AccessLog(l *slog.Logger) func(http.Handler) http.Handler {
 			attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rec.status, "bytes", rec.bytes,
 				"duration_ms", time.Since(start).Milliseconds(), "request_id", RequestIDFrom(r.Context())}
 			if p, ok := PrincipalFrom(r.Context()); ok {
-				attrs = append(attrs, "principal_uid", p.UID)
+				attrs = append(attrs, "actor_ref", p.Ref)
+				if p.PrincipalUID != "" {
+					attrs = append(attrs, "principal_uid", p.PrincipalUID)
+				}
 			}
 			l.Info("http request", attrs...)
 		})

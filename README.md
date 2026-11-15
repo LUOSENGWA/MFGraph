@@ -27,7 +27,7 @@ MFGraph focuses on the missing combination:
 3. **Binary/large files are first-class** — content-addressed chunks, packfiles, manifests, exclusive locks; no unsafe auto-merge.
 4. **Format and industry templates** — text/office/PDF/images/audio-video/CAD/BIM/datasets/archives/DICOM, configured as templates, not hardcoded vertical branches.
 5. **Workflow is optional** — a built-in HTTP adapter can connect to an external workflow engine; MFGraph still works with REST/CLI/MCP when no engine is present.
-6. **Human/agent neutral** — one `principal_uid` identity; no special Agent runtime or Matrix dependency.
+6. **Human/agent neutral** — every caller is one actor, recorded by its actor reference (the host platform's identity string, or a ULID in standalone mode); no special Agent runtime or Matrix dependency.
 
 ## What it is not
 
@@ -89,7 +89,7 @@ make generate     # regenerate internal/api/gen from the contract (needs network
 make run          # start mfgraph-server on 127.0.0.1:8080 with a development token
 ```
 
-The server is configured with `MFGRAPH_*` environment variables: `MFGRAPH_HTTP_ADDR`, `MFGRAPH_DB_DSN` (MySQL DSN, optional in this build), `MFGRAPH_MIGRATE_ON_START`, `MFGRAPH_KERNEL_MIGRATIONS`, `MFGRAPH_AUTH_TOKENS` (`token=PRINCIPAL_ULID,...`), `MFGRAPH_LOG_LEVEL`, `MFGRAPH_LOG_FORMAT`, `MFGRAPH_SHUTDOWN_TIMEOUT`. `mfgraph-server migrate` applies pending migrations and exits. In this build only `/healthz` and `/readyz` are implemented; every other endpoint of [`contracts/openapi.yaml`](contracts/openapi.yaml) answers `501 not_implemented`.
+The server is configured with `MFGRAPH_*` environment variables: `MFGRAPH_HTTP_ADDR`, `MFGRAPH_DB_DSN` (MySQL DSN, optional in this build), `MFGRAPH_MIGRATE_ON_START`, `MFGRAPH_KERNEL_MIGRATIONS`, `MFGRAPH_AUTH_TOKENS` (`token=ACTOR_REF,...`, for example `token=alice` or `token=<ULID>`; see [actor references](docs/api.md#actor-references)), `MFGRAPH_LOG_LEVEL`, `MFGRAPH_LOG_FORMAT`, `MFGRAPH_SHUTDOWN_TIMEOUT`. `mfgraph-server migrate` applies pending migrations and exits. In this build only `/healthz` and `/readyz` are implemented; every other endpoint of [`contracts/openapi.yaml`](contracts/openapi.yaml) answers `501 not_implemented`.
 
 MySQL 8.0 for development runs in Docker (`deploy/docker-compose.dev.yml`, bound to `127.0.0.1`, throwaway credentials):
 
