@@ -10,6 +10,11 @@
 //   - Clock and IDGen.
 //   - Transactor, Tx and EventSink: outbox events are appended in the same
 //     transaction as the business writes.
+//   - Repositories (ProjectRepo, WorkspaceRepo, BranchRepo, UsageRepo,
+//     SnapshotRepo, BlobRepo, IdempotencyRepo) and their aggregate Store:
+//     every write takes the Tx of a WithTx call. ports/memory and
+//     store/mysql implement Store and pass the same contract tests
+//     (ports/porttest).
 //
 // The package depends only on the standard library and contenthash.
 package ports

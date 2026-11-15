@@ -24,14 +24,15 @@ const (
 	EventBranchUpdated    = "branch.updated"
 )
 
-// Event is one outbox row (table outbox_events).
+// Event is one outbox row (table outbox_events). It is written with status
+// pending; the first core slice does not publish events.
 type Event struct {
 	ID          string // event_id, a ULID
 	Type        string
 	WorkspaceID string
 	AggregateID string // e.g. the snapshot_id
-	Payload     []byte // canonical JSON
-	CreatedAt   time.Time
+	Payload     []byte // JSON (encoding/json of a fixed struct)
+	CreatedAtUs int64  // epoch microseconds
 }
 
 // Tx is an open unit of work created by a Transactor. It is passed to every
