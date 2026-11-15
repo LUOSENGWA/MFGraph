@@ -17,6 +17,14 @@
 -- ID and hash columns are CHAR(26) / CHAR(64) with utf8mb4_bin (binary
 -- comparison), not the ascii character set, which seekdb does not support;
 -- the application validates the values.
+-- CHAR(26) IDs are ULIDs that MFGraph generates, plus project_id, which a
+-- host platform passes and which is verified to be a ULID. tenant_id is
+-- MFGraph's own concept: in a standalone deployment it comes from the kernel
+-- bootstrap tables, embedded in a host platform from the deployment
+-- configuration (one fixed tenant ULID; the host platform passes no tenant).
+-- scope_node_id refers to a project node ID that MFGraph generates. IDs that a
+-- host platform generates in an unverified format are external references
+-- (VARBINARY(255)), for example snapshots.workflow_instance_id.
 
 CREATE TABLE IF NOT EXISTS workspaces (
   workspace_id       CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,

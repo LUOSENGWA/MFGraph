@@ -49,6 +49,7 @@ MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBas
 - `snapshots.root_tree_hash_algo` 记录 `root_tree_hash` 的算法（`sha256`）；
 - **操作者用身份引用表示**，不是 ULID：拥有者、创建者、作者都存为 `*_ref VARBINARY(255)`（`owner_ref`、`created_by_ref`、`author_ref`、`on_behalf_of_ref`），按调用者身份字符串原样保存、按字节比较（见[身份引用](api.md#身份引用actor-reference)）；每列另有可空的 `*_principal_uid CHAR(26)`，在宿主平台为其操作者提供 ULID 之前保持 `NULL`。独立部署时，身份引用就是 `principals.principal_uid` 的字符串形式。MFGraph 自己生成的 ID（workspace、branch、snapshot、upload 等）和项目 ID 仍是 `CHAR(26)`；
 - 幂等记录的主键是 `(actor_ref, route, idempotency_key)`（1403 字节）；
+- **ID 列**：`CHAR(26)` 存放 MFGraph 自己生成的 ULID，以及宿主平台传入、已核实为 ULID 的项目 ID；`tenant_id` 是 MFGraph 自己的租户（独立部署时来自 kernel 表，嵌入时来自部署配置），`scope_node_id` 是 MFGraph 生成的项目节点 ID。宿主平台生成、格式未核实的 ID 是**外部引用**，`VARBINARY(255)`，规则与身份引用相同（`snapshots.workflow_instance_id`；Go：`internal/extref`）；
 - branch 使用 `ref_name`（`main`、`workstreams/<workstream_id>/<branch_name>`）；`workstream` 与 `branch` 是不同实体；同一个 workstream 内（包括 main）不能同时存在只在大小写上不同的分支名（如 `Dev` 与 `dev`），由应用检查，不靠列约束；
 - 租约/锁的过期判定一律用 **DB 时间**（`NOW(6)`），不用应用时钟。
 

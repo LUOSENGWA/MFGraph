@@ -63,6 +63,15 @@ var actorColumns = map[string]string{
 	"idempotency_keys.actor_ref":     "NOT NULL",
 }
 
+// externalRefColumns hold IDs that a host platform generates in a format
+// MFGraph has not verified: external references (internal/extref),
+// VARBINARY(255), stored as given and compared byte for byte, not ULIDs. The
+// value is the required nullability. IDs that MFGraph generates and the
+// verified project ID stay CHAR(26).
+var externalRefColumns = map[string]string{
+	"snapshots.workflow_instance_id": "NULL",
+}
+
 var (
 	createRe = regexp.MustCompile(`^CREATE TABLE IF NOT EXISTS ([a-z_]+) \(`)
 	columnRe = regexp.MustCompile(`^\s+([a-z_]+)\s+([A-Z]+(?:\([0-9]+\))?)(.*)$`)
@@ -227,11 +236,16 @@ func checkColumns(t *testing.T, version, table, body string, seenByteColumns map
 		if strings.HasSuffix(name, "_at_us") && typ != "BIGINT" {
 			t.Errorf("%s: %s.%s must be BIGINT epoch micros, is %s", version, table, name, typ)
 		}
-		if (strings.HasSuffix(name, "_id") || strings.HasSuffix(name, "_uid")) && name != "storage_backend_id" &&
-			name != "backend_upload_id" && typ != "CHAR(26)" {
-			t.Errorf("%s: %s.%s must be a ULID CHAR(26), is %s", version, table, name, typ)
-		}
 		col := table + "." + name
+		if want, ok := externalRefColumns[col]; ok {
+			if typ != "VARBINARY(255)" || nullability(rest) != want {
+				t.Errorf("%s: %s is an external reference: VARBINARY(255) %s, is %s%s", version, col, want, typ, rest)
+			}
+		} else if (strings.HasSuffix(name, "_id") || strings.HasSuffix(name, "_uid")) && name != "storage_backend_id" &&
+			name != "backend_upload_id" && typ != "CHAR(26)" {
+			t.Errorf("%s: %s.%s must be a ULID CHAR(26) (or an external reference listed in externalRefColumns), is %s",
+				version, table, name, typ)
+		}
 		if want, ok := byteColumns[col]; ok {
 			seenByteColumns[col] = true
 			if typ != want {

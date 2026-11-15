@@ -3,6 +3,9 @@
 -- owned by the host and this directory is not executed.
 -- Conventions: IDs are ULIDs (CHAR(26) utf8mb4_bin), times are epoch
 -- microseconds (BIGINT), states are VARCHAR checked by the application.
+-- tenant_id is MFGraph's tenant ULID: these tables provide it in a standalone
+-- deployment; embedded in a host platform, the deployment configuration
+-- provides one fixed tenant ULID instead.
 -- ID and hash columns use utf8mb4_bin, not the ascii character set: the
 -- migrations run unchanged on MySQL 8.0 and on seekdb, which supports only
 -- the utf8mb4 and binary character sets.
