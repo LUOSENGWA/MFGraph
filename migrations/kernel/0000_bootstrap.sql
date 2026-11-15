@@ -1,12 +1,15 @@
 -- Kernel bootstrap for standalone deployments: minimal projects and
 -- principals. When MFGraph is embedded in a host platform these tables are
 -- owned by the host and this directory is not executed.
--- Conventions: IDs are ULIDs (CHAR(26) ascii_bin), times are epoch
+-- Conventions: IDs are ULIDs (CHAR(26) utf8mb4_bin), times are epoch
 -- microseconds (BIGINT), states are VARCHAR checked by the application.
+-- ID and hash columns use utf8mb4_bin, not the ascii character set: the
+-- migrations run unchanged on MySQL 8.0 and on seekdb, which supports only
+-- the utf8mb4 and binary character sets.
 
 CREATE TABLE IF NOT EXISTS projects (
-  project_id     CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  tenant_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  project_id     CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  tenant_id      CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   name           VARCHAR(255) NOT NULL,
   status         VARCHAR(32) NOT NULL DEFAULT 'active',
   created_at_us  BIGINT NOT NULL,
@@ -22,8 +25,8 @@ CREATE TABLE IF NOT EXISTS projects (
 -- value). Embedded in a host platform, actor references are the host's own
 -- identity strings and this table is not used.
 CREATE TABLE IF NOT EXISTS principals (
-  principal_uid  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  tenant_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  principal_uid  CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  tenant_id      CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   display_name   VARCHAR(255) NOT NULL DEFAULT '',
   kind           VARCHAR(32) NOT NULL,
   status         VARCHAR(32) NOT NULL DEFAULT 'active',

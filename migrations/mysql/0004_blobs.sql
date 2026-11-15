@@ -7,8 +7,8 @@
 -- Chunk and pack tables belong to a later schema version.
 
 CREATE TABLE IF NOT EXISTS blobs (
-  workspace_id  CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  blob_hash     CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  workspace_id  CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  blob_hash     CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   hash_algo     VARCHAR(16) NOT NULL DEFAULT 'sha256',
   size_bytes    BIGINT UNSIGNED NOT NULL,
   storage_key   VARBINARY(1024) NOT NULL,

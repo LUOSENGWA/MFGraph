@@ -8,20 +8,20 @@
 -- an actor reference with an optional principal UID (see 0001_workspaces.sql).
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
-  upload_id          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  workspace_id       CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  workstream_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  upload_id          CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  workspace_id       CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  workstream_id      CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   path               VARBINARY(4096) NOT NULL,
   size_bytes         BIGINT UNSIGNED NOT NULL,
   content_type       VARCHAR(255) NULL,
-  checksum_sha256    CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  checksum_sha256    CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   part_size_bytes    BIGINT UNSIGNED NOT NULL,
   total_parts        INT UNSIGNED NOT NULL,
   storage_backend_id VARCHAR(64) NOT NULL,
   backend_upload_id  VARCHAR(1024) NOT NULL,
   status             VARCHAR(16) NOT NULL DEFAULT 'initiated',
   created_by_ref     VARBINARY(255) NOT NULL,
-  created_by_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  created_by_principal_uid CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   created_at_us      BIGINT NOT NULL,
   expires_at_us      BIGINT NOT NULL,
   completed_at_us    BIGINT NULL,
@@ -31,11 +31,11 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS upload_parts (
-  upload_id       CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  upload_id       CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   part_number     INT UNSIGNED NOT NULL,
   size_bytes      BIGINT UNSIGNED NOT NULL,
   etag            VARCHAR(128) NULL,
-  checksum_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  checksum_sha256 CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   status          VARCHAR(16) NOT NULL DEFAULT 'pending',
   updated_at_us   BIGINT NOT NULL,
   PRIMARY KEY (upload_id, part_number)

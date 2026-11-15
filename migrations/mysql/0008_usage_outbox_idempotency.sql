@@ -10,7 +10,7 @@
 -- bytes, below the InnoDB limit of 3072.
 
 CREATE TABLE IF NOT EXISTS workspace_usage (
-  workspace_id   CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  workspace_id   CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   used_bytes     BIGINT UNSIGNED NOT NULL DEFAULT 0,
   reserved_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
   file_count     BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -21,10 +21,10 @@ CREATE TABLE IF NOT EXISTS workspace_usage (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE IF NOT EXISTS outbox_events (
-  event_id         CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  workspace_id     CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  event_id         CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  workspace_id     CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   event_type       VARCHAR(64) NOT NULL,
-  aggregate_id     CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  aggregate_id     CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   payload_json     LONGTEXT NOT NULL,
   status           VARCHAR(16) NOT NULL DEFAULT 'pending',
   retry_count      INT UNSIGNED NOT NULL DEFAULT 0,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   idempotency_key VARBINARY(128) NOT NULL,
   actor_ref       VARBINARY(255) NOT NULL,
   route           VARCHAR(255) NOT NULL,
-  request_hash    CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  request_hash    CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   response_json   LONGTEXT NULL,
   status          VARCHAR(16) NOT NULL DEFAULT 'in_progress',
   created_at_us   BIGINT NOT NULL,

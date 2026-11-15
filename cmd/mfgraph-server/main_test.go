@@ -106,7 +106,21 @@ func TestMigrateCommandMySQL(t *testing.T) {
 	if dsn == "" {
 		t.Skip("MFGRAPH_TEST_MYSQL_DSN not set")
 	}
+	// With MFGRAPH_TEST_DB_WAIT (a duration), wait that long for the server
+	// (seekdb initializes a fresh data directory on first start).
+	var wait time.Duration
+	if v := os.Getenv("MFGRAPH_TEST_DB_WAIT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			t.Fatalf("MFGRAPH_TEST_DB_WAIT: %v", err)
+		}
+		wait = d
+	}
 	db, err := openDB(context.Background(), dsn)
+	for deadline := time.Now().Add(wait); err != nil && time.Now().Before(deadline); {
+		time.Sleep(2 * time.Second)
+		db, err = openDB(context.Background(), dsn)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

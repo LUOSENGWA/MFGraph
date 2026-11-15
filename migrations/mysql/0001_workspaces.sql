@@ -14,19 +14,22 @@
 -- stored as given and compared byte for byte (see the API documentation).
 -- *_principal_uid is an optional ULID of the same actor that a host platform
 -- may provide later; it stays NULL until then.
+-- ID and hash columns are CHAR(26) / CHAR(64) with utf8mb4_bin (binary
+-- comparison), not the ascii character set, which seekdb does not support;
+-- the application validates the values.
 
 CREATE TABLE IF NOT EXISTS workspaces (
-  workspace_id       CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  tenant_id          CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  project_id         CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  scope_node_id      CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  workspace_id       CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  tenant_id          CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  project_id         CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  scope_node_id      CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   workspace_type     VARCHAR(32) NOT NULL,
   scope_path         VARBINARY(4096) NOT NULL DEFAULT '',
   owner_ref          VARBINARY(255) NOT NULL,
-  owner_principal_uid CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  owner_principal_uid CHAR(26) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
   storage_backend_id VARCHAR(64) NOT NULL,
   storage_prefix     VARBINARY(942) NOT NULL,
-  storage_prefix_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  storage_prefix_key CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   display_name       VARCHAR(255) NOT NULL DEFAULT '',
   status             VARCHAR(32) NOT NULL DEFAULT 'active',
   version            BIGINT UNSIGNED NOT NULL DEFAULT 1,

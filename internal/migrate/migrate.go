@@ -204,11 +204,12 @@ func firstLine(stmt string) string {
 }
 
 // VersionTableDDL creates the bookkeeping table: one table for all
-// components, keyed by (component, version).
+// components, keyed by (component, version). It uses utf8mb4_bin rather than
+// the ascii character set so that it runs on MySQL 8.0 and on seekdb alike.
 const VersionTableDDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
-  component     VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  version       VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  checksum      CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  component     VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  version       VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  checksum      CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   applied_at_us BIGINT NOT NULL,
   PRIMARY KEY (component, version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`

@@ -67,7 +67,10 @@ var (
 	// Constructs outside the portable MySQL subset (no ENUM/SET/JSON types,
 	// generated columns, foreign keys, triggers, stored programs, DATETIME or
 	// TIMESTAMP, 8.0-only collations, CHECK constraints, ...).
-	forbidden   = regexp.MustCompile(`(?i)\b(ENUM|SET\s*\(|JSON|GENERATED|AUTO_INCREMENT|FOREIGN\s+KEY|REFERENCES|TRIGGER|PROCEDURE|FUNCTION|DATETIME|TIMESTAMP|RETURNING|utf8mb4_0900\w*|CHECK|SKIP\s+LOCKED|ON\s+UPDATE|PARTITION)\b`)
+	forbidden = regexp.MustCompile(`(?i)\b(ENUM|SET\s*\(|JSON|GENERATED|AUTO_INCREMENT|FOREIGN\s+KEY|REFERENCES|TRIGGER|PROCEDURE|FUNCTION|DATETIME|TIMESTAMP|RETURNING|utf8mb4_0900\w*|CHECK|SKIP\s+LOCKED|ON\s+UPDATE|PARTITION)\b`)
+	// seekdb supports only the utf8mb4 and binary character sets: every
+	// column-level character set is utf8mb4 with utf8mb4_bin.
+	charsetRe   = regexp.MustCompile(`(?i)\b(CHARACTER\s+SET|CHARSET|COLLATE)\s*=?\s*([a-z0-9_]+)`)
 	tableSuffix = ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 )
 
@@ -115,6 +118,12 @@ func TestMigrationFiles(t *testing.T) {
 				}
 				if f := forbidden.FindString(body); f != "" {
 					t.Errorf("%s: table %s uses forbidden construct %q", m.Version, table, f)
+				}
+				for _, cs := range charsetRe.FindAllStringSubmatch(body, -1) {
+					if v := strings.ToLower(cs[2]); v != "utf8mb4" && v != "utf8mb4_bin" {
+						t.Errorf("%s: table %s uses %s %s; only utf8mb4 / utf8mb4_bin run on MySQL 8.0 and seekdb",
+							m.Version, table, cs[1], cs[2])
+					}
 				}
 				checkColumns(t, m.Version, table, body, seenByteColumns)
 				checkActorColumns(t, m.Version, table, body, seenActorColumns)
@@ -197,7 +206,7 @@ func checkActorColumns(t *testing.T, version, table, body string, seen map[strin
 	}
 }
 
-// checkColumns enforces the type conventions: IDs and hashes are ascii_bin,
+// checkColumns enforces the type conventions: IDs and hashes are utf8mb4_bin,
 // times are BIGINT epoch microseconds, names, paths, refs and keys are
 // VARBINARY (byteColumns).
 func checkColumns(t *testing.T, version, table, body string, seenByteColumns map[string]bool) {
@@ -209,8 +218,8 @@ func checkColumns(t *testing.T, version, table, body string, seenByteColumns map
 		}
 		name, typ, rest := m[1], m[2], m[3]
 		if typ == "CHAR(26)" || typ == "CHAR(64)" {
-			if !strings.Contains(rest, "CHARACTER SET ascii COLLATE ascii_bin") {
-				t.Errorf("%s: %s.%s %s must be ascii_bin", version, table, name, typ)
+			if !strings.Contains(rest, "CHARACTER SET utf8mb4 COLLATE utf8mb4_bin") {
+				t.Errorf("%s: %s.%s %s must be CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", version, table, name, typ)
 			}
 		}
 		if strings.HasSuffix(name, "_at_us") && typ != "BIGINT" {

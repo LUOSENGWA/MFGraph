@@ -22,10 +22,13 @@ import (
 	"github.com/LUOSENGWA/MFGraph/migrations"
 )
 
-// TestMySQL runs the real migrations against a MySQL server. It needs
+// TestMySQL runs the real migrations against a MySQL-protocol server: MySQL
+// 8.0 (`make test-mysql`) or seekdb (`make test-seekdb`). It needs
 // MFGRAPH_TEST_MYSQL_DSN (a go-sql-driver DSN of a user that may create and
-// drop databases, e.g. "root:mfgraph@tcp(127.0.0.1:3306)/"); see
-// `make test-mysql`. Every run uses a fresh, uniquely named database.
+// drop databases, e.g. "root:mfgraph@tcp(127.0.0.1:3306)/" or
+// "root@tcp(127.0.0.1:2881)/"). Every run uses a fresh, uniquely named
+// database. With MFGRAPH_TEST_DB_WAIT (a duration) it first waits that long
+// for the server to answer queries.
 func TestMySQL(t *testing.T) {
 	dsn := os.Getenv("MFGRAPH_TEST_MYSQL_DSN")
 	if dsn == "" {
@@ -43,7 +46,7 @@ func TestMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admin.Close()
-	if err := admin.PingContext(ctx); err != nil {
+	if err := waitForDB(ctx, admin); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	var version string
@@ -152,7 +155,7 @@ func listTables(t *testing.T, db *sql.DB, schema string) []string {
 }
 
 // checkSchemaConventions verifies what the server actually created: InnoDB,
-// utf8mb4_bin tables, ascii_bin ULID and hash columns.
+// utf8mb4_bin tables, utf8mb4_bin ULID and hash columns.
 func checkSchemaConventions(t *testing.T, db *sql.DB, schema string) {
 	t.Helper()
 	rows, err := db.Query("SELECT table_name, engine, table_collation FROM information_schema.tables WHERE table_schema = ?", schema)
@@ -182,8 +185,8 @@ func checkSchemaConventions(t *testing.T, db *sql.DB, schema string) {
 			t.Fatal(err)
 		}
 		n++
-		if coll != "ascii_bin" {
-			t.Errorf("%s.%s %s has collation %q, want ascii_bin", table, col, typ, coll)
+		if coll != "utf8mb4_bin" {
+			t.Errorf("%s.%s %s has collation %q, want utf8mb4_bin", table, col, typ, coll)
 		}
 	}
 	if n == 0 {
@@ -423,4 +426,29 @@ func checkActorRefs(t *testing.T, db *sql.DB) {
 	t.Logf("measured: actor references manager, a 253-character worker name, @alice:example.com, a 255-byte @user:server ID "+
 		"and a ULID are stored in snapshots.author_ref and idempotency_keys.actor_ref and read back exactly; \"a\" and \"a \" "+
 		"are two values; a 256-byte reference: %v", err)
+}
+
+// waitForDB returns once the server answers SELECT 1. Without
+// MFGRAPH_TEST_DB_WAIT it tries once; with it, it retries every two seconds
+// for that long (seekdb needs a while to initialize a fresh data directory).
+func waitForDB(ctx context.Context, db *sql.DB) error {
+	var wait time.Duration
+	if v := os.Getenv("MFGRAPH_TEST_DB_WAIT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("MFGRAPH_TEST_DB_WAIT: %w", err)
+		}
+		wait = d
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		var one int
+		err := db.QueryRowContext(qctx, "SELECT 1").Scan(&one)
+		cancel()
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
