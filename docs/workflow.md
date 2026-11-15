@@ -69,7 +69,7 @@ Optional:
 
 ## No dispatch
 
-MFGraph does **not** assign or dispatch tasks (MF-D32). A `workstream` is only a version lane (active/archived); task assignment, dispatch and task status belong to the external task/workflow system. MFGraph emits domain events (e.g. `mfgraph.snapshot.created.v1`) and the workflow engine may write back `workflow_ref` (reference only).
+MFGraph does **not** assign or dispatch tasks. A `workstream` is only a version lane (active/archived); task assignment, dispatch and task status belong to the external task/workflow system. MFGraph emits domain events (e.g. `mfgraph.snapshot.created.v1`) and the workflow engine may write back `workflow_ref` (reference only).
 
 ## Security
 

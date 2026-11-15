@@ -7,7 +7,8 @@
 - **只冻结 M1.0a 面**：schema 迁移 0000–0004/0006/0008、BlobStore SPI、API/OpenAPI、事件 schema、FormatHandler SPI、身份/授权；
 - fixture：upload→commit→restore、manifest tree（纯内容 + 确定性编码）、路径文法正反例；
 - 锁/GC/project commit/restore/fencing 的 fixture **移到 M1.0b 门**；
-- 门：所有契约评审通过；冻结后不做破坏性变更。seekdb 5.7 仅作实验档可选校验。
+- 门：所有契约评审通过；冻结后不做破坏性变更。CI 在 MySQL 8.0 和 seekdb 上测试迁移。
+- 现状：内容格式（[规范](../spec/zh-CN/content-format.md)）及交叉核对过的测试向量、迁移 0000–0004/0006/0008 与按 checksum 校验的执行器、OpenAPI 契约与生成的服务端桩代码、核心 ports 与内存实现、端到端验收测试（M1.0a 之前以 501 失败）以及 CI 已就位。FormatHandler SPI 与 MCP 工具 schema 随后续切片提供。
 
 ## M1 — 核心（G1）
 
@@ -20,7 +21,7 @@
 - 可选 `mfgraph-merge`（文本三方合并，默认关闭；二进制仅锁）；
 - **只投递事件**的工作流适配器（MFGraph 不指派、不派发任务）；
 - 可选 webhook/治理适配器；
-- 门：工作流 e2e；无引擎路径仍可用；MFGraph 与 TaskForge 只通过 ID 互相引用。
+- 门：工作流 e2e；无引擎路径仍可用；MFGraph 与工作流引擎只通过 ID 互相引用。
 
 ## M3 — 格式（G3）
 

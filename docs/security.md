@@ -4,7 +4,7 @@
 
 ## Identity
 
-- `principal_uid` (ULID) is the canonical identity.
+- Every caller is an actor, identified by its **actor reference**: the identity string the host platform passes (a worker name, a user name, an ID such as `@alice:example.com`), or in a standalone deployment the string form of the principal's `principal_uid` (ULID). Actor references are at most 255 bytes of UTF-8 without control characters, stored as given and compared byte for byte (see [actor references](api.md#actor-references)). A ULID for an actor (`*_principal_uid`) is optional.
 - Human, agent, service, and team are all principals; authorization does not branch on `kind`.
 - External identities: OIDC `sub`, Matrix MXID, email; optional.
 - Agent/service tokens are short-lived capability tokens.
@@ -54,6 +54,7 @@ Roles:
 - tenant isolation by `tenant_id` + storage prefix;
 - retention/legal hold/WORM for regulated profiles;
 - audit append-only; no tokens/file content in logs.
+- actor references are personal data: log records at info level and above identify a caller only as `actor`, the first 16 hex digits of SHA-256(actor reference), so the records of one actor can be linked without showing who it is; the raw reference (and a principal UID, which in a standalone deployment equals it) appears only in debug-level records.
 
 ## Threat model (STRIDE)
 

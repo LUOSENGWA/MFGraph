@@ -1,0 +1,59 @@
+# Development databases for MFGraph: MySQL 8.0 and seekdb.
+#
+#   make dev-db-up      # start MySQL and wait until healthy
+#   make test-mysql     # run the migration tests against MySQL
+#   make dev-seekdb-up  # start seekdb and wait until healthy
+#   make test-seekdb    # run the same migration tests against seekdb
+#   make dev-db-down    # stop (data is kept in the named volumes)
+#   make dev-db-reset   # stop and delete the data volumes (both databases)
+#
+# The credentials below are for throwaway local containers only. Ports are
+# bound to 127.0.0.1; override them with MFGRAPH_DEV_MYSQL_PORT and
+# MFGRAPH_DEV_SEEKDB_PORT.
+name: mfgraph-dev
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: mfgraph
+      MYSQL_DATABASE: mfgraph
+      MYSQL_USER: mfgraph
+      MYSQL_PASSWORD: mfgraph
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_bin
+    ports:
+      - "127.0.0.1:${MFGRAPH_DEV_MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pmfgraph", "--silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  # seekdb: a single-node database compatible with a subset of MySQL 5.7,
+  # used by single-machine deployments of a host platform. The image is for
+  # testing only. Pinned to oceanbase/seekdb:1.4.0-100000172026082615
+  # (seekdb 1.4.0, image built 2026-10-10, pulled 2026-11-14; published for
+  # linux/amd64 and linux/arm64, so no emulation is needed on arm64 hosts).
+  # MySQL protocol on port 2881, user root without a password; it needs at
+  # least 2 GB of memory and takes a minute or two to initialize a fresh
+  # data directory.
+  seekdb:
+    image: oceanbase/seekdb:1.4.0-100000172026082615
+    ports:
+      - "127.0.0.1:${MFGRAPH_DEV_SEEKDB_PORT:-2881}:2881"
+    healthcheck:
+      test: ["CMD", "mysql", "-h127.0.0.1", "-P2881", "-uroot", "--connect-timeout=2", "-e", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 60s
+      retries: 120
+    volumes:
+      - seekdb-data:/var/lib/seekdb
+
+volumes:
+  mysql-data:
+  seekdb-data:

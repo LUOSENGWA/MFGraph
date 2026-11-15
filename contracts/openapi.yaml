@@ -1,0 +1,1306 @@
+openapi: 3.0.3
+info:
+  title: MFGraph API
+  version: 1.0.0-m0
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  description: |
+    HTTP API of MFGraph, first core slice: projects, project-level
+    workspaces with a main branch, whole-file uploads into staging, commits,
+    timeline, tree browsing, file download, diff and restore. Later slices add
+    endpoints without changing the ones below.
+
+    ## Conventions
+
+    * **Authentication.** Every endpoint except `/healthz` and `/readyz`
+      requires `Authorization: Bearer <token>`. A missing or unknown token
+      gives `401 unauthenticated`.
+    * **Request IDs.** A valid `X-Request-Id` request header (1–128 visible
+      ASCII characters) is reused; otherwise the server generates a ULID.
+      Every response, including errors, carries `X-Request-Id`, and error
+      bodies repeat it as `request_id`.
+    * **Idempotency.** Every POST accepts `Idempotency-Key`. Repeating a
+      request with the same actor (actor reference), key and route returns
+      the stored response of the first request. The same key with a different request
+      body gives `409 idempotency_key_reuse`. Keys are kept for 24 hours.
+    * **Errors.** Every error has the same flat body:
+      `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`
+      (`request_id` and `details` are optional). `code` is stable and machine
+      readable; `message` is for humans. Clients must handle unknown codes by
+      HTTP status. Each operation lists the codes it can return; any
+      operation may also return `internal` (500), `not_implemented` (501),
+      `rate_limited` (429) and `db_unavailable` / `storage_unavailable` (503).
+    * **Pagination.** List endpoints take an opaque `cursor` and `limit`
+      (default 50, maximum 500) and return `{"items": [...], "next_cursor": ...}`;
+      `next_cursor` is `null` on the last page.
+    * **Identifiers.** IDs are ULIDs (26 uppercase Crockford base32
+      characters). URL paths contain only IDs; file paths are always passed as
+      the `path` query parameter or in request bodies.
+    * **Actors.** Who performed an operation is recorded as an actor
+      reference (`ActorRef`), the caller's identity string: the host
+      platform's own identity for it, or in a standalone deployment the string
+      form of the principal's ULID. Fields named `*_ref` carry it; the optional
+      `*_principal_uid` is the actor's ULID when known and `null` otherwise.
+    * **File paths** (docs/spec/content-format.md, section 2). Paths are
+      relative and `/`-separated. The names a commit creates must satisfy the
+      write-time rules: valid UTF-8, not empty, no leading `/`, no `\`, no
+      control character (U+0000-U+001F, U+007F-U+009F), no noncharacter
+      (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), no character of the fixed
+      disallowed list (bidi controls and invisible characters), no code point
+      unassigned in Unicode 15.0.0; the server converts the path to NFC; then
+      no empty, `.` or `..` segment, at most 255 bytes per segment and 4096
+      bytes in total (UTF-8, after NFC). Within one directory a name may not
+      be used for a file and a directory, and two names may not have the same
+      case-fold key NFD(casefold(NFD(name))). On a commit these rules apply
+      only to the names a change creates (the segments of its path that do not
+      exist in the base snapshot), including conflicts with the names already
+      in the directory. A change that replaces or deletes a file finds it as
+      described under "Looking up a path" and does not apply them: the file
+      keeps its stored path. Entries carried over from the base snapshot, or
+      restored from another snapshot, keep their stored bytes and are not
+      checked again.
+    * **Looking up a path** (the `path` parameter of the tree and file
+      operations, `path` of a restore, and `path` of a commit change that
+      replaces or deletes a file): (1) the path as sent must be valid UTF-8,
+      not empty, without a leading `/`, and contain no `\`, control character
+      or noncharacter; (2) the server converts it to NFC; (3) the NFC form
+      must not have an empty, `.` or `..` segment, and must not exceed 255 bytes
+      per segment and 4096 bytes in total; (4) the server looks for the entry
+      whose path is byte for byte the path as sent, and if there is none, for
+      the entry whose path is the NFC form. Unassigned code points, the
+      disallowed list and case are not checked for lookups, so names that the
+      write-time rules would reject today can still be found, and a stored
+      name that is not in NFC is found by sending its exact bytes.
+    * **Paths in responses** are always the stored form, which is NFC for
+      every name written under the write-time rules. NFC can change what a
+      client sent: for example the CJK compatibility ideograph U+FA10 becomes
+      U+585A, and `e` + U+0301 becomes U+00E9.
+    * **Path order.** Lists of paths (diffs, and the entries of a directory)
+      are in path order: paths are compared segment by segment, each segment
+      by its UTF-8 bytes, and a path sorts before the paths below it. This is
+      the order of a tree walk; it is not the byte order of the full path
+      strings (`a`, `a/x`, `a-b`, `a.txt` in path order, but `a`, `a-b`,
+      `a.txt`, `a/x` by bytes).
+    * **Path errors** give `422 invalid_path`; `details.kind` (enum
+      `PathErrorKind`) names the violated rule. The kind is guaranteed only
+      when a path breaks a single rule; with several violations any of them
+      may be reported.
+    * **Hashes.** Content and tree hashes are `sha256:` followed by 64
+      lowercase hex digits; nothing else is accepted.
+    * **Times.** RFC 3339 strings in UTC with a `Z` suffix and up to
+      microsecond precision.
+    * **Ownership.** Every ID is resolved to the workspace (or project) it
+      belongs to before authorization. A resource that does not exist and a
+      resource of another workspace the caller cannot access give the same
+      `404 not_found`.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+tags:
+  - name: health
+  - name: projects
+  - name: workspaces
+  - name: objects
+  - name: snapshots
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealthz
+      summary: Liveness probe
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        default:
+          $ref: '#/components/responses/Error'
+  /readyz:
+    get:
+      tags: [health]
+      operationId: getReadyz
+      summary: Readiness probe
+      description: |
+        Checks the configured dependencies. Errors: `db_unavailable`,
+        `storage_unavailable` (503).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/projects:
+    post:
+      tags: [projects]
+      operationId: createProject
+      summary: Create a project (standalone deployments)
+      description: |
+        Kernel capability of standalone deployments. When MFGraph is embedded
+        in a host platform, projects are managed by the host and this
+        endpoint is not exposed. The project is created in the tenant of the
+        caller.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+        (403), `idempotency_key_reuse` (409).
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/projects/{project_id}:
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: Get a project
+      description: 'Errors: `unauthenticated` (401), `not_found` (404).'
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The project.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/workspaces:
+    post:
+      tags: [workspaces]
+      operationId: createWorkspace
+      summary: Create a project-level workspace and its main branch
+      description: |
+        Creates the workspace and, in the same transaction, its `main` branch
+        (`ref_name` `main`, generation 1, no head). The storage prefix is
+        chosen by the server and never changes.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+        (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/workspaces/{workspace_id}:
+    get:
+      tags: [workspaces]
+      operationId: getWorkspace
+      summary: Get a workspace
+      description: 'Errors: `unauthenticated` (401), `not_found` (404).'
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/workspaces/{workspace_id}/branches:
+    get:
+      tags: [workspaces]
+      operationId: listBranches
+      summary: List the branches of a workspace
+      description: |
+        Ordered by `ref_name`.
+
+        Errors: `invalid_request` (400, cursor or limit), `unauthenticated`
+        (401), `not_found` (404).
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: One page of branches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BranchList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/workspaces/{workspace_id}/objects:
+    put:
+      tags: [objects]
+      operationId: putObject
+      summary: Upload a whole file into the workspace staging area
+      description: |
+        The request body is the exact file content. The server streams it,
+        computes its SHA-256 and stores it as a staged content object of this
+        workspace. Uploading creates no snapshot; reference the returned hash
+        in a commit. Uploading content that is already present is a no-op
+        (200). If `X-Content-SHA256` is given and does not match, nothing is
+        stored and the server answers `400 invalid_request` with
+        `details.reason` = `checksum_mismatch`. An empty body is valid: it
+        uploads the empty file
+        (`sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`).
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+        (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: X-Content-SHA256
+          in: header
+          required: false
+          description: Expected content hash, verified after the upload.
+          schema:
+            $ref: '#/components/schemas/Hash'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        description: The exact file content; may be empty (zero bytes).
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: The content was already present in this workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagedObject'
+        '201':
+          description: The content was stored and staged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagedObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/workspaces/{workspace_id}/commits:
+    post:
+      tags: [snapshots]
+      operationId: createCommit
+      summary: Commit changes to a branch (the only way to create a snapshot)
+      description: |
+        Applies `changes` to the head of `branch_id` and creates a snapshot.
+        In one database transaction the server inserts the snapshot and its
+        parent, moves the branch head with a compare-and-swap on
+        `expected_generation` and writes the outbox event.
+
+        * Each `path` is first looked up in the base snapshot (the current
+          head of `branch_id`) as described under "Looking up a path".
+        * A change with `hash` replaces the file found, which keeps its
+          stored path; if no file is found, it adds a file at `path`, and the
+          names this creates (the segments of `path` that do not exist in the
+          base snapshot) must satisfy the write-time rules (see "File paths").
+          The content must have been uploaded to this workspace. `mode` is
+          optional: an explicit `mode` (420 regular, 493 executable) always
+          wins; without it, a replaced file keeps its existing mode, and a
+          new file gets 420.
+        * A change with `delete: true` removes the file found; the
+          write-time rules are not applied to it.
+        * Each path may appear once per request; the request needs at least
+          one change.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+        (403), `not_found` (404, workspace or branch), `conflict` (409:
+        `expected_generation` is not the current generation, with
+        `details.current_generation`; or deleting a path that is not a file,
+        with `details.reason` = `path_not_found`), `idempotency_key_reuse`
+        (409), `blob_missing` (410, a referenced hash is not stored in this
+        workspace, with `details.hashes`), `invalid_path` (422).
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitRequest'
+      responses:
+        '201':
+          description: The new snapshot and the new branch generation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/workspaces/{workspace_id}/timeline:
+    get:
+      tags: [snapshots]
+      operationId: getTimeline
+      summary: List snapshots, newest first
+      description: |
+        Snapshots of the workspace, newest first; with `branch_id`, only the
+        snapshots committed to that branch.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `not_found`
+        (404, workspace or branch).
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ULID'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: One page of snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/snapshots/{snapshot_id}:
+    get:
+      tags: [snapshots]
+      operationId: getSnapshot
+      summary: Get snapshot metadata
+      description: 'Errors: `unauthenticated` (401), `not_found` (404).'
+      parameters:
+        - $ref: '#/components/parameters/SnapshotId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/snapshots/{snapshot_id}/tree:
+    get:
+      tags: [snapshots]
+      operationId: listSnapshotTree
+      summary: List one directory of a snapshot
+      description: |
+        Lists the entries of the directory `path` (the root when `path` is
+        omitted or empty) in byte order of their names, which is path order
+        within one directory. `path` is looked up as described under
+        "Looking up a path".
+
+        Errors: `invalid_request` (400; `details.reason` = `not_a_directory`
+        when `path` names a file), `unauthenticated` (401), `not_found` (404,
+        snapshot or path), `invalid_path` (422).
+      parameters:
+        - $ref: '#/components/parameters/SnapshotId'
+        - name: path
+          in: query
+          required: false
+          description: Directory path, looked up as described under "Looking up a path" (the bytes as sent first, then the NFC form); omit or leave empty for the root.
+          schema:
+            type: string
+            maxLength: 4096
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: One page of directory entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TreeListing'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/snapshots/{snapshot_id}/file:
+    get:
+      tags: [snapshots]
+      operationId: getSnapshotFile
+      summary: Download a file of a snapshot
+      description: |
+        Returns the file content. A single `Range: bytes=...` range is
+        supported (206); several ranges are not. `ETag` is the quoted content
+        hash and `If-None-Match` with it gives 304.
+
+        Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
+        `path` names a directory), `unauthenticated` (401), `not_found` (404,
+        snapshot or path), `blob_missing` (410, content lost from storage),
+        `invalid_request` with status 416 (range not satisfiable),
+        `invalid_path` (422).
+      parameters:
+        - $ref: '#/components/parameters/SnapshotId'
+        - $ref: '#/components/parameters/FilePath'
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+            example: bytes=0-1048575
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The whole file.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: One byte range of the file.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Range:
+              description: '`bytes <first>-<last>/<size>`'
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Not modified (`If-None-Match` matched the ETag).
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '416':
+          description: 'Range not satisfiable; `Content-Range: bytes */<size>`.'
+          headers:
+            Content-Range:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/snapshots/{snapshot_id}/diff:
+    get:
+      tags: [snapshots]
+      operationId: getSnapshotDiff
+      summary: Compare a snapshot with a base snapshot
+      description: |
+        File-level differences from `base` to this snapshot, in path order
+        (segment by segment; see "Path order").
+        Without `base` the first parent is used (the empty tree for a root
+        snapshot). Both snapshots must belong to the same workspace.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `not_found`
+        (404, either snapshot).
+      parameters:
+        - $ref: '#/components/parameters/SnapshotId'
+        - name: base
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ULID'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: One page of changed files.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Diff'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/snapshots/{snapshot_id}/restore:
+    post:
+      tags: [snapshots]
+      operationId: restoreSnapshot
+      summary: Restore a snapshot (or one path of it) onto a branch
+      description: |
+        Creates a new snapshot on `branch_id` whose parent is the current
+        head. Without `path` its tree equals the tree of `{snapshot_id}`;
+        with `path` only that file or directory is restored (removed if it
+        does not exist in `{snapshot_id}`) and everything else is kept from
+        the head. `path` is looked up as described under "Looking up a
+        path". History is never rewritten.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+        (403), `not_found` (404, snapshot or branch), `conflict` (409,
+        generation mismatch with `details.current_generation`),
+        `idempotency_key_reuse` (409), `invalid_path` (422).
+      parameters:
+        - $ref: '#/components/parameters/SnapshotId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+      responses:
+        '201':
+          description: The new snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque bearer token mapped to one principal (one actor reference) by the server.
+  headers:
+    ETag:
+      description: Quoted content hash, e.g. `"sha256:2cf2…9824"`.
+      schema:
+        type: string
+    AcceptRanges:
+      schema:
+        type: string
+        enum: [bytes]
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Client request ID; reused when valid, otherwise replaced.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[!-~]+$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Retry key (UUID or ULID recommended); see Conventions.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[!-~]+$'
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ULID'
+    WorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ULID'
+    SnapshotId:
+      name: snapshot_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ULID'
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from `next_cursor` of the previous page.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 1024
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 500
+        default: 50
+    FilePath:
+      name: path
+      in: query
+      required: true
+      description: File path, looked up as described under "Looking up a path" (the bytes as sent first, then the NFC form).
+      schema:
+        $ref: '#/components/schemas/FilePath'
+  responses:
+    BadRequest:
+      description: '`invalid_request`: malformed parameters or body.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthenticated:
+      description: '`unauthenticated`: missing or unknown bearer token.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: '`forbidden`: the caller can see the resource but may not change it.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: '`not_found`: the resource does not exist or is not visible to the caller.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: '`conflict` or `idempotency_key_reuse`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Gone:
+      description: '`blob_missing`: referenced content is not stored in this workspace.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PayloadTooLarge:
+      description: '`file_too_large` or `quota_exceeded`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: '`invalid_path`, with `details.kind` (`PathErrorKind`) naming the violated rule.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: '`db_unavailable` or `storage_unavailable`; retry later.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error:
+      description: |
+        Any other error, for example `internal` (500), `not_implemented`
+        (501), `rate_limited` (429), `db_unavailable` / `storage_unavailable`
+        (503).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    ULID:
+      type: string
+      description: ULID, 26 uppercase Crockford base32 characters.
+      pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+      example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
+    Hash:
+      type: string
+      description: '`sha256:` followed by 64 lowercase hex digits.'
+      pattern: '^sha256:[0-9a-f]{64}$'
+      example: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+    ActorRef:
+      type: string
+      minLength: 1
+      maxLength: 255
+      description: |
+        Actor reference: the identity string of whoever performed an operation
+        (the authenticated caller, or the actor it acted on behalf of). A host
+        platform passes its own identity strings, for example a worker name, a
+        user name such as `manager`, or an ID such as `@alice:example.com`; in
+        a standalone deployment it is the string form of the principal's ULID.
+        Non-empty valid UTF-8, at most 255 bytes (not characters), no control
+        characters (U+0000-U+001F, U+007F-U+009F). Stored exactly as given and
+        compared byte for byte: no Unicode normalization, no case folding, no
+        check that it is a ULID (`a` and `a ` are two actors).
+      example: manager
+    FilePath:
+      type: string
+      description: Relative file path; see "File paths" and "Looking up a path" in the API description.
+      minLength: 1
+      maxLength: 4096
+      example: docs/specs/format.md
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339, UTC (`Z`), up to microsecond precision.
+      example: '2026-11-13T08:30:00.123456Z'
+    FileMode:
+      type: integer
+      description: 420 (0644, regular file) or 493 (0755, executable).
+      enum: [420, 493]
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            Stable machine-readable code: invalid_request, unauthenticated,
+            forbidden, not_found, conflict, idempotency_key_reuse,
+            upload_expired, blob_missing, precondition_failed,
+            quota_exceeded, file_too_large, invalid_path, unsupported_format,
+            rate_limited, internal, not_implemented, storage_unavailable,
+            db_unavailable.
+          example: not_implemented
+        message:
+          type: string
+          description: Human-readable explanation; not stable.
+        request_id:
+          type: string
+          description: Same value as the X-Request-Id response header.
+        details:
+          type: object
+          additionalProperties: true
+          description: |
+            Optional machine-readable details, specific to the code. For
+            `invalid_path`, `kind` names the violated path rule.
+          properties:
+            kind:
+              $ref: '#/components/schemas/PathErrorKind'
+          # Keep the generated Go type a plain map; the properties document
+          # the known keys.
+          x-go-type: map[string]interface{}
+    PathErrorKind:
+      type: string
+      description: |
+        The path rule an `invalid_path` error reports (docs/spec/content-format.md,
+        section 2): `empty`, `invalid_utf8`, `absolute` (leading `/`),
+        `backslash`, `control_char` (C0, DEL, C1), `noncharacter`
+        (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), `disallowed_char` (the fixed list
+        of bidi controls and invisible characters), `unassigned_char` (not
+        assigned in Unicode 15.0.0), `empty_segment`, `dot_segment` (`.` or
+        `..`), `segment_too_long` (over 255 bytes), `path_too_long` (over 4096
+        bytes), `contains_slash` (a name with `/`), `duplicate` (the same path
+        twice), `case_conflict` (two names with the same case-fold key),
+        `file_dir_conflict` (a name used as a file and a directory).
+      enum: [empty, invalid_utf8, absolute, backslash, control_char, noncharacter, disallowed_char,
+        unassigned_char, empty_segment, dot_segment, segment_too_long, path_too_long, contains_slash,
+        duplicate, case_conflict, file_dir_conflict]
+      example: case_conflict
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready]
+        checks:
+          type: object
+          description: 'Result per dependency, for example {"db": "ok"}; not_configured when unused.'
+          additionalProperties:
+            type: string
+    Project:
+      type: object
+      required: [project_id, tenant_id, name, status, created_at, updated_at]
+      properties:
+        project_id:
+          $ref: '#/components/schemas/ULID'
+        tenant_id:
+          $ref: '#/components/schemas/ULID'
+        name:
+          type: string
+        status:
+          type: string
+          description: '`active` or `archived`.'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+    Workspace:
+      type: object
+      required: [workspace_id, project_id, tenant_id, workspace_type, display_name, status, main_branch_id, created_at, updated_at]
+      properties:
+        workspace_id:
+          $ref: '#/components/schemas/ULID'
+        project_id:
+          $ref: '#/components/schemas/ULID'
+        tenant_id:
+          $ref: '#/components/schemas/ULID'
+        workspace_type:
+          type: string
+          description: '`project` (the only type of the first core slice).'
+        display_name:
+          type: string
+        status:
+          type: string
+          description: '`active` or `archived`.'
+        main_branch_id:
+          $ref: '#/components/schemas/ULID'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+    CreateWorkspaceRequest:
+      type: object
+      required: [project_id]
+      properties:
+        project_id:
+          $ref: '#/components/schemas/ULID'
+        display_name:
+          type: string
+          maxLength: 255
+    Branch:
+      type: object
+      required: [branch_id, workspace_id, branch_name, ref_name, branch_type, head_snapshot_id, generation, status, created_at, updated_at]
+      properties:
+        branch_id:
+          $ref: '#/components/schemas/ULID'
+        workspace_id:
+          $ref: '#/components/schemas/ULID'
+        branch_name:
+          type: string
+        ref_name:
+          type: string
+          description: '`main`, or `workstreams/<workstream_id>/<branch_name>`.'
+        branch_type:
+          type: string
+          description: '`main`, `workstream` or `release`.'
+        head_snapshot_id:
+          type: string
+          nullable: true
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+          description: Head snapshot; null for a branch without commits.
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Incremented by every head update; use as expected_generation.
+        status:
+          type: string
+          description: '`active` or `archived`.'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+    BranchList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Branch'
+        next_cursor:
+          type: string
+          nullable: true
+    StagedObject:
+      type: object
+      required: [hash, size, status]
+      properties:
+        hash:
+          $ref: '#/components/schemas/Hash'
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum: [staged, live]
+          description: '`staged` until a snapshot references the content, then `live`.'
+    Change:
+      type: object
+      required: [path]
+      description: |
+        Exactly one of `hash` (with optional `mode`) or `delete: true`.
+        `path` is first looked up in the base snapshot (the branch head) as
+        described under "Looking up a path".
+
+        * Replace: `hash`, and a file is found. The file keeps its stored
+          path; the write-time rules are not applied to it.
+        * Create: `hash`, and no file is found. The names this creates (the
+          segments of `path` that do not exist in the base snapshot) must
+          satisfy the write-time rules (see "File paths") and are stored in
+          NFC.
+        * Delete: `delete: true` removes the file found; the write-time rules
+          are not applied to it. A path that is not found is an error.
+
+        When `mode` is omitted, a replaced file keeps its mode and a new file
+        gets 420; an explicit `mode` always wins.
+      properties:
+        path:
+          $ref: '#/components/schemas/FilePath'
+        hash:
+          $ref: '#/components/schemas/Hash'
+        mode:
+          $ref: '#/components/schemas/FileMode'
+        delete:
+          type: boolean
+          description: Must be true when present.
+    CommitRequest:
+      type: object
+      required: [branch_id, expected_generation, changes]
+      properties:
+        branch_id:
+          $ref: '#/components/schemas/ULID'
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The branch generation the client based the changes on.
+        message:
+          type: string
+          maxLength: 1024
+        changes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Change'
+      example:
+        branch_id: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
+        expected_generation: 1
+        message: add drawings and the build script
+        changes:
+          - path: drawings/A.dwg
+            hash: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+          - path: tools/build.sh
+            hash: sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03
+            mode: 493
+          - path: drawings/old.dwg
+            delete: true
+    CommitResult:
+      type: object
+      required: [snapshot_id, branch_id, ref_name, generation, root_tree_hash, parent_ids, created_at]
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/ULID'
+        branch_id:
+          $ref: '#/components/schemas/ULID'
+        ref_name:
+          type: string
+        generation:
+          type: integer
+          format: int64
+          description: The new branch generation.
+        root_tree_hash:
+          $ref: '#/components/schemas/Hash'
+        parent_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/ULID'
+        restored_from:
+          $ref: '#/components/schemas/ULID'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+    Snapshot:
+      type: object
+      required: [snapshot_id, workspace_id, project_id, branch_id, ref_name, author_ref, message, trigger_kind,
+        root_tree_hash, tree_format_version, parent_ids, entry_count, total_bytes, created_at]
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/ULID'
+        workspace_id:
+          $ref: '#/components/schemas/ULID'
+        project_id:
+          $ref: '#/components/schemas/ULID'
+        branch_id:
+          type: string
+          nullable: true
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+          description: Branch the snapshot was created on.
+        ref_name:
+          type: string
+          description: ref_name of that branch at creation time.
+        author_ref:
+          $ref: '#/components/schemas/ActorRef'
+        author_principal_uid:
+          type: string
+          nullable: true
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+          description: |
+            ULID of the author when it is known (in a standalone deployment the
+            ULID whose string form is `author_ref`); `null` until a host
+            platform provides ULIDs for its actors.
+        message:
+          type: string
+        trigger_kind:
+          type: string
+          description: '`manual` (commit) or `restore`; more values may be added.'
+        root_tree_hash:
+          $ref: '#/components/schemas/Hash'
+        tree_format_version:
+          type: integer
+          format: int32
+        parent_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/ULID'
+        entry_count:
+          type: integer
+          format: int64
+          description: Number of files.
+        total_bytes:
+          type: integer
+          format: int64
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+    SnapshotList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Snapshot'
+        next_cursor:
+          type: string
+          nullable: true
+    TreeEntry:
+      type: object
+      required: [name, path, type, hash]
+      properties:
+        name:
+          type: string
+        path:
+          $ref: '#/components/schemas/FilePath'
+        type:
+          type: string
+          enum: [file, dir]
+        hash:
+          $ref: '#/components/schemas/Hash'
+        size:
+          type: integer
+          format: int64
+          description: Files only.
+        mode:
+          $ref: '#/components/schemas/FileMode'
+    TreeListing:
+      type: object
+      required: [snapshot_id, path, items, next_cursor]
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/ULID'
+        path:
+          type: string
+          description: The listed directory ("" for the root).
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TreeEntry'
+        next_cursor:
+          type: string
+          nullable: true
+    FileVersion:
+      type: object
+      required: [hash, size, mode]
+      properties:
+        hash:
+          $ref: '#/components/schemas/Hash'
+        size:
+          type: integer
+          format: int64
+        mode:
+          $ref: '#/components/schemas/FileMode'
+    DiffEntry:
+      type: object
+      required: [path, change]
+      properties:
+        path:
+          $ref: '#/components/schemas/FilePath'
+        change:
+          type: string
+          enum: [added, modified, deleted]
+        old:
+          $ref: '#/components/schemas/FileVersion'
+        new:
+          $ref: '#/components/schemas/FileVersion'
+    Diff:
+      type: object
+      required: [base_snapshot_id, target_snapshot_id, items, next_cursor]
+      properties:
+        base_snapshot_id:
+          type: string
+          nullable: true
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+          description: null when comparing with the empty tree.
+        target_snapshot_id:
+          $ref: '#/components/schemas/ULID'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiffEntry'
+        next_cursor:
+          type: string
+          nullable: true
+    RestoreRequest:
+      type: object
+      required: [branch_id, expected_generation]
+      properties:
+        branch_id:
+          $ref: '#/components/schemas/ULID'
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 1
+        message:
+          type: string
+          maxLength: 1024
+        path:
+          $ref: '#/components/schemas/FilePath'

@@ -7,7 +7,8 @@
 - **M1.0a scope only**: schema migrations 0000–0004/0006/0008, BlobStore SPI, API/OpenAPI, event schema, FormatHandler SPI, identity/authz;
 - fixtures: upload→commit→restore, manifest tree (pure content + canonical encoding), path grammar (positive/negative cases);
 - locks, GC, project commit/restore and fencing fixtures are **deferred to the M1.0b gate**;
-- exit: all contracts reviewed; no destructive change after freeze. seekdb 5.7 is an experimental, optional check.
+- exit: all contracts reviewed; no destructive change after freeze. CI tests the migrations on MySQL 8.0 and seekdb.
+- status: content formats ([spec](spec/content-format.md)) with cross-checked test vectors, migrations 0000–0004/0006/0008 with a checksum-pinned runner, the OpenAPI contract with generated server stubs, core ports with in-memory implementations, e2e acceptance tests (failing with 501 until M1.0a) and CI are in place. The FormatHandler SPI and MCP tool schemas come with later slices.
 
 ## M1 — core (G1)
 
@@ -20,7 +21,7 @@
 - optional `mfgraph-merge` (text 3-way, default off; binary lock-only);
 - event-only workflow adapter (MFGraph does not assign or dispatch tasks);
 - optional webhook/governance adapter;
-- exit: workflow e2e; no-engine path still works; MFGraph and TaskForge reference each other by IDs only.
+- exit: workflow e2e; no-engine path still works; MFGraph and the workflow engine reference each other by IDs only.
 
 ## M3 — formats (G3)
 

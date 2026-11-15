@@ -4,7 +4,7 @@
 
 ## 身份
 
-- `principal_uid`（ULID）是权威身份。
+- 每个调用者都是一个操作者，用**身份引用**标识：宿主平台传入的身份字符串（worker 名、用户名、`@alice:example.com` 这样的 ID），独立部署时是该 principal 的 `principal_uid`（ULID）的字符串形式。身份引用至多 255 字节 UTF-8、不含控制字符，按原样保存、按字节比较（见[身份引用](api.md#身份引用actor-reference)）。操作者的 ULID（`*_principal_uid`）是可选的。
 - 人、Agent、服务、团队都是 principal；授权不按 `kind` 分支。
 - 外部身份：OIDC `sub`、Matrix MXID、email；均为可选。
 - Agent/服务 token 是短时能力 token。
@@ -54,6 +54,7 @@
 - 按 `tenant_id` + 存储前缀做租户隔离；
 - 受监管场景支持 retention/legal hold/WORM；
 - 审计 append-only；日志不放 token/文件内容。
+- 身份引用属于个人信息：info 及以上级别的日志只用 `actor` 标识调用者，值为 SHA-256(身份引用) 的前 16 位 hex，同一操作者的日志仍能关联，但看不出是谁；原始身份引用（以及独立部署时与之相同的 principal UID）只出现在 debug 级别的日志里。
 
 ## 威胁模型（STRIDE）
 

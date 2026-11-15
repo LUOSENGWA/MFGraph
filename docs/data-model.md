@@ -2,7 +2,7 @@
 
 [English](data-model.md) | [简体中文](zh-CN/data-model.md)
 
-MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset). The schema stores state and indexes, not file bytes. Object storage keeps the bytes; the database keeps references, leases and markers — there is no cross-store transaction.
+MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase MySQL, seekdb 5.7 subset); CI applies the migrations on MySQL 8.0 and on seekdb, and ID and hash columns use `utf8mb4_bin` because seekdb has no `ascii` character set. The schema stores state and indexes, not file bytes. Object storage keeps the bytes; the database keeps references, leases and markers — there is no cross-store transaction.
 
 ## Core tables
 
@@ -41,10 +41,16 @@ MFGraph v1 targets one SQL dialect: **MySQL-compatible** (MySQL 8.0+, OceanBase 
 - JSON is stored as `LONGTEXT`; queries are application-side;
 - paths use NFC + `path_hash = sha256(NFC(path))` for indexes;
 - **content identity**: `content_hash` = whole-file SHA-256 (`sha256:<hex>`), independent of chunk size, backend and upload path; chunking is physical layout only, not part of the identity;
-- **manifest = tree**: tree nodes are pure content with deterministic encoding; `snapshots.root_tree_hash` points to the root node; `mtime` lives in a snapshot sidecar and is not hashed;
+- **manifest = tree**: tree nodes are pure content with deterministic encoding; `snapshots.root_tree_hash` points to the root node; v1 stores no modification times (only the executable bit, as mode 420/493) — see the [content format specification](spec/content-format.md);
 - content tables are **scoped by `workspace_id`** — no cross-workspace deduplication;
 - storage keys in the DB are **relative to `workspaces.storage_prefix`** (immutable, chosen at create time);
-- branches use `ref_name` (`main`, `workstreams/<workstream_id>/<branch_name>`); `workstream` and `branch` are separate entities;
+- **names, paths, refs and keys are `VARBINARY`** and compared byte for byte (`branch_name`, `ref_name`, `default_branch_name`, `scope_path`, `upload_sessions.path`, `storage_prefix`, `storage_key`, `idempotency_key`): `utf8mb4_bin` ignores trailing spaces, but the path rules allow them, so `dev` and `dev ` are two branches. Lengths follow the path rules: names 255 bytes, paths 4096, refs 512, storage prefixes 942;
+- `workspaces.storage_prefix_key` is the hex SHA-256 of the ASCII-lowercased prefix, with `UNIQUE (storage_backend_id, storage_prefix_key)`: two prefixes that differ only in case cannot exist on one backend (nested prefixes are rejected by the application, see the [specification](spec/content-format.md#4-storage-keys));
+- `snapshots.root_tree_hash_algo` names the algorithm of `root_tree_hash` (`sha256`);
+- **actors are actor references**, not ULIDs: owners, creators and authors are stored as `*_ref VARBINARY(255)` (`owner_ref`, `created_by_ref`, `author_ref`, `on_behalf_of_ref`), exactly as the caller's identity string arrives and compared byte for byte (see [actor references](api.md#actor-references)); each has an optional `*_principal_uid CHAR(26)` that stays `NULL` until a host platform provides ULIDs for its actors. In a standalone deployment the reference is the string form of `principals.principal_uid`. IDs that MFGraph generates (workspace, branch, snapshot, upload, ...) and project IDs stay `CHAR(26)`;
+- idempotency records are keyed by `(actor_ref, route, idempotency_key)` (1403 bytes);
+- **ID columns**: `CHAR(26)` holds ULIDs that MFGraph generates and the project ID a host platform passes (verified to be a ULID); `tenant_id` is MFGraph's own tenant (from the kernel tables in a standalone deployment, from the deployment configuration when embedded) and `scope_node_id` a project node ID that MFGraph generates. IDs a host platform generates in an unverified format are **external references**, `VARBINARY(255)` with the same rules as actor references (`snapshots.workflow_instance_id`; Go: `internal/extref`);
+- branches use `ref_name` (`main`, `workstreams/<workstream_id>/<branch_name>`); `workstream` and `branch` are separate entities; branch names that only differ in case (`Dev`, `dev`) must not coexist in one workstream, including the main branch (checked by the application, not by a column);
 - lease/lock expiry always compares **DB time** (`NOW(6)`), never application clocks.
 
 ## Branch refs
@@ -59,17 +65,16 @@ A workstream may have multiple branches. A branch belongs to exactly one workspa
 
 ## Migrations
 
-- `0000_project_nodes.sql` — kernel bootstrap (creates `projects`/`project_nodes` in the host `ops` schema; not an mfgraph module migration)
-- `0001_workspaces.sql`
-- `0002_workstreams_branches.sql`
-- `0003_snapshots_entries.sql`
-- `0004_blobs_packs_chunks.sql`
-- `0005_locks.sql`
-- `0006_uploads.sql`
-- `0007_derived_artifacts.sql`
-- `0008_usage_outbox_idempotency.sql`
-- `0009_project_commits_restore_pins.sql`
-- `0010_workspace_fencing.sql`
-- `0011_gc_state.sql`
+Migrations live in [`migrations/`](../migrations) and are applied by `mfgraph-server migrate` (or `MFGRAPH_MIGRATE_ON_START=true`). The first core slice defines:
+
+- `kernel/0000_bootstrap.sql` — kernel tables for standalone deployments (`projects`, minimal `principals`); a host platform provides its own and does not run this file
+- `mysql/0001_workspaces.sql`
+- `mysql/0002_workstreams_branches.sql`
+- `mysql/0003_snapshots.sql` — `snapshots`, `snapshot_parents`
+- `mysql/0004_blobs.sql` — `blobs` with a `hash_algo` column; status `staged` / `live`
+- `mysql/0006_uploads.sql`
+- `mysql/0008_usage_outbox_idempotency.sql`
+
+Numbers 0005 and 0007 are reserved. Later slices add locks, packs/chunks, the optional path index (`snapshot_entries`), derived artifacts, project commits, fencing and GC state as new files. Applied files are immutable: the runner records a SHA-256 per file in `schema_migrations(component, version, checksum, applied_at_us)` and refuses to continue when it changes.
 
 Use expand/contract; never combine destructive DDL and code switch in one release.

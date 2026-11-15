@@ -4,11 +4,11 @@
 
 **面向团队与 Agent 的项目级版本图谱。**
 
-MFGraph 是一个设计阶段的自托管服务，用图谱方式对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。workspace 是项目图谱中的节点；项目级 commit 层（superproject，MF-D28）是 **v1 核心特性**。
+MFGraph 是一个处于早期开发阶段的自托管服务，用图谱方式对项目工作区做版本化。它把业务层级（`project` → `project_node`）、内容层（`workspace` → `snapshot`）、执行层（`workstream` → `branch`）和流程层（外部工作流引擎）分开。workspace 是项目图谱中的节点；项目级 commit 层（superproject）是 **v1 核心特性**。
 
-> 状态：**设计/规格阶段**。本仓库暂无生产代码；这里定义的是待实现的契约。
+> 状态：**早期开发（M0）**。内容格式（[规范](docs/spec/zh-CN/content-format.md)）、第一个核心切片的数据库 schema（[`migrations/`](migrations)）、HTTP 契约（[`contracts/openapi.yaml`](contracts/openapi.yaml)）和代码骨架已就位。目前只实现了 `/healthz` 和 `/readyz`；在第一个核心切片完成之前，其他接口都返回 `501 not_implemented`。
 >
-> ⚠️ **快照声明（2026-11-12）**：公开仓是 **pre-M0 快照**，不是现行内部契约。部分文档仍描述已被取代的设计（如 workstream 的 `assign`/`dispatch` 已移除——MFGraph 不指派、不派发任务）。以内部设计集为准；M0 冻结后会重新同步。
+> 说明：[`docs/spec/`](docs/spec/zh-CN/content-format.md) 中的字节格式、迁移脚本和 OpenAPI 契约具有约束力。其他文档描述规划中的 v1 设计；两者不一致时以契约为准。MFGraph 不指派、不派发任务。
 
 ## 为什么需要 MFGraph
 
@@ -27,7 +27,7 @@ MFGraph 关注的是这些能力的组合缺口：
 3. **二进制/大文件是一等公民** — 内容寻址 chunk、packfile、manifest、独占锁；不做不安全的自动合并。
 4. **格式与行业模板** — 文本/Office/PDF/图片/音视频/CAD/BIM/数据集/归档/DICOM 以模板配置，不硬编码垂直分支。
 5. **工作流可选** — 内置 HTTP 适配器可连接外部工作流引擎；没有引擎时，REST/CLI/MCP 仍可用。
-6. **人与 Agent 中立** — 统一 `principal_uid` 身份；不依赖特定 Agent 运行时或 Matrix。
+6. **人与 Agent 中立** — 每个调用者都是一个操作者，用身份引用记录（宿主平台的身份字符串，独立部署时是 ULID）；不依赖特定 Agent 运行时或 Matrix。
 
 ## 它不是什么
 
@@ -51,12 +51,14 @@ workflow (外部，可选)
 
 ## 存储与数据库
 
-- **数据库：** v1 采用 MySQL 兼容方言（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）。只存状态与索引，不把文件字节存进数据库。
+- **数据库：** v1 采用 MySQL 兼容方言（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）；CI 在 MySQL 8.0 和 seekdb 上测试迁移。只存状态与索引，不把文件字节存进数据库。
 - **对象存储：** S3 兼容（AWS S3、RustFS、MinIO、Ceph RGW、R2、B2、OSS S3 模式、IBM COS、Oracle Object Storage S3）与 POSIX/NFS。Azure Blob 与 GCS 适配器为后续计划。
 - **二进制/大文件：** chunk + packfile + manifest；二进制内容使用锁并发控制。
 
 ## 文档
 
+- [内容格式规范](docs/spec/zh-CN/content-format.md)
+- [HTTP API 契约（OpenAPI）](contracts/openapi.yaml)
 - [架构](docs/zh-CN/architecture.md)
 - [数据模型](docs/zh-CN/data-model.md)
 - [存储](docs/zh-CN/storage.md)
@@ -69,9 +71,47 @@ workflow (外部，可选)
 
 ## 状态与许可
 
-本仓库是**设计/规格仓库**。代码将按照 `docs/` 中的契约实现。
+代码遵循 `docs/spec/`、`contracts/` 和 `migrations/` 中的契约；格式的测试向量在 `testdata/vectors/`。
 
 许可：**Apache-2.0**（见 [LICENSE](LICENSE)）。
+
+## 开发
+
+前置条件：Go（版本见 `go.mod`）、`make`、Python 3（仅标准库，用于文档与测试向量脚本）。**只有**数据库相关目标（MySQL 8.0 与 seekdb）需要 Docker，其余都不需要。
+
+```bash
+make build        # 编译全部包；二进制输出到 ./bin
+make test         # 单元测试（不需要数据库和网络）
+make vet          # go vet
+make fmt-check    # gofmt 检查
+make openapi-check  # 校验 contracts/openapi.yaml（kin-openapi）及其约定
+make generate     # 由契约重新生成 internal/api/gen（需要网络）
+make run          # 用开发 token 在 127.0.0.1:8080 启动 mfgraph-server
+```
+
+服务端用 `MFGRAPH_*` 环境变量配置：`MFGRAPH_HTTP_ADDR`、`MFGRAPH_DB_DSN`（MySQL DSN，本版本可不配）、`MFGRAPH_MIGRATE_ON_START`、`MFGRAPH_KERNEL_MIGRATIONS`、`MFGRAPH_AUTH_TOKENS`（`token=ACTOR_REF,...`，例如 `token=alice` 或 `token=<ULID>`；见[身份引用](docs/zh-CN/api.md#身份引用actor-reference)）、`MFGRAPH_LOG_LEVEL`、`MFGRAPH_LOG_FORMAT`、`MFGRAPH_SHUTDOWN_TIMEOUT`。`mfgraph-server migrate` 执行待执行的迁移后退出。本版本只实现了 `/healthz` 和 `/readyz`；[`contracts/openapi.yaml`](contracts/openapi.yaml) 中的其他接口都返回 `501 not_implemented`。
+
+开发用的 MySQL 8.0 和 seekdb 通过 Docker 运行（`deploy/docker-compose.dev.yml`，只绑定 `127.0.0.1`，一次性本地口令；见[部署](docs/zh-CN/deployment.md#数据库)）：
+
+```bash
+make dev-db-up      # 启动 MySQL 8.0 并等待就绪（需要 Docker）
+make dev-seekdb-up  # 启动 seekdb（MySQL 5.7 子集，端口 2881）并等待就绪
+make dev-db-down    # 停止（保留数据）；make dev-db-reset 会同时删除数据卷
+make test-mysql     # 在 MySQL 上跑迁移测试：空库执行、重跑跳过、篡改报错等
+make test-seekdb    # 在 seekdb 上跑同样的迁移测试
+```
+
+其他检查：
+
+```bash
+make ci           # 在本地跑 CI 工作流中除 MySQL 任务以外的全部步骤（不需要 Docker）
+make ci-mysql     # 用本地容器跑 CI 的 MySQL 任务（需要 Docker）
+make ci-seekdb    # 用本地容器跑 CI 的 seekdb 任务（需要 Docker）
+make test-e2e     # 端到端验收测试；第一个核心切片实现之前会以 501 失败
+make vectors-verify vectors-crosscheck   # 对 testdata/vectors 做独立核对
+```
+
+CI（`.github/workflows/ci.yml`）在 GitHub Actions 上运行同样的 Make 目标，两个迁移任务分别使用 MySQL 8.0 和 seekdb 服务容器。
 
 ## 贡献
 

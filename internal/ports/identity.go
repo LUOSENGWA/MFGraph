@@ -1,0 +1,49 @@
+package ports
+
+import (
+	"errors"
+	"net/http"
+)
+
+var (
+	// ErrUnauthenticated: no or invalid credentials.
+	ErrUnauthenticated = errors.New("unauthenticated")
+	// ErrNotFound: the resource does not exist or is not visible to the
+	// caller. Authorization failures on resources the caller cannot see use
+	// ErrNotFound too, so that existence is not revealed.
+	ErrNotFound = errors.New("not found")
+	// ErrForbidden: the caller can see the resource but may not perform the
+	// action.
+	ErrForbidden = errors.New("forbidden")
+)
+
+// Principal is an authenticated identity: a human, an agent, a service or a
+// team are all principals and are treated alike.
+//
+// Ref is the actor reference of the principal, the identity string the
+// host platform (or the standalone token configuration) passes for it: a
+// worker name, a user name, an ID such as "@alice:example.com", or in a
+// standalone deployment the string form of the principal's ULID. It is
+// non-empty valid UTF-8 of at most 255 bytes without control characters
+// (internal/actorref), stored as given and compared byte for byte; it is
+// what *_ref columns record and what authorization decides on.
+type Principal struct {
+	Ref string // actor reference (required)
+	// PrincipalUID is the principal's ULID when it is known: in a standalone
+	// deployment when Ref is a ULID, or once a host platform provides ULIDs.
+	// Empty otherwise; it fills the optional *_principal_uid columns.
+	PrincipalUID string
+	TenantID     string // empty when the authenticator does not know it
+}
+
+// Authenticator turns request credentials into a Principal. It returns
+// ErrUnauthenticated (possibly wrapped) when the request carries no valid
+// credentials.
+type Authenticator interface {
+	Authenticate(r *http.Request) (Principal, error)
+}
+
+// IDGen generates new unique IDs (ULIDs in production).
+type IDGen interface {
+	NewID() string
+}

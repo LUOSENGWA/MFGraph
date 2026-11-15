@@ -2,7 +2,7 @@
 
 [English](../data-model.md) | **简体中文**
 
-MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）。schema 只存状态与索引，不存文件字节。对象存储存字节，数据库存引用、租约与标记——两者之间没有跨存储事务。
+MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBase MySQL、seekdb 5.7 子集）；CI 在 MySQL 8.0 和 seekdb 上执行迁移，由于 seekdb 没有 `ascii` 字符集，ID 和 hash 列使用 `utf8mb4_bin`。schema 只存状态与索引，不存文件字节。对象存储存字节，数据库存引用、租约与标记——两者之间没有跨存储事务。
 
 ## 核心表
 
@@ -41,10 +41,16 @@ MFGraph v1 只面向一种 SQL 方言：**MySQL 兼容**（MySQL 8.0+、OceanBas
 - JSON 存为 `LONGTEXT`；查询在应用侧完成；
 - 路径使用 NFC + `path_hash = sha256(NFC(path))` 建索引；
 - **内容身份**：`content_hash` = 整文件 SHA-256（`sha256:<hex>`），与分片大小、后端、上传路径无关；chunking 只是物理布局，不参与身份；
-- **manifest = 树**：树节点是纯内容 + 确定性编码；`snapshots.root_tree_hash` 指向根节点；`mtime` 放快照级 sidecar，不进 hash；
+- **manifest = 树**：树节点是纯内容 + 确定性编码；`snapshots.root_tree_hash` 指向根节点；v1 不保存修改时间（只保留可执行位，即 mode 420/493）——见[内容格式规范](../spec/zh-CN/content-format.md)；
 - 内容表**按 `workspace_id` 隔离** —— 不做跨 workspace 去重；
 - DB 里的存储 key 是**相对 `workspaces.storage_prefix` 的路径**（创建时写入、不可变）；
-- branch 使用 `ref_name`（`main`、`workstreams/<workstream_id>/<branch_name>`）；`workstream` 与 `branch` 是不同实体；
+- **名字、路径、ref 和 key 类的列一律为 `VARBINARY`**，按字节比较（`branch_name`、`ref_name`、`default_branch_name`、`scope_path`、`upload_sessions.path`、`storage_prefix`、`storage_key`、`idempotency_key`）：`utf8mb4_bin` 比较时忽略结尾空格，而路径规则允许结尾空格，所以 `dev` 与 `dev ` 是两个分支。长度与路径规则一致：名字 255 字节、路径 4096、ref 512、存储前缀 942；
+- `workspaces.storage_prefix_key` 是 ASCII 小写后的前缀的 SHA-256 hex，并有 `UNIQUE (storage_backend_id, storage_prefix_key)`：同一个后端上不能有只在大小写上不同的两个前缀（嵌套的前缀由应用拒绝，见[规范](../spec/zh-CN/content-format.md#4-存储-key)）；
+- `snapshots.root_tree_hash_algo` 记录 `root_tree_hash` 的算法（`sha256`）；
+- **操作者用身份引用表示**，不是 ULID：拥有者、创建者、作者都存为 `*_ref VARBINARY(255)`（`owner_ref`、`created_by_ref`、`author_ref`、`on_behalf_of_ref`），按调用者身份字符串原样保存、按字节比较（见[身份引用](api.md#身份引用actor-reference)）；每列另有可空的 `*_principal_uid CHAR(26)`，在宿主平台为其操作者提供 ULID 之前保持 `NULL`。独立部署时，身份引用就是 `principals.principal_uid` 的字符串形式。MFGraph 自己生成的 ID（workspace、branch、snapshot、upload 等）和项目 ID 仍是 `CHAR(26)`；
+- 幂等记录的主键是 `(actor_ref, route, idempotency_key)`（1403 字节）；
+- **ID 列**：`CHAR(26)` 存放 MFGraph 自己生成的 ULID，以及宿主平台传入、已核实为 ULID 的项目 ID；`tenant_id` 是 MFGraph 自己的租户（独立部署时来自 kernel 表，嵌入时来自部署配置），`scope_node_id` 是 MFGraph 生成的项目节点 ID。宿主平台生成、格式未核实的 ID 是**外部引用**，`VARBINARY(255)`，规则与身份引用相同（`snapshots.workflow_instance_id`；Go：`internal/extref`）；
+- branch 使用 `ref_name`（`main`、`workstreams/<workstream_id>/<branch_name>`）；`workstream` 与 `branch` 是不同实体；同一个 workstream 内（包括 main）不能同时存在只在大小写上不同的分支名（如 `Dev` 与 `dev`），由应用检查，不靠列约束；
 - 租约/锁的过期判定一律用 **DB 时间**（`NOW(6)`），不用应用时钟。
 
 ## Branch 引用
@@ -59,17 +65,16 @@ workstreams/<workstream_id>/<branch_name>
 
 ## 迁移
 
-- `0000_project_nodes.sql` —— 内核 bootstrap（在宿主 `ops` schema 建 `projects`/`project_nodes`；不属于 mfgraph 模块迁移）
-- `0001_workspaces.sql`
-- `0002_workstreams_branches.sql`
-- `0003_snapshots_entries.sql`
-- `0004_blobs_packs_chunks.sql`
-- `0005_locks.sql`
-- `0006_uploads.sql`
-- `0007_derived_artifacts.sql`
-- `0008_usage_outbox_idempotency.sql`
-- `0009_project_commits_restore_pins.sql`
-- `0010_workspace_fencing.sql`
-- `0011_gc_state.sql`
+迁移脚本在 [`migrations/`](../../migrations)，由 `mfgraph-server migrate`（或 `MFGRAPH_MIGRATE_ON_START=true`）执行。第一个核心切片定义：
+
+- `kernel/0000_bootstrap.sql` —— 独立部署时的内核表（`projects`、最小的 `principals`）；宿主平台自带这些表，不执行此文件
+- `mysql/0001_workspaces.sql`
+- `mysql/0002_workstreams_branches.sql`
+- `mysql/0003_snapshots.sql` —— `snapshots`、`snapshot_parents`
+- `mysql/0004_blobs.sql` —— `blobs`，含 `hash_algo` 列；状态 `staged` / `live`
+- `mysql/0006_uploads.sql`
+- `mysql/0008_usage_outbox_idempotency.sql`
+
+编号 0005 和 0007 预留。后续切片以新文件增加锁、packs/chunks、可选路径索引（`snapshot_entries`）、派生工件、project commit、fencing 和 GC 状态。已执行的文件不可修改：执行器在 `schema_migrations(component, version, checksum, applied_at_us)` 中记录每个文件的 SHA-256，发现变化即拒绝继续。
 
 使用 expand/contract；不要把破坏性 DDL 与代码切换放在同一个 release。

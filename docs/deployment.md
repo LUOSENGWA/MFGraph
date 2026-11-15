@@ -11,6 +11,23 @@
 | HA | multiple `mfgraph-server` + MySQL HA + S3 | enterprise |
 | dev | compose + MySQL + MinIO/POSIX | local/CI |
 
+## Database
+
+The supported SQL dialect is **MySQL**. CI applies the migrations on two servers in every run: **MySQL 8.0** and **seekdb** (a single-node database compatible with a subset of MySQL 5.7, which host platforms use for single-machine deployments). Both build the same schema. To stay inside the common subset, ID and hash columns use `utf8mb4_bin` rather than the `ascii` character set, which seekdb does not provide; the migration lint enforces this.
+
+On MySQL the tables must use InnoDB's **DYNAMIC** row format, the default since MySQL 5.7.9 (`innodb_default_row_format = DYNAMIC`). COMPACT and REDUNDANT limit an index key to 767 bytes, but the primary key of `idempotency_keys` (actor reference, route and key) has 1403 bytes; DYNAMIC allows 3072. With another default row format the migrations fail.
+
+For development, `deploy/docker-compose.dev.yml` runs both on `127.0.0.1`: MySQL 8.0 on port 3306 and seekdb on port 2881 (user `root` without a password; the image is pinned to an exact tag, is published for `linux/amd64` and `linux/arm64`, and is meant for tests only; it needs at least 2 GB of memory).
+
+```bash
+make ci-mysql     # start MySQL 8.0 and run the migration tests on it
+make ci-seekdb    # start seekdb and run the same tests on it
+```
+
+## Startup checks
+
+The path rules depend on Unicode tables, and the [content format](spec/content-format.md#24-unicode-version-v) fixes their version V. Before `mfgraph-server serve` or `migrate` touches any data, the server compares the tables compiled into the binary with V: the Go standard library's tables (which decide whether a code point is assigned) must be exactly V, and those of `golang.org/x/text` (NFC, case folding) V or later. Otherwise it logs the actual versions and the required V and exits with a non-zero status. There is no switch to skip the check; raising V means changing the code and the specification together. `mfgraph debug` only prints a warning.
+
 ## Minimal compose (conceptual)
 
 ```yaml
