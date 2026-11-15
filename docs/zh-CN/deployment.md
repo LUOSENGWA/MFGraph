@@ -15,6 +15,8 @@
 
 支持的 SQL 方言是 **MySQL**。CI 每次都在两种服务器上执行迁移：**MySQL 8.0** 和 **seekdb**（兼容 MySQL 5.7 子集的单机数据库，宿主平台单机部署时使用）。两者建出的表结构完全相同。为了落在两者的公共子集内，ID 和 hash 列使用 `utf8mb4_bin`，而不是 seekdb 不支持的 `ascii` 字符集；迁移 lint 会检查这一点。
 
+在 MySQL 上，表必须使用 InnoDB 的 **DYNAMIC** 行格式，这是 MySQL 5.7.9 起的默认值（`innodb_default_row_format = DYNAMIC`）。COMPACT 和 REDUNDANT 把索引键限制在 767 字节以内，而 `idempotency_keys` 的主键（actor reference、route 和 key）有 1403 字节；DYNAMIC 允许 3072 字节。默认行格式不是 DYNAMIC 时，迁移会失败。
+
 开发时，`deploy/docker-compose.dev.yml` 在 `127.0.0.1` 上同时提供两者：MySQL 8.0 在 3306 端口，seekdb 在 2881 端口（用户 `root`，无密码；镜像固定到具体 tag，提供 `linux/amd64` 与 `linux/arm64` 版本，仅供测试使用，至少需要 2 GB 内存）。
 
 ```bash
