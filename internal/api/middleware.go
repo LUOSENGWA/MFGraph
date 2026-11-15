@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
 
@@ -20,6 +21,16 @@ const MaxRequestIDLength = 128
 
 type requestIDKey struct{}
 type principalKey struct{}
+type actorSlotKey struct{}
+
+// actorSlot lets the authentication middleware tell the access log who the
+// caller is: the access log runs outside it and cannot see the request
+// context that authentication derives. It is written synchronously while
+// the request is served, before the access log reads it.
+type actorSlot struct {
+	p  ports.Principal
+	ok bool
+}
 
 // RequestIDFrom returns the request ID stored by the RequestID middleware.
 func RequestIDFrom(ctx context.Context) string {
@@ -89,24 +100,30 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
-// AccessLog logs one line per request (never the query string, which may
-// contain file paths).
+// AccessLog logs one info line per request (never the query string, which
+// may contain file paths). The caller appears only as "actor", the
+// pseudonym of its actor reference (actorref.Pseudonym): raw actor
+// references and principal UIDs are written only to a separate debug-level
+// record, so they appear in the logs only when the level is debug.
 func AccessLog(l *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w}
-			r = r.WithContext(context.WithValue(r.Context(), loggerKey{}, l))
+			slot := &actorSlot{}
+			ctx := context.WithValue(context.WithValue(r.Context(), loggerKey{}, l), actorSlotKey{}, slot)
+			r = r.WithContext(ctx)
 			next.ServeHTTP(rec, r)
 			attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rec.status, "bytes", rec.bytes,
-				"duration_ms", time.Since(start).Milliseconds(), "request_id", RequestIDFrom(r.Context())}
-			if p, ok := PrincipalFrom(r.Context()); ok {
-				attrs = append(attrs, "actor_ref", p.Ref)
-				if p.PrincipalUID != "" {
-					attrs = append(attrs, "principal_uid", p.PrincipalUID)
-				}
+				"duration_ms", time.Since(start).Milliseconds(), "request_id", RequestIDFrom(ctx)}
+			if slot.ok {
+				attrs = append(attrs, "actor", actorref.Pseudonym(slot.p.Ref))
 			}
 			l.Info("http request", attrs...)
+			if slot.ok && l.Enabled(ctx, slog.LevelDebug) {
+				l.Debug("http request actor", "request_id", RequestIDFrom(ctx), "actor", actorref.Pseudonym(slot.p.Ref),
+					"actor_ref", slot.p.Ref, "principal_uid", slot.p.PrincipalUID)
+			}
 		})
 	}
 }
@@ -142,6 +159,9 @@ func Authenticate(a ports.Authenticator, public map[string]bool) func(http.Handl
 			if err != nil {
 				WriteError(w, r, NewError(CodeUnauthenticated, "missing or invalid bearer token", nil))
 				return
+			}
+			if slot, ok := r.Context().Value(actorSlotKey{}).(*actorSlot); ok {
+				slot.p, slot.ok = p, true
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 		})

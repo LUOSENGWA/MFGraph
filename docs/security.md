@@ -54,6 +54,7 @@ Roles:
 - tenant isolation by `tenant_id` + storage prefix;
 - retention/legal hold/WORM for regulated profiles;
 - audit append-only; no tokens/file content in logs.
+- actor references are personal data: log records at info level and above identify a caller only as `actor`, the first 16 hex digits of SHA-256(actor reference), so the records of one actor can be linked without showing who it is; the raw reference (and a principal UID, which in a standalone deployment equals it) appears only in debug-level records.
 
 ## Threat model (STRIDE)
 

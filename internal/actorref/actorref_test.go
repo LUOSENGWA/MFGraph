@@ -1,6 +1,8 @@
 package actorref_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -78,5 +80,20 @@ func TestByteExact(t *testing.T) {
 		if !actorref.Valid(p[0]) || !actorref.Valid(p[1]) || p[0] == p[1] {
 			t.Errorf("%q and %q must both be valid and different", p[0], p[1])
 		}
+	}
+}
+
+// TestPseudonym: the logged pseudonym is the first 16 hex digits of the
+// SHA-256 of the reference, stable for one actor and different for others.
+func TestPseudonym(t *testing.T) {
+	sum := sha256.Sum256([]byte("manager"))
+	if got := actorref.Pseudonym("manager"); got != hex.EncodeToString(sum[:])[:16] || len(got) != 16 {
+		t.Fatalf("Pseudonym(manager) = %q", got)
+	}
+	if actorref.Pseudonym("a") == actorref.Pseudonym("a ") || actorref.Pseudonym("x") != actorref.Pseudonym("x") {
+		t.Fatal("pseudonyms must be stable and byte exact")
+	}
+	if strings.Contains(actorref.Pseudonym("alice"), "alice") {
+		t.Fatal("the pseudonym shows the reference")
 	}
 }

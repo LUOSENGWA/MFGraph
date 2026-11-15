@@ -18,6 +18,8 @@
 package actorref
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -41,3 +43,17 @@ func Validate(ref string) error {
 
 // Valid reports whether Validate(ref) succeeds.
 func Valid(ref string) bool { return extref.Valid(ref) }
+
+// Pseudonym returns the value logged for an actor: the first 16 hex digits
+// of the SHA-256 of ref. The log records of one actor stay linkable, but they
+// do not show who it is.
+//
+// Logging rule: actor references are personal data (a user name, an
+// @user:server ID). Log records at info level and above carry only
+// "actor" = Pseudonym(ref), never the reference itself or a principal UID
+// (which, in a standalone deployment, is the reference). The raw values may
+// appear only in debug-level records.
+func Pseudonym(ref string) string {
+	sum := sha256.Sum256([]byte(ref))
+	return hex.EncodeToString(sum[:8])
+}

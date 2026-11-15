@@ -30,7 +30,8 @@ func NewStaticTokens(tokens map[string]string) (*StaticTokens, error) {
 			return nil, fmt.Errorf("api: empty static token")
 		}
 		if err := actorref.Validate(ref); err != nil {
-			return nil, fmt.Errorf("api: static token entry for actor %q: %w", ref, err)
+			// The reference is not repeated: errors end up in logs.
+			return nil, fmt.Errorf("api: static token entry: %w", err)
 		}
 		p := ports.Principal{Ref: ref}
 		if ids.Valid(ref) {

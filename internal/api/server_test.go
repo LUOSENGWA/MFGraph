@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/api"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
 )
@@ -214,5 +216,65 @@ func TestInvalidRequestsUseTheEnvelope(t *testing.T) {
 	resp, b = do(t, srv, "DELETE", "/api/v1/workspaces/"+ulid1, "", auth)
 	if resp.StatusCode != 404 || decodeEnvelope(t, resp, b).Code != api.CodeNotFound {
 		t.Fatalf("unsupported method: %d %s", resp.StatusCode, b)
+	}
+}
+
+// TestAccessLogHidesActorReferences: info-level records carry the caller only
+// as "actor", the pseudonym of its actor reference; the raw reference (and
+// the principal UID, which equals a ULID reference) appears only in
+// debug-level records.
+func TestAccessLogHidesActorReferences(t *testing.T) {
+	const tokB = "test-token-bbbbbbbbbbbbbbbb"
+	refs := map[string]string{token: "alice.private@example.com", tokB: uidA} // a plain name and a ULID
+	authn, err := api.NewStaticTokens(refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
+		var buf bytes.Buffer
+		h := api.NewHandler(api.Options{
+			Authenticator: authn,
+			IDGen:         ids.NewGenerator(),
+			Logger:        slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level})),
+		})
+		srv := httptest.NewServer(h)
+		for tok := range refs {
+			do(t, srv, "GET", "/api/v1/projects/"+ulid1, "", map[string]string{"Authorization": "Bearer " + tok})
+		}
+		srv.Close()
+		seen := map[string]bool{}
+		for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+			var rec map[string]any
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("log line %q: %v", line, err)
+			}
+			for _, ref := range refs {
+				if strings.Contains(line, ref) && rec["level"] != "DEBUG" {
+					t.Errorf("level %v: a %v record contains the raw actor reference %q: %s", level, rec["level"], ref, line)
+				}
+			}
+			if rec["msg"] == "http request" {
+				if _, ok := rec["actor_ref"]; ok {
+					t.Errorf("access log has actor_ref: %s", line)
+				}
+				if _, ok := rec["principal_uid"]; ok {
+					t.Errorf("access log has principal_uid: %s", line)
+				}
+				if a, _ := rec["actor"].(string); a != "" {
+					seen[a] = true
+				}
+			}
+			if rec["msg"] == "http request actor" && level != slog.LevelDebug {
+				t.Errorf("debug record at level %v: %s", level, line)
+			}
+		}
+		for _, ref := range refs {
+			if !seen[actorref.Pseudonym(ref)] {
+				t.Errorf("level %v: no access log record with actor %s", level, actorref.Pseudonym(ref))
+			}
+		}
+		if level == slog.LevelDebug && !strings.Contains(buf.String(), "alice.private@example.com") {
+			t.Error("the debug record should carry the raw reference")
+		}
 	}
 }

@@ -54,6 +54,7 @@
 - 按 `tenant_id` + 存储前缀做租户隔离；
 - 受监管场景支持 retention/legal hold/WORM；
 - 审计 append-only；日志不放 token/文件内容。
+- 身份引用属于个人信息：info 及以上级别的日志只用 `actor` 标识调用者，值为 SHA-256(身份引用) 的前 16 位 hex，同一操作者的日志仍能关联，但看不出是谁；原始身份引用（以及独立部署时与之相同的 principal UID）只出现在 debug 级别的日志里。
 
 ## 威胁模型（STRIDE）
 

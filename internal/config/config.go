@@ -48,7 +48,10 @@ type Config struct {
 	// from the actor reference, and whitespace around an entry is ignored;
 	// an actor reference given here therefore cannot contain ','.
 	AuthTokens map[string]string
-	// LogLevel and LogFormat ("json" or "text") configure log/slog.
+	// LogLevel and LogFormat ("json" or "text") configure log/slog. Logs at
+	// info level and above identify a caller only by the pseudonym of its
+	// actor reference ("actor", actorref.Pseudonym); raw actor references
+	// appear only in debug-level records.
 	LogLevel  slog.Level
 	LogFormat string
 	// ShutdownTimeout bounds graceful shutdown (default 15s).
