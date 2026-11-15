@@ -441,7 +441,7 @@ func TestTreeStoreFrameLimits(t *testing.T) {
 	// Rejected: output above the node limit, from a frame with an 8 MiB
 	// window and no content size. Decoding stops at the limit: reading a
 	// frame of a few kilobytes that expands to 64 MiB allocates a few MiB
-	// (about 3.6 MiB measured; 17.5 MiB if only the 8 MiB memory limit held).
+	// (3.5 MiB measured; 16.7 MiB if only the 8 MiB memory limit held).
 	for _, size := range []int{tree.MaxNodeBytes + 1, 64 << 20} {
 		bomb := make([]byte, size)
 		hb, z := tree.HashOf(bomb), stream(bomb, memory.MaxFrameWindow)
