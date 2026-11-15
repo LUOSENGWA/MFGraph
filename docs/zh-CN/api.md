@@ -104,3 +104,14 @@ X-Correlation-Id: <optional>
 - **响应**里的路径总是存储的规范形式，可能与客户端发送的不同（NFC 会把 `e` + U+0301 变成 `é`，把 CJK 兼容表意字 U+FA10 变成 U+585A）。
 - **路径列表**按路径顺序排列：逐段比较，每段按 UTF-8 字节比较（`a`、`a/x`、`a-b`、`a.txt`）。
 - **空文件合法**：请求体为空的上传保存一个空文件。
+
+## 身份引用（actor reference）
+
+每个操作都由一个**操作者（actor）**执行：认证后的调用者，另可附带它所代表的操作者。MFGraph 记录操作者时用**身份引用**，而不是自己的 ID。身份引用是满足以下条件的字符串：
+
+- 非空、合法 UTF-8，至多 **255 字节**；
+- 不含控制字符（U+0000–U+001F、U+007F–U+009F）。
+
+除此之外没有其他要求：身份引用按原样保存、按字节比较，不做 Unicode 规范化、不做大小写折叠，也不检查是否为 ULID（`a` 与 `a ` 是两个操作者）。宿主平台传入它自己的身份字符串，例如 worker 名、`manager` 这样的用户名，或 `@alice:example.com` 这样的 ID。独立部署时，一个 principal 的身份引用就是其 `principal_uid`（ULID）的字符串形式；`MFGRAPH_AUTH_TOKENS` 的静态 token 映射到身份引用（`token=alice` 与 `token=01J...` 都合法）。
+
+响应里用 `*_ref` 字段携带身份引用（[契约](../../contracts/openapi.yaml)中的 `ActorRef`），另有可选的 `*_principal_uid`，在宿主平台为其操作者提供 ULID 之前保持 `null`。Go 实现在 `internal/actorref`。

@@ -104,3 +104,14 @@ For `invalid_path`, `details.kind` names the violated rule; the values are liste
 - **Responses** always contain the stored, normalized path, which can differ from what the client sent (NFC turns `e` + U+0301 into `é` and the CJK compatibility ideograph U+FA10 into U+585A).
 - **Lists** of paths are in path order: segment by segment, each segment by its UTF-8 bytes (`a`, `a/x`, `a-b`, `a.txt`).
 - **Empty files** are valid: an upload with an empty body stores the empty file.
+
+## Actor references
+
+Every operation is performed by an **actor**: the authenticated caller, and optionally the actor it acts on behalf of. MFGraph records actors as **actor references**, not as IDs of its own. An actor reference is a string that
+
+- is non-empty, valid UTF-8 and at most **255 bytes**;
+- contains no control characters (U+0000–U+001F, U+007F–U+009F).
+
+Nothing else is required: actor references are stored exactly as given and compared byte for byte, with no Unicode normalization, no case folding and no check that they are ULIDs (`a` and `a ` are two actors). A host platform passes its own identity strings, for example a worker name, a user name such as `manager`, or an ID such as `@alice:example.com`. In a standalone deployment the actor reference of a principal is the string form of its `principal_uid` (a ULID), and the static tokens of `MFGRAPH_AUTH_TOKENS` map to actor references (`token=alice` and `token=01J...` are both valid).
+
+Responses carry the actor reference in `*_ref` fields (`ActorRef` in the [contract](../contracts/openapi.yaml)), with an optional `*_principal_uid` that stays `null` until a host platform provides ULIDs for its actors. The Go implementation is `internal/actorref`.
