@@ -193,3 +193,44 @@ func TestOpenAPIPathErrorKinds(t *testing.T) {
 		t.Errorf("PathErrorKind enum = %v\npathx kinds          = %v", spec, code)
 	}
 }
+
+// TestOpenAPIActorFields: actors are actor references. Every property named
+// *_ref (other than ref_name, a branch ref) uses the ActorRef schema and has
+// a nullable *_principal_uid sibling with the ULID pattern; no ULID-typed
+// identity field (author_principal_uid alone, created_by, owner_principal_id,
+// ...) is required.
+func TestOpenAPIActorFields(t *testing.T) {
+	doc := loadSpec(t)
+	ar := doc.Components.Schemas["ActorRef"]
+	if ar == nil || ar.Value.MinLength != 1 || ar.Value.MaxLength == nil || *ar.Value.MaxLength != 255 {
+		t.Fatalf("ActorRef must be a string of 1 to 255 bytes: %+v", ar)
+	}
+	n := 0
+	for name, sr := range doc.Components.Schemas {
+		props := sr.Value.Properties
+		for prop, ps := range props {
+			if prop == "created_by" || strings.HasSuffix(prop, "_principal_id") {
+				t.Errorf("%s.%s: actors are *_ref (ActorRef) plus *_principal_uid", name, prop)
+			}
+			if !strings.HasSuffix(prop, "_ref") || prop == "ref_name" {
+				continue
+			}
+			n++
+			if !strings.HasSuffix(ps.Ref, "/ActorRef") {
+				t.Errorf("%s.%s must reference ActorRef", name, prop)
+			}
+			uid := props[strings.TrimSuffix(prop, "_ref")+"_principal_uid"]
+			if uid == nil || !uid.Value.Nullable || uid.Value.Pattern != doc.Components.Schemas["ULID"].Value.Pattern {
+				t.Errorf("%s.%s needs a nullable ULID sibling %s_principal_uid", name, prop, strings.TrimSuffix(prop, "_ref"))
+			}
+			for _, req := range sr.Value.Required {
+				if req == strings.TrimSuffix(prop, "_ref")+"_principal_uid" {
+					t.Errorf("%s: %s must be optional", name, req)
+				}
+			}
+		}
+	}
+	if n == 0 {
+		t.Error("no actor fields found")
+	}
+}

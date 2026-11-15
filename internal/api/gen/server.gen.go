@@ -183,6 +183,19 @@ func (e TreeEntryType) Valid() bool {
 	}
 }
 
+// ActorRef Actor reference: the identity string of whoever performed an operation
+// (the authenticated caller, or the actor it acted on behalf of). A host
+// platform passes its own identity strings, for example a worker name, a
+// user name such as `manager`, or an ID such as `@alice:example.com`; in
+// a standalone deployment it is the string form of the principal's ULID.
+// Non-empty valid UTF-8, at most 255 bytes (not characters), no control
+// characters (U+0000-U+001F, U+007F-U+009F). Stored exactly as given and
+// compared byte for byte: no Unicode normalization, no case folding, no
+// check that it is a ULID (`a` and `a ` are two actors).
+//
+// Example: manager
+type ActorRef = string
+
 // Branch defines model for Branch.
 type Branch struct {
 	// BranchId ULID, 26 uppercase Crockford base32 characters.
@@ -465,10 +478,24 @@ type RestoreRequest struct {
 
 // Snapshot defines model for Snapshot.
 type Snapshot struct {
-	// AuthorPrincipalUid ULID, 26 uppercase Crockford base32 characters.
+	// AuthorPrincipalUid ULID of the author when it is known (in a standalone deployment the
+	// ULID whose string form is `author_ref`); `null` until a host
+	// platform provides ULIDs for its actors.
+	AuthorPrincipalUid *string `json:"author_principal_uid,omitempty"`
+
+	// AuthorRef Actor reference: the identity string of whoever performed an operation
+	// (the authenticated caller, or the actor it acted on behalf of). A host
+	// platform passes its own identity strings, for example a worker name, a
+	// user name such as `manager`, or an ID such as `@alice:example.com`; in
+	// a standalone deployment it is the string form of the principal's ULID.
+	// Non-empty valid UTF-8, at most 255 bytes (not characters), no control
+	// characters (U+0000-U+001F, U+007F-U+009F). Stored exactly as given and
+	// compared byte for byte: no Unicode normalization, no case folding, no
+	// check that it is a ULID (`a` and `a ` are two actors).
 	//
-	// Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
-	AuthorPrincipalUid ULID `json:"author_principal_uid"`
+	//
+	// Example: manager
+	AuthorRef ActorRef `json:"author_ref"`
 
 	// BranchId Branch the snapshot was created on.
 	BranchId *string `json:"branch_id"`

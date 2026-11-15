@@ -21,8 +21,8 @@ info:
       Every response, including errors, carries `X-Request-Id`, and error
       bodies repeat it as `request_id`.
     * **Idempotency.** Every POST accepts `Idempotency-Key`. Repeating a
-      request with the same principal, key and route returns the stored
-      response of the first request. The same key with a different request
+      request with the same actor (actor reference), key and route returns
+      the stored response of the first request. The same key with a different request
       body gives `409 idempotency_key_reuse`. Keys are kept for 24 hours.
     * **Errors.** Every error has the same flat body:
       `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`
@@ -37,6 +37,11 @@ info:
     * **Identifiers.** IDs are ULIDs (26 uppercase Crockford base32
       characters). URL paths contain only IDs; file paths are always passed as
       the `path` query parameter or in request bodies.
+    * **Actors.** Who performed an operation is recorded as an actor
+      reference (`ActorRef`), the caller's identity string: the host
+      platform's own identity for it, or in a standalone deployment the string
+      form of the principal's ULID. Fields named `*_ref` carry it; the optional
+      `*_principal_uid` is the actor's ULID when known and `null` otherwise.
     * **File paths** (docs/spec/content-format.md, section 2). Paths are
       relative and `/`-separated. A path that is written (uploaded or
       committed) must satisfy the write-time rules:
@@ -683,7 +688,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Opaque bearer token mapped to one principal by the server.
+      description: Opaque bearer token mapped to one principal (one actor reference) by the server.
   headers:
     ETag:
       description: Quoted content hash, e.g. `"sha256:2cf2…9824"`.
@@ -833,6 +838,21 @@ components:
       description: '`sha256:` followed by 64 lowercase hex digits.'
       pattern: '^sha256:[0-9a-f]{64}$'
       example: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+    ActorRef:
+      type: string
+      minLength: 1
+      maxLength: 255
+      description: |
+        Actor reference: the identity string of whoever performed an operation
+        (the authenticated caller, or the actor it acted on behalf of). A host
+        platform passes its own identity strings, for example a worker name, a
+        user name such as `manager`, or an ID such as `@alice:example.com`; in
+        a standalone deployment it is the string form of the principal's ULID.
+        Non-empty valid UTF-8, at most 255 bytes (not characters), no control
+        characters (U+0000-U+001F, U+007F-U+009F). Stored exactly as given and
+        compared byte for byte: no Unicode normalization, no case folding, no
+        check that it is a ULID (`a` and `a ` are two actors).
+      example: manager
     FilePath:
       type: string
       description: Relative file path; see "File paths" and "Looking up a path" in the API description.
@@ -1108,7 +1128,7 @@ components:
           $ref: '#/components/schemas/Timestamp'
     Snapshot:
       type: object
-      required: [snapshot_id, workspace_id, project_id, branch_id, ref_name, author_principal_uid, message, trigger_kind,
+      required: [snapshot_id, workspace_id, project_id, branch_id, ref_name, author_ref, message, trigger_kind,
         root_tree_hash, tree_format_version, parent_ids, entry_count, total_bytes, created_at]
       properties:
         snapshot_id:
@@ -1125,8 +1145,16 @@ components:
         ref_name:
           type: string
           description: ref_name of that branch at creation time.
+        author_ref:
+          $ref: '#/components/schemas/ActorRef'
         author_principal_uid:
-          $ref: '#/components/schemas/ULID'
+          type: string
+          nullable: true
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+          description: |
+            ULID of the author when it is known (in a standalone deployment the
+            ULID whose string form is `author_ref`); `null` until a host
+            platform provides ULIDs for its actors.
         message:
           type: string
         trigger_kind:
