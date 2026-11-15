@@ -241,11 +241,21 @@ type BranchList struct {
 	NextCursor *string  `json:"next_cursor"`
 }
 
-// Change Exactly one of: `hash` (add or replace the file at `path`, with
-// optional `mode`) or `delete: true` (remove the file at `path`).
-// When `mode` is omitted, an existing file keeps its mode from the base
-// snapshot (the branch head) and a new file gets 420; an explicit
-// `mode` always wins.
+// Change Exactly one of `hash` (with optional `mode`) or `delete: true`.
+// `path` is first looked up in the base snapshot (the branch head) as
+// described under "Looking up a path".
+//
+//   - Replace: `hash`, and a file is found. The file keeps its stored
+//     path; the write-time rules are not applied to it.
+//   - Create: `hash`, and no file is found. The names this creates (the
+//     segments of `path` that do not exist in the base snapshot) must
+//     satisfy the write-time rules (see "File paths") and are stored in
+//     NFC.
+//   - Delete: `delete: true` removes the file found; the write-time rules
+//     are not applied to it. A path that is not found is an error.
+//
+// When `mode` is omitted, a replaced file keeps its mode and a new file
+// gets 420; an explicit `mode` always wins.
 type Change struct {
 	// Delete Must be true when present.
 	Delete *bool `json:"delete,omitempty"`
@@ -737,7 +747,7 @@ type GetSnapshotDiffParams struct {
 
 // GetSnapshotFileParams defines parameters for GetSnapshotFile.
 type GetSnapshotFileParams struct {
-	// Path File path, looked up with the read-time rules and NFC (see "Looking up a path").
+	// Path File path, looked up as described under "Looking up a path" (the bytes as sent first, then the NFC form).
 	Path        FilePath `form:"path" json:"path"`
 	Range       *string  `json:"Range,omitempty"`
 	IfNoneMatch *string  `json:"If-None-Match,omitempty"`
@@ -757,7 +767,7 @@ type RestoreSnapshotParams struct {
 
 // ListSnapshotTreeParams defines parameters for ListSnapshotTree.
 type ListSnapshotTreeParams struct {
-	// Path Directory path, looked up with the read-time rules and NFC (see "Looking up a path"); omit or leave empty for the root.
+	// Path Directory path, looked up as described under "Looking up a path" (the bytes as sent first, then the NFC form); omit or leave empty for the root.
 	Path *string `form:"path,omitempty" json:"path,omitempty"`
 
 	// Cursor Opaque cursor from `next_cursor` of the previous page.

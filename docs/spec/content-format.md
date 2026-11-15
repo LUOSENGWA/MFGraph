@@ -49,11 +49,11 @@ segments separated by `/`. Directories exist only as prefixes of file paths
 (there are no empty directories), and symbolic links are not part of the data
 model.
 
-Sections 2.1–2.3 are the **write-time rules**: a server applies them to every
-path that is uploaded or committed, and a tree writer applies them before
-encoding. Names read back from stored tree nodes are checked only with the
+Sections 2.1–2.3 are the **write-time rules**: a server applies them to the
+names a commit creates, and a tree writer applies them before encoding.
+Names read back from stored tree nodes are checked only with the
 **read-time rules** of section 2.5, which never depend on Unicode tables.
-Section 2.6 says which paths a commit checks and how paths are looked up.
+Section 2.6 says which names a commit checks and how paths are looked up.
 
 ### 2.1 Normalization
 
@@ -235,22 +235,46 @@ without making stored data unreadable. The test vectors list such nodes in
 
 ### 2.6 Applying the rules
 
-* **Commits.** A commit applies the write-time rules to the paths it adds or
-  changes, including the sibling rules of 2.2 between a new or changed name
-  and the names already in its directory. Entries carried over unchanged from
-  the base snapshot (and entries restored from another snapshot) keep their
-  stored bytes: they are neither normalized nor checked again. A tree that
-  contains a name outside the current write-time rules (for example a code
-  point assigned only in a later Unicode version, written by an
-  implementation with a higher V) therefore never makes a later commit fail
-  because of entries the commit does not touch.
+* **Commits.** Each change of a commit names a path, and the base snapshot
+  is searched for it with the lookup rules below.
+  * If a file is found, the change replaces or deletes that file. The
+    write-time rules are not applied to it: the entry keeps its stored name,
+    even if the current write-time rules would reject that name.
+  * Otherwise the change creates the path (a delete of a path that is not
+    found fails). The write-time rules apply only to the names the change
+    creates: the segments of the path that do not exist in the base
+    snapshot, that is the new file and any new directories above it.
+    Directories that already exist are found with the lookup rules and keep
+    their stored names. Each new name is stored in NFC and checked against
+    the names already in its directory with the sibling rules of 2.2, and
+    the new path (stored directory names and new names) is at most 4096
+    bytes.
+  * Entries carried over unchanged from the base snapshot (and entries
+    restored from another snapshot) keep their stored bytes: they are
+    neither normalized nor checked again. A tree that contains a name
+    outside the current write-time rules (for example a code point assigned
+    only in a later Unicode version, written by an implementation with a
+    higher V) therefore never makes a later commit fail because of entries
+    the commit does not create.
 * **Lookups.** A path given to find an existing entry (listing a directory,
-  downloading a file, a path given to a diff or a restore) MUST be valid UTF-8
-  and every `/`-separated segment MUST satisfy the read-time rules of 2.5; it
-  is then converted to NFC and compared byte for byte with the stored names.
-  Lookups do not check unassigned code points or the disallowed list. A
-  stored name that is not in NFC cannot be found this way; it can still be
-  listed.
+  downloading a file, a path given to a diff or a restore, and the path of a
+  change that replaces or deletes a file) is processed in four steps:
+  1. the input must be valid UTF-8, non-empty and not start with `/`, and it
+     must not contain `\`, a control character or a noncharacter (the
+     character rules of the read-time rules, 2.5);
+  2. it is converted to NFC;
+  3. the NFC form must not have an empty, `.` or `..` segment, every segment
+     is at most 255 bytes and the whole path at most 4096 bytes;
+  4. the entry whose path is byte for byte the input as given is found
+     first; if there is none, the entry whose path is the NFC form.
+
+  Lookups do not check unassigned code points, the disallowed list or case
+  conflicts. An input that fails steps 1–3 is rejected with the error kind
+  of the first failing rule (the kinds of 2.1). A segment may be longer than
+  255 bytes as given if its NFC form is not: 30 Hangul syllables in NFD have
+  270 bytes, in NFC 90. A stored name that is not in NFC (written by another
+  implementation) is found when the input gives its exact bytes. The test
+  vectors give these rules in `lookup`.
 
 ## 3. Tree nodes
 

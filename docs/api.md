@@ -99,9 +99,9 @@ For `invalid_path`, `details.kind` names the violated rule; the values are liste
 
 ## File paths
 
-- **Written paths** (uploads, commits) follow the write-time rules of the [content format](spec/content-format.md#2-paths) and are stored in NFC. A commit checks only the paths it adds or changes; entries carried over from the base snapshot keep their stored bytes.
-- **Looked-up paths** (`path` of the tree and file endpoints and of a restore) are checked with the read-time rules only, converted to NFC and compared byte for byte with the stored names.
-- **Responses** always contain the stored, normalized path, which can differ from what the client sent (NFC turns `e` + U+0301 into `é` and the CJK compatibility ideograph U+FA10 into U+585A).
+- **Written paths** (commits) follow the write-time rules of the [content format](spec/content-format.md#2-paths) and are stored in NFC. A commit applies them only to the names it creates (the segments of a path that do not exist in the base snapshot); a change that replaces or deletes a file finds it like a lookup and keeps its stored name, and entries carried over from the base snapshot keep their stored bytes.
+- **Looked-up paths** (`path` of the tree and file endpoints, of a restore, and of a commit change that replaces or deletes a file) must be valid UTF-8 without `\`, control characters or noncharacters; the server converts them to NFC, checks for empty, `.` and `..` segments and the 255/4096-byte limits, and then looks for the path as sent, byte for byte, and after that for its NFC form. Unassigned code points, the disallowed list and case are not checked.
+- **Responses** always contain the stored path, which is NFC for every name written under the write-time rules and can differ from what the client sent (NFC turns `e` + U+0301 into `é` and the CJK compatibility ideograph U+FA10 into U+585A).
 - **Lists** of paths are in path order: segment by segment, each segment by its UTF-8 bytes (`a`, `a/x`, `a-b`, `a.txt`).
 - **Empty files** are valid: an upload with an empty body stores the empty file.
 

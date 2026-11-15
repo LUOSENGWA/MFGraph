@@ -14,7 +14,7 @@ were obtained. A change to an expected value needs a new review: set
 | file | contents |
 |---|---|
 | `contenthash.json` | content hash inputs (UTF-8 text, hex bytes, or the `sha256-counter` generator) with expected size and `sha256:<hex>`; strict-parsing accept/reject lists |
-| `pathx.json` | write-time path normalization (expected NFC output or error kind), case-fold keys, sibling conflicts, branch names, and `stored_names`: the read-time rules for names inside stored nodes |
+| `pathx.json` | write-time path normalization (expected NFC output or error kind), case-fold keys, sibling conflicts, branch names, `stored_names`: the read-time rules for names inside stored nodes, and `lookup`: the rules for a path that finds an existing entry (expected NFC output or error kind) |
 | `tree.json` | tree cases (input files → root hash, node count, nodes in walk order with canonical bytes; `walk_order` where given), inputs that `Build` must reject with the expected error kind, node bytes (hex) a strict decoder must reject (`decode_invalid`), node bytes a decoder must accept although the write path never produces them (`decode_valid_build_rejects`), and whole trees (nodes + root hash) a reader must accept (`walk_valid`) or reject with the category `invalid_node` or `invalid_tree` (`walk_invalid`) |
 | `REVIEW.md` | generated summary for reviewers |
 

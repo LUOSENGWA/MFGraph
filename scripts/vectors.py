@@ -175,12 +175,8 @@ def _check_chars(s, write=True):
             raise PathError(kind)
 
 
-def normalize_path(raw):
-    s = _decode(raw)
-    if s[0] == "/":
-        raise PathError("absolute")
-    _check_chars(s)
-    n = unicodedata.normalize("NFC", s)
+def _check_segments(n):
+    # On the NFC form: empty and dot segments first, then the byte limits.
     segs = n.split("/")
     for seg in segs:
         if seg == "":
@@ -192,7 +188,32 @@ def normalize_path(raw):
             raise PathError("segment_too_long")
     if len(n.encode("utf-8")) > MAX_PATH:
         raise PathError("path_too_long")
+
+
+def normalize_path(raw):
+    s = _decode(raw)
+    if s[0] == "/":
+        raise PathError("absolute")
+    _check_chars(s)
+    n = unicodedata.normalize("NFC", s)
+    _check_segments(n)
     return n
+
+
+def normalize_lookup(raw):
+    """Lookup rules (specification 2.6) for a path given to find an existing
+    entry: on the input the read-time character rules (backslash, control
+    characters, noncharacters) after UTF-8, non-empty and not absolute; then
+    NFC; then the segment rules and byte limits on the NFC form. No
+    unassigned, disallowed-list or case checks. Returns (nfc, raw): an entry
+    is looked up by the input as given first, then by its NFC form."""
+    s = _decode(raw)
+    if s[0] == "/":
+        raise PathError("absolute")
+    _check_chars(s, write=False)
+    n = unicodedata.normalize("NFC", s)
+    _check_segments(n)
+    return n, s
 
 
 def normalize_segment(raw):
@@ -305,6 +326,17 @@ def verify_pathx():
     for case in v["stored_names"]:
         _, kind = _run(check_stored_name, vector_input(case))
         check(kind == case.get("error"), "pathx stored name %s: got %r, want %r" % (case["name"], kind, case.get("error")))
+        n += 1
+    for case in v["lookup"]:
+        label = "pathx lookup %s" % case["name"]
+        if ucd_skip(case, label):
+            continue
+        raw = vector_input(case)
+        got, kind = _run(normalize_lookup, raw)
+        if "error" in case:
+            check(kind == case["error"], "%s: got %r/%r, want error %s" % (label, got, kind, case["error"]))
+        else:
+            check(kind is None and got == (vector_output(case), raw), "%s: got %r/%r" % (label, got, kind))
         n += 1
     return n
 
@@ -1124,6 +1156,16 @@ def review_pathx(lines):
     for case in v["stored_names"]:
         res = "✗ `%s`" % case["error"] if "error" in case else "✓ accepted"
         lines.append("| %s | %s | %s |" % (case["name"], show_case_input(case), res))
+    lines += ["", "### 2.6 Lookups (a path that finds an existing entry)", "",
+              "Listing, download, diff and restore paths, and the path of a commit change that replaces or "
+              "deletes a file (specification 2.6): on the input UTF-8 + non-empty → absolute → first offending "
+              "character (backslash, control_char, noncharacter: the read-time character rules) → NFC → on the "
+              "NFC form empty / `.` / `..` segments → segment ≤ 255 B and path ≤ 4096 B. No unassigned, "
+              "disallowed-list or case checks. The result is the NFC form; an entry is looked up by the input as "
+              "given first and by the NFC form second.", "",
+              "| name | input | result |", "|---|---|---|"]
+    for case in v["lookup"]:
+        lines.append("| %s | %s | %s |" % (case["name"], show_case_input(case), show_case_result(case)))
     lines.append("")
 
 
@@ -1259,6 +1301,7 @@ REVIEW_COVERAGE = """## 4. Coverage checklist
 | tree: whole-tree rules (empty subdirectory, dir_page as a directory, index to a dir, count/first, order across pages, canonical split) | `walk_valid`, `walk_invalid` |
 | path, write time: C1 controls, noncharacters, the fixed disallowed list, unassigned code points; allowed ZWJ/ZWNJ, variation selectors, tag characters, CGJ | `pathx.json` → `c1-control-*`, `noncharacter-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `soft-hyphen-u00ad`, `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`, `function-application-u2061`, `invisible-*`, `interlinear-annotation-*`, `unassigned-*`, `assigned-in-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-noncharacter*`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`, `reject-interlinear-annotation`, `allowed-zwj-zwnj-fullwidth-reserved-names`, `allowed-variation-selectors-tags-cgj` |
 | read time: structural rules only (noncharacters and controls rejected; NFD, case variants, unassigned code points and the disallowed list readable) | `pathx.json` → `stored_names`; `tree.json` → `decode_valid_build_rejects`, `decode_invalid` → `name-with-c1-*`, `*noncharacter*`, `index-first-with-c1-control` |
+| lookups: read-time character rules on the input, then NFC, then segment rules and byte limits on the NFC form; NFD input over 255 bytes accepted, too long after NFC rejected; the disallowed list, unassigned code points and case not checked | `pathx.json` → `lookup` |
 | vector files cannot be rewritten by an editor | all three JSON files are ASCII (`\\u` escapes); `verify` and the Go tests reject raw non-ASCII bytes |
 
 ## 5. Notes for the reviewer
@@ -1351,6 +1394,23 @@ python3 scripts/vectors.py crosscheck         # Go CLI + shasum on every small/l
 go test ./internal/contenthash ./internal/pathx ./internal/tree   # MFGRAPH_HEAVY_VECTORS=1 for the heavy case
 ```
 
+"""
+
+
+REVIEW_PATCH4_CHANGES = """## 冻结前补丁轮 4 变更 (patch round 4 before the format freeze)
+
+No expected value of an existing case changed, and no root hash or node byte of a tree case.
+
+* **New section `lookup` in `pathx.json`** (31 cases): the lookup rules for a path that finds
+  an existing entry (specification 2.6), checked by `pathx.NormalizeLookup` and by the Python
+  reference. Accepted with their NFC form: NFD input whose segment has more than 255 bytes as
+  given (`nfd-hangul-270-bytes-is-90-after-nfc`, 30 Hangul syllables; a path of 4335 bytes that
+  has 1455 after NFC), characters of the disallowed list (`disallowed-char-*-accepted`), a code
+  point unassigned in V (`assigned-in-17.0-u1f6d8-accepted`) and case variants. Rejected:
+  control characters, noncharacters, backslash, absolute paths, empty and dot segments, and
+  segments too long after NFC (`nfd-hangul-774-bytes-is-258-after-nfc`,
+  `segment-255-bytes-is-510-after-nfc-u0958`: 255 bytes as given, 510 after NFC). These cases
+  were added after the review of 2026-11-14.
 """
 
 
@@ -1500,7 +1560,7 @@ def count_ucd_cases():
 
 
 def write_review():
-    lines = [review_header(), REVIEW_FREEZE_CHANGES, REVIEW_CHANGES, REVIEW_METHOD]
+    lines = [review_header(), REVIEW_PATCH4_CHANGES, REVIEW_FREEZE_CHANGES, REVIEW_CHANGES, REVIEW_METHOD]
     review_contenthash(lines)
     review_pathx(lines)
     review_tree(lines)

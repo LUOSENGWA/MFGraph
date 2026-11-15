@@ -102,6 +102,7 @@ type vectorFile struct {
 	} `json:"siblings"`
 	BranchNames []ioCase `json:"branch_names"`
 	StoredNames []ioCase `json:"stored_names"`
+	Lookup      []ioCase `json:"lookup"`
 }
 
 func loadVectors(t *testing.T) vectorFile {
@@ -491,6 +492,114 @@ func TestStoredNameVectors(t *testing.T) {
 
 // TestReadTimeIsSubsetOfWriteTime: every name the write path produces is
 // readable.
+// TestLookupVectors: NormalizeLookup returns the NFC form (the expected
+// output) and the input as given.
+func TestLookupVectors(t *testing.T) {
+	v := loadVectors(t)
+	if len(v.Lookup) == 0 {
+		t.Fatal("no lookup vectors")
+	}
+	checkUCD(t, v.Lookup)
+	for _, c := range v.Lookup {
+		in := c.input(t)
+		nfc, raw, err := pathx.NormalizeLookup(in)
+		checkResult(t, "NormalizeLookup "+c.Name, c, nfc, err)
+		if err == nil && raw != in {
+			t.Errorf("NormalizeLookup %s: raw form %+q, want the input %+q", c.Name, raw, in)
+		}
+	}
+}
+
+// TestLookupAgreesWithNormalize: the lookup rules are the write-time rules
+// without the disallowed list and the unassigned check. On every normalize
+// vector with at most one violation, a path Normalize accepts gets the same
+// NFC form, a disallowed_char or unassigned_char path is accepted, and every
+// other violation gives the same error kind.
+func TestLookupAgreesWithNormalize(t *testing.T) {
+	v := loadVectors(t)
+	for _, c := range v.Normalize {
+		if c.MultipleViolations {
+			continue
+		}
+		in := c.input(t)
+		want, wantErr := pathx.Normalize(in)
+		nfc, raw, err := pathx.NormalizeLookup(in)
+		switch k := pathx.KindOf(wantErr); {
+		case wantErr == nil:
+			if err != nil || nfc != want || raw != in {
+				t.Errorf("%s: Normalize gives %+q, NormalizeLookup %+q, %+q, %v", c.Name, want, nfc, raw, err)
+			}
+		case k == pathx.KindDisallowedChar || k == pathx.KindUnassignedChar:
+			if err != nil || nfc != norm.NFC.String(in) || raw != in {
+				t.Errorf("%s: lookups do not check %s: got %+q, %v", c.Name, k, nfc, err)
+			}
+		default:
+			if got := pathx.KindOf(err); got != k {
+				t.Errorf("%s: NormalizeLookup error %q (%v), Normalize %q", c.Name, got, err, k)
+			}
+		}
+	}
+}
+
+// TestNormalizeLookup: lookups count bytes after NFC, accept what only the
+// write-time rules reject and return the input as given.
+func TestNormalizeLookup(t *testing.T) {
+	// 30 Hangul syllables U+D55C in NFD: 270 bytes as given, 90 after NFC.
+	nfd := strings.Repeat("\u1112\u1161\u11ab", 30)
+	if len(nfd) != 270 {
+		t.Fatalf("the NFD segment has %d bytes", len(nfd))
+	}
+	nfc, raw, err := pathx.NormalizeLookup("docs/" + nfd)
+	if err != nil || nfc != "docs/"+strings.Repeat("\ud55c", 30) || raw != "docs/"+nfd {
+		t.Fatalf("30 NFD syllables: %+q, %+q, %v", nfc, raw, err)
+	}
+	if n, err := pathx.Normalize("docs/" + nfd); err != nil || n != nfc {
+		t.Fatalf("the write-time rules count NFC bytes too: %+q, %v", n, err)
+	}
+	// raw keeps a form that is not NFC, so the caller can match a stored
+	// name with exactly these bytes before trying the NFC form.
+	if nfc, raw, err := pathx.NormalizeLookup("cafe\u0301/x"); err != nil || nfc != "caf\u00e9/x" || raw != "cafe\u0301/x" {
+		t.Fatalf("NFD name: %+q, %+q, %v", nfc, raw, err)
+	}
+	// Accepted by lookups, rejected by the write-time rules: the disallowed
+	// list, a code point unassigned in V (assigned in Unicode 17.0), case.
+	for _, p := range []string{"invoice\u202egpj.exe", "a\u200bb", "\ufeffx", "d/\U0001f6d8.txt"} {
+		if _, err := pathx.Normalize(p); err == nil {
+			t.Errorf("Normalize(%+q) accepted", p)
+		}
+		if nfc, raw, err := pathx.NormalizeLookup(p); err != nil || nfc != p || raw != p {
+			t.Errorf("NormalizeLookup(%+q) = %+q, %+q, %v", p, nfc, raw, err)
+		}
+	}
+	if nfc, _, err := pathx.NormalizeLookup("Docs/README.md"); err != nil || nfc != "Docs/README.md" {
+		t.Errorf("case must be kept: %+q, %v", nfc, err)
+	}
+	// Rejected: the read-time character rules on the input, the segment
+	// rules and byte limits on the NFC form.
+	for p, kind := range map[string]pathx.Kind{
+		"":                                       pathx.KindEmpty,
+		"a\xffb":                                 pathx.KindInvalidUTF8,
+		"/a":                                     pathx.KindAbsolute,
+		"a\\b":                                   pathx.KindBackslash,
+		"a\u0007b":                               pathx.KindControlChar,
+		"a\u009fb":                               pathx.KindControlChar,
+		"a\ufdd0":                                pathx.KindNoncharacter,
+		"a\U0001fffe":                            pathx.KindNoncharacter,
+		"a//b":                                   pathx.KindEmptySegment,
+		"a/":                                     pathx.KindEmptySegment,
+		"a/..":                                   pathx.KindDotSegment,
+		strings.Repeat("a", 256):                 pathx.KindSegmentTooLong,
+		strings.Repeat("\u0958", 85):             pathx.KindSegmentTooLong, // 255 bytes, 510 after NFC
+		strings.Repeat("\u1112\u1161\u11ab", 86): pathx.KindSegmentTooLong, // 258 bytes after NFC
+		strings.Repeat(strings.Repeat("a", 255)+"/", 16) + "b": pathx.KindPathTooLong,
+	} {
+		nfc, raw, err := pathx.NormalizeLookup(p)
+		if pathx.KindOf(err) != kind || !errors.Is(err, pathx.ErrInvalidPath) || nfc != "" || raw != "" {
+			t.Errorf("NormalizeLookup(%+q) = %+q, %+q, %v; want %s", p, nfc, raw, err, kind)
+		}
+	}
+}
+
 func TestReadTimeIsSubsetOfWriteTime(t *testing.T) {
 	v := loadVectors(t)
 	for _, c := range append(v.Normalize, v.BranchNames...) {

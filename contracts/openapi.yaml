@@ -43,31 +43,39 @@ info:
       form of the principal's ULID. Fields named `*_ref` carry it; the optional
       `*_principal_uid` is the actor's ULID when known and `null` otherwise.
     * **File paths** (docs/spec/content-format.md, section 2). Paths are
-      relative and `/`-separated. A path that is written (uploaded or
-      committed) must satisfy the write-time rules:
-      valid UTF-8, not empty, no leading `/`, no `\`, no control character
-      (U+0000-U+001F, U+007F-U+009F), no noncharacter (U+FDD0-U+FDEF,
-      U+xxFFFE, U+xxFFFF), no character of the fixed disallowed list (bidi
-      controls and invisible characters), no code point unassigned in
-      Unicode 15.0.0; the server converts it to NFC; then no empty, `.` or
-      `..` segment, at most 255 bytes per segment and 4096 bytes in total
-      (UTF-8, after NFC). Within one directory a name may not be used for a
-      file and a directory, and two names may not have the same case-fold
-      key NFD(casefold(NFD(name))). On a commit these rules apply to the
-      paths it adds or changes (including conflicts with the names already
-      in the directory); entries carried over from the base snapshot, or
+      relative and `/`-separated. The names a commit creates must satisfy the
+      write-time rules: valid UTF-8, not empty, no leading `/`, no `\`, no
+      control character (U+0000-U+001F, U+007F-U+009F), no noncharacter
+      (U+FDD0-U+FDEF, U+xxFFFE, U+xxFFFF), no character of the fixed
+      disallowed list (bidi controls and invisible characters), no code point
+      unassigned in Unicode 15.0.0; the server converts the path to NFC; then
+      no empty, `.` or `..` segment, at most 255 bytes per segment and 4096
+      bytes in total (UTF-8, after NFC). Within one directory a name may not
+      be used for a file and a directory, and two names may not have the same
+      case-fold key NFD(casefold(NFD(name))). On a commit these rules apply
+      only to the names a change creates (the segments of its path that do not
+      exist in the base snapshot), including conflicts with the names already
+      in the directory. A change that replaces or deletes a file finds it as
+      described under "Looking up a path" and does not apply them: the file
+      keeps its stored path. Entries carried over from the base snapshot, or
       restored from another snapshot, keep their stored bytes and are not
       checked again.
     * **Looking up a path** (the `path` parameter of the tree and file
-      operations, `path` of a restore): the path must be valid UTF-8 and
-      every segment must satisfy the read-time rules (not empty, not `.` or
-      `..`, no `\`, no control character, no noncharacter, at most 255
-      bytes); the server converts it to NFC and compares it byte for byte
-      with the stored names. Unassigned code points and the disallowed list
-      are not checked for lookups.
-    * **Paths in responses** are always the stored, normalized form. NFC can
-      change what a client sent: for example the CJK compatibility
-      ideograph U+FA10 becomes U+585A, and `e` + U+0301 becomes U+00E9.
+      operations, `path` of a restore, and `path` of a commit change that
+      replaces or deletes a file): (1) the path as sent must be valid UTF-8,
+      not empty, without a leading `/`, and contain no `\`, control character
+      or noncharacter; (2) the server converts it to NFC; (3) the NFC form
+      must not have an empty, `.` or `..` segment, and must not exceed 255 bytes
+      per segment and 4096 bytes in total; (4) the server looks for the entry
+      whose path is byte for byte the path as sent, and if there is none, for
+      the entry whose path is the NFC form. Unassigned code points, the
+      disallowed list and case are not checked for lookups, so names that the
+      write-time rules would reject today can still be found, and a stored
+      name that is not in NFC is found by sending its exact bytes.
+    * **Paths in responses** are always the stored form, which is NFC for
+      every name written under the write-time rules. NFC can change what a
+      client sent: for example the CJK compatibility ideograph U+FA10 becomes
+      U+585A, and `e` + U+0301 becomes U+00E9.
     * **Path order.** Lists of paths (diffs, and the entries of a directory)
       are in path order: paths are compared segment by segment, each segment
       by its UTF-8 bytes, and a path sorts before the paths below it. This is
@@ -360,13 +368,18 @@ paths:
         parent, moves the branch head with a compare-and-swap on
         `expected_generation` and writes the outbox event.
 
-        * A change with `hash` adds or replaces the file at `path`. The
-          content must have been uploaded to this workspace. `mode` is
+        * Each `path` is first looked up in the base snapshot (the current
+          head of `branch_id`) as described under "Looking up a path".
+        * A change with `hash` replaces the file found, which keeps its
+          stored path; if no file is found, it adds a file at `path`, and the
+          names this creates (the segments of `path` that do not exist in the
+          base snapshot) must satisfy the write-time rules (see "File paths").
+          The content must have been uploaded to this workspace. `mode` is
           optional: an explicit `mode` (420 regular, 493 executable) always
-          wins; without it, a path that is already a file in the base snapshot
-          (the current head of `branch_id`) keeps its existing mode, and a new
-          file gets 420.
-        * A change with `delete: true` removes the file at `path`.
+          wins; without it, a replaced file keeps its existing mode, and a
+          new file gets 420.
+        * A change with `delete: true` removes the file found; the
+          write-time rules are not applied to it.
         * Each path may appear once per request; the request needs at least
           one change.
 
@@ -487,7 +500,7 @@ paths:
         - name: path
           in: query
           required: false
-          description: Directory path, looked up with the read-time rules and NFC (see "Looking up a path"); omit or leave empty for the root.
+          description: Directory path, looked up as described under "Looking up a path" (the bytes as sent first, then the NFC form); omit or leave empty for the root.
           schema:
             type: string
             maxLength: 4096
@@ -645,8 +658,8 @@ paths:
         head. Without `path` its tree equals the tree of `{snapshot_id}`;
         with `path` only that file or directory is restored (removed if it
         does not exist in `{snapshot_id}`) and everything else is kept from
-        the head. `path` is looked up with the read-time rules and NFC (see
-        "Looking up a path"). History is never rewritten.
+        the head. `path` is looked up as described under "Looking up a
+        path". History is never rewritten.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404, snapshot or branch), `conflict` (409,
@@ -760,7 +773,7 @@ components:
       name: path
       in: query
       required: true
-      description: File path, looked up with the read-time rules and NFC (see "Looking up a path").
+      description: File path, looked up as described under "Looking up a path" (the bytes as sent first, then the NFC form).
       schema:
         $ref: '#/components/schemas/FilePath'
   responses:
@@ -1056,11 +1069,21 @@ components:
       type: object
       required: [path]
       description: |
-        Exactly one of: `hash` (add or replace the file at `path`, with
-        optional `mode`) or `delete: true` (remove the file at `path`).
-        When `mode` is omitted, an existing file keeps its mode from the base
-        snapshot (the branch head) and a new file gets 420; an explicit
-        `mode` always wins.
+        Exactly one of `hash` (with optional `mode`) or `delete: true`.
+        `path` is first looked up in the base snapshot (the branch head) as
+        described under "Looking up a path".
+
+        * Replace: `hash`, and a file is found. The file keeps its stored
+          path; the write-time rules are not applied to it.
+        * Create: `hash`, and no file is found. The names this creates (the
+          segments of `path` that do not exist in the base snapshot) must
+          satisfy the write-time rules (see "File paths") and are stored in
+          NFC.
+        * Delete: `delete: true` removes the file found; the write-time rules
+          are not applied to it. A path that is not found is an error.
+
+        When `mode` is omitted, a replaced file keeps its mode and a new file
+        gets 420; an explicit `mode` always wins.
       properties:
         path:
           $ref: '#/components/schemas/FilePath'

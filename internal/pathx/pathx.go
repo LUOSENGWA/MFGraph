@@ -218,9 +218,10 @@ func isDisallowed(r rune) bool {
 func isUnassigned(r rune) bool { return unicode.Is(unicode.Cn, r) }
 
 // Normalize validates a '/'-separated relative path and returns its canonical
-// (NFC) form. These are the write-time rules, applied to every path that is
-// uploaded or committed. The checks run in this order, and the first failure
-// wins:
+// (NFC) form. These are the write-time rules, applied to the names a commit
+// creates and by tree.Build; a path that finds an existing entry is checked
+// with NormalizeLookup instead. The checks run in this order, and the first
+// failure wins:
 //
 //  1. valid UTF-8 and non-empty;
 //  2. no leading '/'; then the characters are scanned from left to right and
@@ -250,24 +251,78 @@ func Normalize(p string) (string, error) {
 		return "", err
 	}
 	n := norm.NFC.String(p)
+	if err := checkSegments(p, n); err != nil {
+		return "", err
+	}
+	return n, nil
+}
+
+// NormalizeLookup validates a path given to find an existing entry: listing
+// a directory, downloading a file, a path of a diff or a restore, and the
+// path of a commit change that replaces or deletes an entry. It returns the
+// NFC form of p and p itself (raw). These are the lookup rules of the
+// specification (section 2.6), checked in this order, the first failure
+// winning:
+//
+//  1. on the input: valid UTF-8 and non-empty; no leading '/'; then the
+//     characters from left to right: no '\' (backslash), no control
+//     character U+0000-U+001F or U+007F-U+009F (control_char), no
+//     noncharacter (noncharacter), the character rules of the read-time
+//     rules;
+//  2. NFC normalization;
+//  3. on the NFC form: no empty segments, no "." or "..", every segment
+//     <= MaxSegmentBytes and the whole path <= MaxPathBytes.
+//
+// The error kinds are those of Normalize. Unassigned code points, the fixed
+// disallowed list and case are not checked, so a lookup also finds names
+// that the current write-time rules reject (for example names written with
+// a higher V). Step 4 is the caller's: it compares the stored names byte for
+// byte with the segments of raw first and, if no entry matches, with those
+// of nfc. A stored name that is not in NFC is therefore found when the input
+// gives its exact bytes.
+func NormalizeLookup(p string) (nfc, raw string, err error) {
+	if p == "" {
+		return "", "", fail(KindEmpty, p, "")
+	}
+	if !utf8.ValidString(p) {
+		return "", "", fail(KindInvalidUTF8, p, "")
+	}
+	if p[0] == '/' {
+		return "", "", fail(KindAbsolute, p, "paths are relative to the workspace root")
+	}
+	if err := checkChars(p, p, false); err != nil {
+		return "", "", err
+	}
+	n := norm.NFC.String(p)
+	if err := checkSegments(p, n); err != nil {
+		return "", "", err
+	}
+	return n, p, nil
+}
+
+// checkSegments applies the segment rules to n, the NFC form of the path
+// input: no empty segments ("a//b", trailing '/') and no "." or "..", then
+// every segment <= MaxSegmentBytes and the whole path <= MaxPathBytes. input
+// is reported as the offending value.
+func checkSegments(input, n string) error {
 	segs := strings.Split(n, "/")
 	for _, s := range segs {
 		switch s {
 		case "":
-			return "", fail(KindEmptySegment, p, "")
+			return fail(KindEmptySegment, input, "")
 		case ".", "..":
-			return "", fail(KindDotSegment, p, fmt.Sprintf("segment %q", s))
+			return fail(KindDotSegment, input, fmt.Sprintf("segment %q", s))
 		}
 	}
 	for _, s := range segs {
 		if len(s) > MaxSegmentBytes {
-			return "", fail(KindSegmentTooLong, p, fmt.Sprintf("segment is %d bytes, limit %d", len(s), MaxSegmentBytes))
+			return fail(KindSegmentTooLong, input, fmt.Sprintf("segment is %d bytes, limit %d", len(s), MaxSegmentBytes))
 		}
 	}
 	if len(n) > MaxPathBytes {
-		return "", fail(KindPathTooLong, p, fmt.Sprintf("path is %d bytes, limit %d", len(n), MaxPathBytes))
+		return fail(KindPathTooLong, input, fmt.Sprintf("path is %d bytes, limit %d", len(n), MaxPathBytes))
 	}
-	return n, nil
+	return nil
 }
 
 // checkChars scans the valid UTF-8 string s from left to right and rejects
