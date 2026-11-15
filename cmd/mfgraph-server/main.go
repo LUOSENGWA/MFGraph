@@ -6,6 +6,11 @@
 //
 // Configuration comes from MFGRAPH_* environment variables; see
 // internal/config.
+//
+// Before it serves or migrates, the server checks that the Unicode tables
+// compiled into it match the specification (pathx.CheckUnicodeVersions): the
+// standard library's tables must be exactly V and those of golang.org/x/text
+// at least V. Otherwise it refuses to start; there is no switch to skip this.
 package main
 
 import (
@@ -28,11 +33,16 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/config"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
 	"github.com/LUOSENGWA/MFGraph/internal/migrate"
+	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/migrations"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
 var version = "dev"
+
+// unicodeTables reports the Unicode versions of the tables of this build.
+// Only tests replace it, to simulate other toolchains.
+var unicodeTables = pathx.TableVersions
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -63,6 +73,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return 2
 	}
 	logger := newLogger(cfg, stderr)
+	if !unicodeTablesMatch(logger) {
+		return 1
+	}
 	if cmd == "migrate" {
 		if err := migrateOnly(ctx, cfg, logger); err != nil {
 			logger.Error("migration failed", "err", err)
@@ -80,6 +93,19 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return 1
 	}
 	return 0
+}
+
+// unicodeTablesMatch logs and reports whether the Unicode tables of this
+// build may run the write-time rules of V (pathx.CheckUnicodeVersions).
+func unicodeTablesMatch(logger *slog.Logger) bool {
+	std, xnorm, xcases := unicodeTables()
+	if err := pathx.CheckUnicodeVersions(std, xnorm, xcases); err != nil {
+		logger.Error("refusing to start: the Unicode tables of this build do not match the specification",
+			"required_v", pathx.UnicodeVersion, "unicode", std, "x_text_norm", xnorm, "x_text_cases", xcases,
+			"err", err.Error())
+		return false
+	}
+	return true
 }
 
 func newLogger(cfg config.Config, w io.Writer) *slog.Logger {

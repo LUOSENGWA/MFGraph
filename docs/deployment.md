@@ -22,6 +22,10 @@ make ci-mysql     # start MySQL 8.0 and run the migration tests on it
 make ci-seekdb    # start seekdb and run the same tests on it
 ```
 
+## Startup checks
+
+The path rules depend on Unicode tables, and the [content format](spec/content-format.md#24-unicode-version-v) fixes their version V. Before `mfgraph-server serve` or `migrate` touches any data, the server compares the tables compiled into the binary with V: the Go standard library's tables (which decide whether a code point is assigned) must be exactly V, and those of `golang.org/x/text` (NFC, case folding) V or later. Otherwise it logs the actual versions and the required V and exits with a non-zero status. There is no switch to skip the check; raising V means changing the code and the specification together. `mfgraph debug` only prints a warning.
+
 ## Minimal compose (conceptual)
 
 ```yaml

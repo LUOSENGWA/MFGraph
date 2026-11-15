@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -85,10 +86,87 @@ func fail(k Kind, input, detail string) error {
 // (docs/spec/content-format.md, section 2.4). The standard library
 // (general categories, unicode.SimpleFold) and golang.org/x/text (NFC, case
 // folding) must both provide exactly these tables; TestUnicodeVersionV fails
-// otherwise, for example after a Go upgrade. Raising V means recording the
-// new version in the specification; it only allows more characters, and the
-// read-time rules never depend on it.
+// otherwise, for example after a Go upgrade, and servers refuse to start
+// (CheckUnicodeVersions). Raising V means recording the new version in the
+// specification and changing this constant; it only allows more characters,
+// and the read-time rules never depend on it.
 const UnicodeVersion = "15.0.0"
+
+// TableVersions returns the Unicode versions of the tables compiled into
+// this binary: the standard library (general categories, unicode.SimpleFold)
+// and golang.org/x/text (NFC, case folding).
+func TableVersions() (std, xtextNorm, xtextCases string) {
+	return unicode.Version, norm.Version, cases.UnicodeVersion
+}
+
+// CheckUnicodeVersions reports whether tables of the given Unicode versions
+// may apply the write-time rules of V (UnicodeVersion):
+//
+//   - std, the version of the standard library's tables, must equal V: they
+//     decide whether a code point is assigned, so a different version would
+//     accept or reject other names;
+//   - xtextNorm and xtextCases, the versions of golang.org/x/text's NFC and
+//     case-folding tables, must be V or later: Unicode's normalization and
+//     case-folding stability policies keep their results for every character
+//     assigned in V, the only characters the write-time rules accept, while
+//     older tables would not know some of them.
+//
+// It is a pure function of its arguments, so every combination can be
+// tested. Programs call it with TableVersions() before they touch data:
+// mfgraph-server refuses to serve or migrate when it fails, and there is no
+// switch to skip it; raising V means changing UnicodeVersion and the
+// specification together.
+func CheckUnicodeVersions(std, xtextNorm, xtextCases string) error {
+	v, err := parseVersion(UnicodeVersion)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	check := func(name, got string, mustEqual bool) {
+		g, err := parseVersion(got)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		case mustEqual && compareVersions(g, v) != 0:
+			errs = append(errs, fmt.Errorf("%s has Unicode %s tables; the specification requires exactly V = %s", name, got, UnicodeVersion))
+		case !mustEqual && compareVersions(g, v) < 0:
+			errs = append(errs, fmt.Errorf("%s has Unicode %s tables, older than the specification's V = %s", name, got, UnicodeVersion))
+		}
+	}
+	check("the Go standard library (unicode)", std, true)
+	check("golang.org/x/text/unicode/norm", xtextNorm, false)
+	check("golang.org/x/text/cases", xtextCases, false)
+	return errors.Join(errs...)
+}
+
+// parseVersion parses a Unicode version "major[.minor[.update]]".
+func parseVersion(s string) ([3]int, error) {
+	var v [3]int
+	parts := strings.Split(s, ".")
+	if s == "" || len(parts) > 3 {
+		return v, fmt.Errorf("malformed Unicode version %q", s)
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || p != strconv.Itoa(n) {
+			return v, fmt.Errorf("malformed Unicode version %q", s)
+		}
+		v[i] = n
+	}
+	return v, nil
+}
+
+func compareVersions(a, b [3]int) int {
+	for i := range a {
+		if a[i] != b[i] {
+			if a[i] < b[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
 
 // isControl reports C0 controls, DEL and C1 controls (general category Cc).
 func isControl(r rune) bool { return r < 0x20 || 0x7f <= r && r <= 0x9f }

@@ -177,3 +177,29 @@ func TestDebugTreeWarningsAndErrors(t *testing.T) {
 		t.Fatalf("unknown debug command exit %d", code)
 	}
 }
+
+// TestDebugWarnsOnMismatchedUnicodeTables: the debug tools only warn and go
+// on when the Unicode tables of the build do not match V.
+func TestDebugWarnsOnMismatchedUnicodeTables(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(f, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := run([]string{"debug", "hash", f}, &out, &errOut); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("matching tables: exit %d, stderr %q", code, errOut.String())
+	}
+	defer func(g func() (string, string, string)) { unicodeTables = g }(unicodeTables)
+	unicodeTables = func() (string, string, string) { return "17.0.0", "17.0.0", "17.0.0" }
+	out.Reset()
+	if code := run([]string{"debug", "hash", f}, &out, &errOut); code != 0 {
+		t.Fatalf("debug hash with mismatched tables: exit %d", code)
+	}
+	if !strings.Contains(errOut.String(), "warning") || !strings.Contains(errOut.String(), "15.0.0") ||
+		!strings.Contains(errOut.String(), "17.0.0") {
+		t.Errorf("no warning naming the versions: %q", errOut.String())
+	}
+	if !strings.Contains(out.String(), "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824") {
+		t.Errorf("debug hash did not run: %q", out.String())
+	}
+}

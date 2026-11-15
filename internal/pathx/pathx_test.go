@@ -294,6 +294,51 @@ func TestUnicodeVersionV(t *testing.T) {
 	}
 }
 
+// TestCheckUnicodeVersions: the standard library must have exactly V, the
+// x/text tables V or later; malformed versions are rejected.
+func TestCheckUnicodeVersions(t *testing.T) {
+	v := pathx.UnicodeVersion
+	for _, ok := range [][3]string{
+		{v, v, v},
+		{v, "17.0.0", "17.0.0"},
+		{v, "16.0.0", v},
+		{v, v, "15.1.0"},
+		{"15.0", "15.0.0", "15.0"}, // missing components are 0
+	} {
+		if err := pathx.CheckUnicodeVersions(ok[0], ok[1], ok[2]); err != nil {
+			t.Errorf("CheckUnicodeVersions%q = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range [][3]string{
+		{"15.1.0", v, v},               // standard library newer than V
+		{"14.0.0", v, v},               // standard library older than V
+		{"17.0.0", "17.0.0", "17.0.0"}, // a Go upgrade without raising V
+		{v, "14.0.0", v},               // x/text older than V
+		{v, v, "13.0.0"},
+		{"", v, v}, {v, "x", v}, {v, v, "15.0.0.1"}, {"15.0.-1", v, v}, {"15.00.0", v, v},
+	} {
+		err := pathx.CheckUnicodeVersions(bad[0], bad[1], bad[2])
+		if err == nil {
+			t.Errorf("CheckUnicodeVersions%q accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), v) && !strings.Contains(err.Error(), "malformed") {
+			t.Errorf("CheckUnicodeVersions%q: the error does not name V: %v", bad, err)
+		}
+	}
+	if err := pathx.CheckUnicodeVersions("17.0.0", "14.0.0", "14.0.0"); err == nil || strings.Count(err.Error(), "\n") != 2 {
+		t.Errorf("all three problems must be reported: %v", err)
+	}
+	// This build passes the check with its own tables.
+	std, n, c := pathx.TableVersions()
+	if std != unicode.Version || n != norm.Version || c != cases.UnicodeVersion {
+		t.Fatalf("TableVersions() = %s %s %s", std, n, c)
+	}
+	if err := pathx.CheckUnicodeVersions(pathx.TableVersions()); err != nil {
+		t.Fatalf("this build fails its own check: %v", err)
+	}
+}
+
 func TestAllowedAndRejectedCharacters(t *testing.T) {
 	allowed := []rune{0x200c, 0x200d, 0xff0f, 0xe000, 0x00a0, 0xfe00, 0xfe0e, 0xfe0f, 0xe0020, 0xe0067, 0xe007f, 0x034f}
 	for _, r := range allowed {

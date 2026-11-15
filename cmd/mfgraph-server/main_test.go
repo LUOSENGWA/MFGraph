@@ -141,3 +141,38 @@ func TestMigrateCommandMySQL(t *testing.T) {
 		t.Fatalf("second run did not skip: %s", errOut.String())
 	}
 }
+
+// TestRefusesMismatchedUnicodeTables: serve and migrate stop before touching
+// anything when the Unicode tables of the build do not match V, and the log
+// names the actual and the required versions. version and help still work.
+func TestRefusesMismatchedUnicodeTables(t *testing.T) {
+	defer func(f func() (string, string, string)) { unicodeTables = f }(unicodeTables)
+	for _, tables := range [][3]string{
+		{"17.0.0", "17.0.0", "17.0.0"}, // a newer Go without raising V
+		{"15.0.0", "14.0.0", "15.0.0"}, // x/text older than V
+	} {
+		unicodeTables = func() (string, string, string) { return tables[0], tables[1], tables[2] }
+		for _, cmd := range []string{"serve", "migrate"} {
+			var out, errOut bytes.Buffer
+			env := map[string]string{config.EnvHTTPAddr: "127.0.0.1:0", config.EnvDBDSN: "u:p@tcp(127.0.0.1:1)/x"}
+			code := run(context.Background(), []string{cmd}, func(k string) string { return env[k] }, &out, &errOut)
+			if code == 0 {
+				t.Fatalf("%s with tables %v: exit 0", cmd, tables)
+			}
+			log := errOut.String()
+			for _, want := range []string{"refusing to start", `"required_v":"15.0.0"`, `"unicode":"` + tables[0] + `"`,
+				`"x_text_norm":"` + tables[1] + `"`} {
+				if !strings.Contains(log, want) {
+					t.Errorf("%s with tables %v: log lacks %s:\n%s", cmd, tables, want, log)
+				}
+			}
+			if strings.Contains(log, "listening") || strings.Contains(log, "migrations") || strings.Contains(log, "connect to database") {
+				t.Errorf("%s with tables %v went on after the check:\n%s", cmd, tables, log)
+			}
+		}
+		var out, errOut bytes.Buffer
+		if code := run(context.Background(), []string{"version"}, func(string) string { return "" }, &out, &errOut); code != 0 {
+			t.Errorf("version must not depend on the Unicode tables: exit %d", code)
+		}
+	}
+}

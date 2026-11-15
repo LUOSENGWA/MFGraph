@@ -22,6 +22,10 @@ make ci-mysql     # 启动 MySQL 8.0 并在其上跑迁移测试
 make ci-seekdb    # 启动 seekdb 并在其上跑同样的测试
 ```
 
+## 启动检查
+
+路径规则依赖 Unicode 数据表，[内容格式](../spec/zh-CN/content-format.md#24-unicode-版本-v)规定了它们的版本 V。`mfgraph-server serve` 或 `migrate` 在处理任何数据之前，先把编译进程序的数据表与 V 比较：Go 标准库的数据表（决定码位是否已分配）必须正好是 V，`golang.org/x/text` 的数据表（NFC、大小写折叠）必须不低于 V。不满足就在日志里写明实际版本和要求的 V，并以非 0 状态退出。没有任何跳过检查的开关；升级 V 必须同时修改代码和规范。`mfgraph debug` 只打印警告。
+
 ## 最小 compose（概念示例）
 
 ```yaml

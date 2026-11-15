@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/tree"
 )
 
@@ -25,7 +26,24 @@ func debugUsage(w io.Writer) {
 	fmt.Fprintln(w, "      no trailing newline) so that `shasum -a 256` can check the hashes")
 }
 
+// unicodeTables reports the Unicode versions of the tables of this build.
+// Only tests replace it, to simulate other toolchains.
+var unicodeTables = pathx.TableVersions
+
+// warnUnicodeTables prints a warning (and continues) when the Unicode tables
+// of this build do not match the specification: debug tools are offline
+// helpers, unlike the server, which refuses to start.
+func warnUnicodeTables(stderr io.Writer) {
+	std, xnorm, xcases := unicodeTables()
+	if err := pathx.CheckUnicodeVersions(std, xnorm, xcases); err != nil {
+		fmt.Fprintf(stderr, "mfgraph debug: warning: the Unicode tables of this build do not match the specification "+
+			"(required V = %s; unicode %s, x/text norm %s, x/text cases %s); path normalization may differ:\n%v\n",
+			pathx.UnicodeVersion, std, xnorm, xcases, err)
+	}
+}
+
 func runDebug(args []string, stdout, stderr io.Writer) int {
+	warnUnicodeTables(stderr)
 	if len(args) == 0 {
 		debugUsage(stderr)
 		return 2
