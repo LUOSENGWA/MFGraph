@@ -268,7 +268,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		}
 		svc, err = core.New(core.Config{TenantID: cfg.TenantID, MaxUploadBytes: cfg.MaxUploadBytes,
 			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease}, core.Deps{Store: store, Objects: objects, Trees: trees,
-			Authz: authz.ProjectOwner{}, Clock: ports.ClockFunc(time.Now), IDs: ids.NewGenerator()})
+			Authz: authz.ProjectOwner{}, Clock: ports.ClockFunc(time.Now), IDs: ids.NewGenerator(), Logger: logger})
 		if err != nil {
 			return err
 		}

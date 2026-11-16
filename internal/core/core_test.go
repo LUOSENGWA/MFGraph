@@ -1,11 +1,13 @@
 package core_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -38,6 +40,25 @@ type env struct {
 	store *memory.Store
 	objs  *memory.BlobStore
 	clock *memory.Clock
+	logs  *syncBuffer // what the service logs
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent use.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 func newEnv(t *testing.T, cfg core.Config) *env {
@@ -64,12 +85,13 @@ func newEnvStore(t *testing.T, cfg core.Config, wrap func(*memory.Store) ports.S
 	}
 	clock := memory.NewClock(time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC))
 	cfg.TenantID = tenant
+	logs := &syncBuffer{}
 	svc, err := core.New(cfg, core.Deps{Store: svcStore, Objects: objs, Trees: trees, Authz: authz.ProjectOwner{}, Clock: clock,
-		IDs: memory.NewIDGen(clock)})
+		IDs: memory.NewIDGen(clock), Logger: slog.New(slog.NewTextHandler(logs, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &env{t: t, svc: svc, store: store, objs: objs, clock: clock}
+	return &env{t: t, svc: svc, store: store, objs: objs, clock: clock, logs: logs}
 }
 
 func (e *env) must(err error) {
@@ -739,6 +761,24 @@ func TestDownloadOfLostContent(t *testing.T) {
 	e.must(e.objs.Delete(ctx, storagekey.Join(sd.ws.Workspace.StoragePrefix, storagekey.ObjectKey(f.Entry.Hash))))
 	_, err = f.Open(ctx, 0, -1)
 	wantCode(t, "lost content", err, core.CodeBlobMissing, "reason", core.ReasonMissingInStorage)
+}
+
+// TestDownloadOfDamagedContent: a stored object whose size is not the
+// file's is refused before anything is sent, and logged.
+func TestDownloadOfDamagedContent(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	sd := e.seed(alice)
+	f, err := e.svc.GetFile(ctx, alice, sd.first.SnapshotID, "docs/b.txt")
+	e.must(err)
+	e.objs.Corrupt(storagekey.Join(sd.ws.Workspace.StoragePrefix, storagekey.ObjectKey(f.Entry.Hash)), []byte("second"))
+	for _, r := range [][2]int64{{0, -1}, {0, 3}} {
+		_, err = f.Open(ctx, r[0], r[1])
+		wantCode(t, "truncated content", err, core.CodeBlobMissing, "reason", core.ReasonMissingInStorage)
+	}
+	if logs := e.logs.String(); !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "expected_size=12") ||
+		!strings.Contains(logs, "size=6") {
+		t.Fatalf("logs: %s", logs)
+	}
 }
 
 // TestInvalidCursors: every cursor that is not a next_cursor of the same

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +58,8 @@ type Deps struct {
 	Authz   ports.Authorizer
 	Clock   ports.Clock
 	IDs     ports.IDGen
+	// Logger receives warnings about stored data (nil: slog.Default()).
+	Logger *slog.Logger
 }
 
 // Service implements the use cases of the first core slice: projects,
@@ -89,6 +92,9 @@ func New(cfg Config, d Deps) (*Service, error) {
 	}
 	if d.Store == nil || d.Objects == nil || d.Trees == nil || d.Authz == nil || d.Clock == nil || d.IDs == nil {
 		return nil, errors.New("core: missing dependency")
+	}
+	if d.Logger == nil {
+		d.Logger = slog.Default()
 	}
 	return &Service{cfg: cfg, d: d}, nil
 }

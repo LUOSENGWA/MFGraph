@@ -150,13 +150,31 @@ type File struct {
 // ETag is the quoted content hash.
 func (f *File) ETag() string { return `"` + f.Entry.Hash.String() + `"` }
 
-// Open reads length bytes from offset (length < 0: to the end). Content
-// that is no longer in storage gives blob_missing (missing_in_storage).
+// Open reads length bytes from offset (length < 0: to the end). It first
+// checks the stored object, before the caller sends any header: content
+// that is no longer in storage, or whose size is not the size of the file
+// (a truncated or damaged object, which is also logged), gives
+// blob_missing (missing_in_storage).
 func (f *File) Open(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
 	key := storagekey.Join(f.ws.StoragePrefix, storagekey.ObjectKey(f.Entry.Hash))
+	missing := func() error {
+		return blobMissing(ReasonMissingInStorage, "the content of the file is missing from storage or damaged",
+			[]string{f.Entry.Hash.String()})
+	}
+	info, err := f.s.d.Objects.Stat(ctx, key)
+	switch {
+	case errors.Is(err, ports.ErrNotFound):
+		return nil, missing()
+	case err != nil:
+		return nil, mapErr(err, "object")
+	case info.Size != f.Entry.Size:
+		f.s.d.Logger.Warn("a stored object does not have the size of its file", "workspace_id", f.ws.ID,
+			"hash", f.Entry.Hash.String(), "size", info.Size, "expected_size", f.Entry.Size)
+		return nil, missing()
+	}
 	rc, err := f.s.d.Objects.Get(ctx, key, offset, length)
 	if errors.Is(err, ports.ErrNotFound) {
-		return nil, blobMissing(ReasonMissingInStorage, "the content of the file is missing from storage", []string{f.Entry.Hash.String()})
+		return nil, missing()
 	}
 	return rc, mapErr(err, "object")
 }

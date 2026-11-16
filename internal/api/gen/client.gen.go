@@ -157,11 +157,14 @@ type ClientInterface interface {
 	// Returns the file content. A single `Range: bytes=...` range is
 	// supported (206); a header with several ranges, or one the server does
 	// not understand, is ignored (200 with the whole file). `ETag` is the
-	// quoted content hash and `If-None-Match` with it gives 304.
+	// quoted content hash and `If-None-Match` with it gives 304. The stored
+	// object is checked before the response starts: one that is missing,
+	// or whose size differs from the file's, gives `blob_missing`.
 	//
 	// Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 	// `path` names a directory), `unauthenticated` (401), `not_found` (404,
-	// snapshot or path), `blob_missing` (410, content lost from storage),
+	// snapshot or path), `blob_missing` (410, content lost from storage or
+	// damaged, `details.reason` = `missing_in_storage`),
 	// `invalid_request` with status 416 (range not satisfiable),
 	// `invalid_path` (422).
 	//
@@ -554,11 +557,14 @@ func (c *Client) GetSnapshotDiff(ctx context.Context, snapshotId SnapshotId, par
 // Returns the file content. A single `Range: bytes=...` range is
 // supported (206); a header with several ranges, or one the server does
 // not understand, is ignored (200 with the whole file). `ETag` is the
-// quoted content hash and `If-None-Match` with it gives 304.
+// quoted content hash and `If-None-Match` with it gives 304. The stored
+// object is checked before the response starts: one that is missing,
+// or whose size differs from the file's, gives `blob_missing`.
 //
 // Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 // `path` names a directory), `unauthenticated` (401), `not_found` (404,
-// snapshot or path), `blob_missing` (410, content lost from storage),
+// snapshot or path), `blob_missing` (410, content lost from storage or
+// damaged, `details.reason` = `missing_in_storage`),
 // `invalid_request` with status 416 (range not satisfiable),
 // `invalid_path` (422).
 //
@@ -2143,11 +2149,14 @@ type ClientWithResponsesInterface interface {
 	// Returns the file content. A single `Range: bytes=...` range is
 	// supported (206); a header with several ranges, or one the server does
 	// not understand, is ignored (200 with the whole file). `ETag` is the
-	// quoted content hash and `If-None-Match` with it gives 304.
+	// quoted content hash and `If-None-Match` with it gives 304. The stored
+	// object is checked before the response starts: one that is missing,
+	// or whose size differs from the file's, gives `blob_missing`.
 	//
 	// Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 	// `path` names a directory), `unauthenticated` (401), `not_found` (404,
-	// snapshot or path), `blob_missing` (410, content lost from storage),
+	// snapshot or path), `blob_missing` (410, content lost from storage or
+	// damaged, `details.reason` = `missing_in_storage`),
 	// `invalid_request` with status 416 (range not satisfiable),
 	// `invalid_path` (422).
 	//
@@ -3718,11 +3727,14 @@ func (c *ClientWithResponses) GetSnapshotDiffWithResponse(ctx context.Context, s
 // Returns the file content. A single `Range: bytes=...` range is
 // supported (206); a header with several ranges, or one the server does
 // not understand, is ignored (200 with the whole file). `ETag` is the
-// quoted content hash and `If-None-Match` with it gives 304.
+// quoted content hash and `If-None-Match` with it gives 304. The stored
+// object is checked before the response starts: one that is missing,
+// or whose size differs from the file's, gives `blob_missing`.
 //
 // Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 // `path` names a directory), `unauthenticated` (401), `not_found` (404,
-// snapshot or path), `blob_missing` (410, content lost from storage),
+// snapshot or path), `blob_missing` (410, content lost from storage or
+// damaged, `details.reason` = `missing_in_storage`),
 // `invalid_request` with status 416 (range not satisfiable),
 // `invalid_path` (422).
 //
