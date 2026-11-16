@@ -46,9 +46,9 @@ func (s *BlobStore) PutIfAbsent(ctx context.Context, key string, r io.Reader, si
 		return false, fmt.Errorf("memory: invalid put (key %q, size %d)", key, size)
 	}
 	s.mu.RLock()
-	_, exists := s.objects[key]
+	old, exists := s.objects[key]
 	s.mu.RUnlock()
-	if exists {
+	if exists && int64(len(old.data)) == size {
 		return false, nil
 	}
 	// Read at most size+1 bytes to detect oversized input without buffering
@@ -65,11 +65,50 @@ func (s *BlobStore) PutIfAbsent(ctx context.Context, key string, r io.Reader, si
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.objects[key]; exists { // lost a race with an identical put
+	if o, exists := s.objects[key]; exists && int64(len(o.data)) == size { // lost a race with an identical put
 		return false, nil
 	}
 	s.objects[key] = object{data: data, hash: h, modTime: s.now()}
 	return true, nil
+}
+
+// PutStream implements ports.BlobStore. The in-memory store buffers the
+// bytes (at most maxSize+1 of them); tmpDir is not used.
+func (s *BlobStore) PutStream(ctx context.Context, _ string, r io.Reader, maxSize int64, expected contenthash.Hash,
+	keyOf func(contenthash.Hash) string) (ports.ObjectInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ObjectInfo{}, false, err
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxSize+1))
+	if err != nil {
+		return ports.ObjectInfo{}, false, err
+	}
+	if int64(len(data)) > maxSize {
+		return ports.ObjectInfo{}, false, fmt.Errorf("%w: more than %d bytes", ports.ErrTooLarge, maxSize)
+	}
+	h := contenthash.SumBytes(data)
+	if !expected.IsZero() && h != expected {
+		return ports.ObjectInfo{}, false, fmt.Errorf("%w: got %s, want %s", ports.ErrHashMismatch, h, expected)
+	}
+	key := keyOf(h)
+	info := ports.ObjectInfo{Key: key, Size: int64(len(data)), Hash: h}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if o, exists := s.objects[key]; exists && len(o.data) == len(data) {
+		info.ModTime = o.modTime
+		return info, false, nil
+	}
+	info.ModTime = s.now()
+	s.objects[key] = object{data: data, hash: h, modTime: info.ModTime}
+	return info, true, nil
+}
+
+// Corrupt replaces the bytes stored under key without any check (test
+// helper for damaged objects).
+func (s *BlobStore) Corrupt(key string, data []byte) {
+	s.mu.Lock()
+	s.objects[key] = object{data: append([]byte(nil), data...), modTime: s.now()}
+	s.mu.Unlock()
 }
 
 // Get implements ports.BlobStore.

@@ -16,6 +16,12 @@ var (
 	ErrSizeMismatch = errors.New("content size mismatch")
 	// ErrInvalidRange: a read range starts beyond the end of the object.
 	ErrInvalidRange = errors.New("invalid range")
+	// ErrTooLarge: a streamed object exceeds the size limit.
+	ErrTooLarge = errors.New("object too large")
+	// ErrStorageUnavailable: the storage backend cannot be used (for
+	// example, its root directory is missing). The API answers 503
+	// storage_unavailable.
+	ErrStorageUnavailable = errors.New("storage unavailable")
 )
 
 // Capabilities describes what a BlobStore backend supports natively. Callers
@@ -44,19 +50,38 @@ type ObjectInfo struct {
 // BlobStore stores immutable objects under full keys
 // (workspace storage_prefix + "/" + relative key; see package storagekey).
 //
-// Durability: PutIfAbsent returns only after the object is durable. The POSIX
-// implementation must write a temporary file in the destination directory,
-// fsync the file, rename it to the final name, and fsync the directory; an S3
-// PUT is durable when it succeeds.
+// Durability: PutIfAbsent and PutStream return only after the object is
+// durable. The POSIX implementation writes a temporary file on the same file
+// system, fsyncs it, renames it to the final name and fsyncs the
+// directory; an S3 PUT is durable when it succeeds.
+//
+// Objects are content-addressed, so an existing object under a key is
+// expected to hold the right bytes. Both put methods check its size: an
+// object of the expected size is kept (a full hash check is a background
+// audit, not part of a put); an object of another size, or one that cannot
+// be examined, is treated as damaged and atomically replaced by the new
+// bytes, with a warning in the log.
 type BlobStore interface {
 	Capabilities() Capabilities
 
 	// PutIfAbsent stores the size bytes read from r under key. The SHA-256 of
 	// the bytes must equal h and their number must equal size, otherwise
 	// nothing is stored and ErrHashMismatch / ErrSizeMismatch is returned. If
-	// an object already exists under key, it is left untouched, r need not be
-	// read, and created is false.
+	// an intact object (of this size) already exists under key, it is left
+	// untouched, r need not be read, and created is false.
 	PutIfAbsent(ctx context.Context, key string, r io.Reader, size int64, h contenthash.Hash) (created bool, err error)
+
+	// PutStream stores the bytes read from r, to its end, under the key
+	// keyOf returns for their hash. The bytes are hashed while they are
+	// written to a temporary object below the key prefix tmpDir (on the same
+	// backend, so that they are written once and then moved to the key),
+	// and memory use does not grow with the size. More than maxSize bytes
+	// give ErrTooLarge; a hash other than expected (if expected is not zero)
+	// gives ErrHashMismatch; in both cases nothing is stored. If an intact
+	// object exists under the key, the temporary object is discarded and
+	// created is false. info has the key, size and hash of the object.
+	PutStream(ctx context.Context, tmpDir string, r io.Reader, maxSize int64, expected contenthash.Hash,
+		keyOf func(contenthash.Hash) string) (info ObjectInfo, created bool, err error)
 
 	// Get reads length bytes starting at offset; length < 0 reads to the end,
 	// and a range past the end is truncated. offset > size gives
@@ -72,9 +97,10 @@ type BlobStore interface {
 }
 
 // TreeStore stores canonical tree nodes per workspace. The default
-// implementation keeps zstd-compressed nodes in a BlobStore under
-// tree/<hh>/<hex>.json.zst; the hash is always that of the uncompressed
-// canonical bytes, so the compression can change without changing hashes.
+// implementation (package treestore) keeps zstd-compressed nodes in a
+// BlobStore under tree/<hh>/<hex>.json.zst; the hash is always that of the
+// uncompressed canonical bytes, so the compression can change without
+// changing hashes.
 type TreeStore interface {
 	// Put stores canonical bytes whose SHA-256 must equal h. Storing an
 	// existing node is a no-op.

@@ -1,10 +1,14 @@
-package memory
+// Package treestore is the default ports.TreeStore: canonical tree nodes,
+// zstd-compressed, in any ports.BlobStore at
+// <storage_prefix>/tree/<hh>/<hex>.json.zst (content format, section 4).
+package treestore
 
 import (
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -29,6 +33,33 @@ func StaticPrefixes(m map[string]string) PrefixResolver {
 	}
 }
 
+// CachedPrefixes caches the prefixes resolve finds. A storage prefix never
+// changes once a workspace exists, so a cached value never goes stale; the
+// cache is emptied when it holds max entries.
+func CachedPrefixes(resolve PrefixResolver, max int) PrefixResolver {
+	var mu sync.Mutex
+	cache := map[string]string{}
+	return func(ctx context.Context, ws string) (string, error) {
+		mu.Lock()
+		p, ok := cache[ws]
+		mu.Unlock()
+		if ok {
+			return p, nil
+		}
+		p, err := resolve(ctx, ws)
+		if err != nil {
+			return "", err
+		}
+		mu.Lock()
+		if len(cache) >= max {
+			cache = map[string]string{}
+		}
+		cache[ws] = p
+		mu.Unlock()
+		return p, nil
+	}
+}
+
 const (
 	// maxCompressedNode bounds the compressed object read back from storage.
 	maxCompressedNode = 2 * tree.MaxNodeBytes
@@ -42,27 +73,27 @@ const (
 	MaxFrameWindow = 8 << 20
 )
 
-// TreeStore is the default ports.TreeStore: nodes are zstd-compressed and
+// Store is the default ports.TreeStore: nodes are zstd-compressed and
 // stored in a BlobStore at <storage_prefix>/tree/<hh>/<hex>.json.zst, where
 // <hex> is the hash of the uncompressed canonical bytes. It works with any
-// BlobStore (NewTreeStore uses the in-memory one).
+// BlobStore (the POSIX one in production, the in-memory one in tests).
 //
 // Put writes one standard zstd frame without a dictionary and with
 // Frame_Content_Size in the frame header. Get accepts any frame whose window
 // is at most MaxFrameWindow, with or without a content size, and stops
 // decompressing at tree.MaxNodeBytes of output; the two limits are
 // independent, and exceeding either rejects the object.
-type TreeStore struct {
+type Store struct {
 	blobs    ports.BlobStore
 	prefixes PrefixResolver
 	enc      *zstd.Encoder
 	dec      *zstd.Decoder
 }
 
-var _ ports.TreeStore = (*TreeStore)(nil)
+var _ ports.TreeStore = (*Store)(nil)
 
-// NewBlobTreeStore returns a TreeStore on top of blobs.
-func NewBlobTreeStore(blobs ports.BlobStore, prefixes PrefixResolver) (*TreeStore, error) {
+// New returns a Store on top of blobs.
+func New(blobs ports.BlobStore, prefixes PrefixResolver) (*Store, error) {
 	// Single-segment frames always carry Frame_Content_Size. Without the
 	// option the encoder writes inputs of up to 1024 bytes as frames with a
 	// window descriptor, and those leave the content size out below 256
@@ -82,20 +113,10 @@ func NewBlobTreeStore(blobs ports.BlobStore, prefixes PrefixResolver) (*TreeStor
 	if err != nil {
 		return nil, err
 	}
-	return &TreeStore{blobs: blobs, prefixes: prefixes, enc: enc, dec: dec}, nil
+	return &Store{blobs: blobs, prefixes: prefixes, enc: enc, dec: dec}, nil
 }
 
-// NewTreeStore returns a TreeStore over a new in-memory BlobStore.
-func NewTreeStore(prefixes PrefixResolver) (*TreeStore, *BlobStore) {
-	blobs := NewBlobStore()
-	ts, err := NewBlobTreeStore(blobs, prefixes)
-	if err != nil {
-		panic(err) // only fails on invalid static options
-	}
-	return ts, blobs
-}
-
-func (s *TreeStore) key(ctx context.Context, workspaceID string, h contenthash.Hash) (string, error) {
+func (s *Store) key(ctx context.Context, workspaceID string, h contenthash.Hash) (string, error) {
 	prefix, err := s.prefixes(ctx, workspaceID)
 	if err != nil {
 		return "", err
@@ -104,9 +125,9 @@ func (s *TreeStore) key(ctx context.Context, workspaceID string, h contenthash.H
 }
 
 // Put implements ports.TreeStore.
-func (s *TreeStore) Put(ctx context.Context, workspaceID string, h contenthash.Hash, canonical []byte) error {
+func (s *Store) Put(ctx context.Context, workspaceID string, h contenthash.Hash, canonical []byte) error {
 	if len(canonical) > tree.MaxNodeBytes {
-		return fmt.Errorf("memory: tree node of %d bytes exceeds %d", len(canonical), tree.MaxNodeBytes)
+		return fmt.Errorf("treestore: tree node of %d bytes exceeds %d", len(canonical), tree.MaxNodeBytes)
 	}
 	if got := tree.HashOf(canonical); got != h {
 		return fmt.Errorf("%w: node %s has hash %s", ports.ErrHashMismatch, h, got)
@@ -121,7 +142,7 @@ func (s *TreeStore) Put(ctx context.Context, workspaceID string, h contenthash.H
 }
 
 // Get implements ports.TreeStore.
-func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.Hash) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, workspaceID string, h contenthash.Hash) ([]byte, error) {
 	key, err := s.key(ctx, workspaceID, h)
 	if err != nil {
 		return nil, err
@@ -136,7 +157,7 @@ func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.H
 		return nil, err
 	}
 	if len(z) > maxCompressedNode {
-		return nil, fmt.Errorf("memory: stored tree node %s is too large", h)
+		return nil, fmt.Errorf("treestore: stored tree node %s is too large", h)
 	}
 	// Check the frame header first: no dictionary, a window of at most
 	// MaxFrameWindow and, if the content size is declared, at most
@@ -145,7 +166,7 @@ func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.H
 	// every frame; doing them here gives a clearer error.
 	var hdr zstd.Header
 	if err := hdr.Decode(z); err != nil {
-		return nil, fmt.Errorf("memory: stored tree node %s is not a zstd frame: %w", h, err)
+		return nil, fmt.Errorf("treestore: stored tree node %s is not a zstd frame: %w", h, err)
 	}
 	window := hdr.WindowSize
 	if hdr.SingleSegment {
@@ -153,12 +174,12 @@ func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.H
 	}
 	switch {
 	case hdr.DictionaryID != 0:
-		return nil, fmt.Errorf("memory: stored tree node %s needs a dictionary: %w", h, zstd.ErrUnknownDictionary)
+		return nil, fmt.Errorf("treestore: stored tree node %s needs a dictionary: %w", h, zstd.ErrUnknownDictionary)
 	case window > MaxFrameWindow:
-		return nil, fmt.Errorf("memory: stored tree node %s declares a window of %d bytes, the limit is %d: %w",
+		return nil, fmt.Errorf("treestore: stored tree node %s declares a window of %d bytes, the limit is %d: %w",
 			h, window, MaxFrameWindow, zstd.ErrWindowSizeExceeded)
 	case hdr.HasFCS && hdr.FrameContentSize > tree.MaxNodeBytes:
-		return nil, fmt.Errorf("memory: stored tree node %s declares %d bytes, the limit is %d: %w",
+		return nil, fmt.Errorf("treestore: stored tree node %s declares %d bytes, the limit is %d: %w",
 			h, hdr.FrameContentSize, tree.MaxNodeBytes, zstd.ErrDecoderSizeExceeded)
 	}
 	// The output limit: DecodeAll fails after the block that takes the output
@@ -171,10 +192,10 @@ func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.H
 	}
 	canonical, err := s.dec.DecodeAll(z, make([]byte, 0, capacity))
 	if err != nil {
-		return nil, fmt.Errorf("memory: decompress tree node %s: %w", h, err)
+		return nil, fmt.Errorf("treestore: decompress tree node %s: %w", h, err)
 	}
 	if len(canonical) > tree.MaxNodeBytes {
-		return nil, fmt.Errorf("memory: stored tree node %s decompresses to more than %d bytes", h, tree.MaxNodeBytes)
+		return nil, fmt.Errorf("treestore: stored tree node %s decompresses to more than %d bytes", h, tree.MaxNodeBytes)
 	}
 	if got := tree.HashOf(canonical); got != h {
 		return nil, fmt.Errorf("%w: stored node %s decompresses to %s", ports.ErrHashMismatch, h, got)
@@ -183,7 +204,7 @@ func (s *TreeStore) Get(ctx context.Context, workspaceID string, h contenthash.H
 }
 
 // Getter adapts the store to tree.Getter for one workspace.
-func (s *TreeStore) Getter(workspaceID string) tree.Getter {
+func (s *Store) Getter(workspaceID string) tree.Getter {
 	return tree.GetterFunc(func(ctx context.Context, h contenthash.Hash) ([]byte, error) {
 		return s.Get(ctx, workspaceID, h)
 	})
