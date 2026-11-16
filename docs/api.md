@@ -121,7 +121,7 @@ X-Correlation-Id: <optional>
 
 ## Errors
 
-Every error has one flat body: `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`. Codes: `invalid_request` (400), `unauthenticated` (401), `forbidden` (403), `not_found` (404), `conflict` and `idempotency_key_reuse` (409), `upload_expired` and `blob_missing` (410), `precondition_failed` (412), `quota_exceeded` and `file_too_large` (413), `invalid_path` and `unsupported_format` (422), `rate_limited` (429), `internal` (500), `not_implemented` (501), `storage_unavailable` and `db_unavailable` (503).
+Every error has one flat body: `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`. Codes: `invalid_request` (400), `unauthenticated` (401), `forbidden` (403), `not_found` (404), `conflict` and `idempotency_key_reuse` (409), `upload_expired` and `blob_missing` (410), `precondition_failed` (412), `quota_exceeded`, `file_too_large` and `request_too_large` (413), `invalid_path` and `unsupported_format` (422), `rate_limited` (429), `internal` (500), `not_implemented` (501), `storage_unavailable` and `db_unavailable` (503).
 
 For `invalid_path`, `details.kind` names the violated rule; the values are listed by the `PathErrorKind` enum of the [contract](../contracts/openapi.yaml). The kind is guaranteed only when a path breaks a single rule.
 
