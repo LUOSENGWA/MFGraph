@@ -2,19 +2,28 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/api/gen"
+	"github.com/LUOSENGWA/MFGraph/internal/core"
+	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
 
 // ReadinessCheck is one dependency checked by /readyz.
 type ReadinessCheck struct {
-	Name  string                          // e.g. "db"
-	Code  string                          // error code when the check fails, e.g. CodeDBUnavailable
-	Check func(ctx context.Context) error // nil means "not configured"
+	Name string // e.g. "db"
+	Code string // error code when the check fails, e.g. CodeDBUnavailable
+	// Check reports whether the dependency works; nil means "not
+	// configured".
+	Check func(ctx context.Context) error
+	// Required makes an unconfigured dependency fail the check (503 with
+	// details.reason not_configured) instead of reporting not_configured.
+	Required bool
 }
 
 // Options configures NewHandler.
@@ -23,6 +32,16 @@ type Options struct {
 	IDGen         ports.IDGen
 	Readiness     []ReadinessCheck
 	Logger        *slog.Logger
+	// Service runs the business endpoints; without one (no database) they
+	// answer 503 db_unavailable.
+	Service *core.Service
+	// APIPrefix is the path prefix of the business endpoints ("" = /api/v1).
+	APIPrefix string
+	// Version is reported by /readyz.
+	Version string
+	// Pseudonym maps actor references to their pseudonyms in the logs; nil
+	// uses an actorref.Pseudonymizer with a random key.
+	Pseudonym func(string) string
 }
 
 // publicPaths are served without authentication.
@@ -30,12 +49,19 @@ var publicPaths = map[string]bool{"/healthz": true, "/readyz": true}
 
 // NewHandler returns the HTTP handler: generated routes on a ServeMux, a
 // JSON 404 for everything else, and the middleware chain request ID ->
-// access log -> panic recovery -> authentication.
+// access log -> panic recovery -> authentication -> API prefix.
 func NewHandler(o Options) http.Handler {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	strict := gen.NewStrictHandlerWithOptions(&handlers{readiness: o.Readiness}, nil, gen.StrictHTTPServerOptions{
+	if o.Pseudonym == nil {
+		key := make([]byte, 32)
+		_, _ = rand.Read(key)
+		p, _ := actorref.NewPseudonymizer(key)
+		o.Pseudonym = p.Pseudonym
+	}
+	h := &handlers{svc: o.Service, readiness: o.Readiness, version: o.Version}
+	strict := gen.NewStrictHandlerWithOptions(h, []gen.StrictMiddlewareFunc{contentLength}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			WriteError(w, r, NewError(CodeInvalidRequest, err.Error(), nil))
 		},
@@ -52,19 +78,32 @@ func NewHandler(o Options) http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
 	})
-	var h http.Handler = mux
-	h = Authenticate(o.Authenticator, publicPaths)(h)
-	h = Recover(o.Logger)(h)
-	h = AccessLog(o.Logger)(h)
-	h = RequestID(o.IDGen)(h)
-	return h
+	var handler http.Handler = mux
+	handler = Prefix(o.APIPrefix, publicPaths)(handler)
+	handler = Authenticate(o.Authenticator, publicPaths)(handler)
+	handler = Recover(o.Logger)(handler)
+	handler = AccessLog(o.Logger, o.Pseudonym)(handler)
+	handler = RequestID(o.IDGen)(handler)
+	return handler
 }
 
-// handlers implements the generated strict server interface. Only the health
-// endpoints are implemented in this build; every other operation answers
-// 501 not_implemented.
+// contentLength passes the request's Content-Length to the upload handler,
+// which refuses a body above the limit before reading it.
+func contentLength(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFunc {
+	if operationID != "PutObject" {
+		return f
+	}
+	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return f(context.WithValue(ctx, contentLengthKey{}, r.ContentLength), w, r, request)
+	}
+}
+
+// handlers implements the generated strict server interface on top of
+// core.Service.
 type handlers struct {
+	svc       *core.Service
 	readiness []ReadinessCheck
+	version   string
 }
 
 var _ gen.StrictServerInterface = (*handlers)(nil)
@@ -75,8 +114,17 @@ func (h *handlers) GetHealthz(context.Context, gen.GetHealthzRequestObject) (gen
 
 func (h *handlers) GetReadyz(ctx context.Context, _ gen.GetReadyzRequestObject) (gen.GetReadyzResponseObject, error) {
 	checks := map[string]string{}
+	id := RequestIDFrom(ctx)
+	fail := func(c ReadinessCheck, message string, details map[string]any) gen.GetReadyzResponseObject {
+		details["check"] = c.Name
+		return gen.GetReadyz503JSONResponse{ServiceUnavailableJSONResponse: gen.ServiceUnavailableJSONResponse{
+			Code: c.Code, Message: message, RequestId: &id, Details: &details}}
+	}
 	for _, c := range h.readiness {
 		if c.Check == nil {
+			if c.Required {
+				return fail(c, c.Name+" is not configured", map[string]any{"reason": "not_configured"}), nil
+			}
 			checks[c.Name] = "not_configured"
 			continue
 		}
@@ -84,64 +132,14 @@ func (h *handlers) GetReadyz(ctx context.Context, _ gen.GetReadyzRequestObject) 
 		err := c.Check(cctx)
 		cancel()
 		if err != nil {
-			id := RequestIDFrom(ctx)
-			details := map[string]any{"check": c.Name}
-			return gen.GetReadyz503JSONResponse{ServiceUnavailableJSONResponse: gen.ServiceUnavailableJSONResponse{
-				Code: c.Code, Message: c.Name + " is not available", RequestId: &id, Details: &details}}, nil
+			return fail(c, c.Name+" is not available", map[string]any{}), nil
 		}
 		checks[c.Name] = "ok"
 	}
-	return gen.GetReadyz200JSONResponse{Status: gen.Ready, Checks: checks}, nil
-}
-
-func (h *handlers) CreateProject(context.Context, gen.CreateProjectRequestObject) (gen.CreateProjectResponseObject, error) {
-	return nil, notImplemented("createProject")
-}
-
-func (h *handlers) GetProject(context.Context, gen.GetProjectRequestObject) (gen.GetProjectResponseObject, error) {
-	return nil, notImplemented("getProject")
-}
-
-func (h *handlers) CreateWorkspace(context.Context, gen.CreateWorkspaceRequestObject) (gen.CreateWorkspaceResponseObject, error) {
-	return nil, notImplemented("createWorkspace")
-}
-
-func (h *handlers) GetWorkspace(context.Context, gen.GetWorkspaceRequestObject) (gen.GetWorkspaceResponseObject, error) {
-	return nil, notImplemented("getWorkspace")
-}
-
-func (h *handlers) ListBranches(context.Context, gen.ListBranchesRequestObject) (gen.ListBranchesResponseObject, error) {
-	return nil, notImplemented("listBranches")
-}
-
-func (h *handlers) PutObject(context.Context, gen.PutObjectRequestObject) (gen.PutObjectResponseObject, error) {
-	return nil, notImplemented("putObject")
-}
-
-func (h *handlers) CreateCommit(context.Context, gen.CreateCommitRequestObject) (gen.CreateCommitResponseObject, error) {
-	return nil, notImplemented("createCommit")
-}
-
-func (h *handlers) GetTimeline(context.Context, gen.GetTimelineRequestObject) (gen.GetTimelineResponseObject, error) {
-	return nil, notImplemented("getTimeline")
-}
-
-func (h *handlers) GetSnapshot(context.Context, gen.GetSnapshotRequestObject) (gen.GetSnapshotResponseObject, error) {
-	return nil, notImplemented("getSnapshot")
-}
-
-func (h *handlers) ListSnapshotTree(context.Context, gen.ListSnapshotTreeRequestObject) (gen.ListSnapshotTreeResponseObject, error) {
-	return nil, notImplemented("listSnapshotTree")
-}
-
-func (h *handlers) GetSnapshotFile(context.Context, gen.GetSnapshotFileRequestObject) (gen.GetSnapshotFileResponseObject, error) {
-	return nil, notImplemented("getSnapshotFile")
-}
-
-func (h *handlers) GetSnapshotDiff(context.Context, gen.GetSnapshotDiffRequestObject) (gen.GetSnapshotDiffResponseObject, error) {
-	return nil, notImplemented("getSnapshotDiff")
-}
-
-func (h *handlers) RestoreSnapshot(context.Context, gen.RestoreSnapshotRequestObject) (gen.RestoreSnapshotResponseObject, error) {
-	return nil, notImplemented("restoreSnapshot")
+	uv, v := pathx.UnicodeVersion, h.version
+	resp := gen.GetReadyz200JSONResponse{Status: gen.Ready, Checks: checks, UnicodeVersion: &uv}
+	if v != "" {
+		resp.Version = &v
+	}
+	return resp, nil
 }

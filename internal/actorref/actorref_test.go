@@ -1,6 +1,7 @@
 package actorref_test
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -83,17 +84,31 @@ func TestByteExact(t *testing.T) {
 	}
 }
 
-// TestPseudonym: the logged pseudonym is the first 16 hex digits of the
-// SHA-256 of the reference, stable for one actor and different for others.
+// TestPseudonym: the logged pseudonym is the first 16 hex digits of
+// HMAC-SHA256(key, actor reference): stable for one key, different for
+// another key, and not the plain SHA-256 of the reference.
 func TestPseudonym(t *testing.T) {
-	sum := sha256.Sum256([]byte("manager"))
-	if got := actorref.Pseudonym("manager"); got != hex.EncodeToString(sum[:])[:16] || len(got) != 16 {
+	p, err := actorref.NewPseudonymizer([]byte("deployment-key-0123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := hmac.New(sha256.New, []byte("deployment-key-0123456789"))
+	m.Write([]byte("manager"))
+	if got := p.Pseudonym("manager"); got != hex.EncodeToString(m.Sum(nil))[:16] || len(got) != 16 {
 		t.Fatalf("Pseudonym(manager) = %q", got)
 	}
-	if actorref.Pseudonym("a") == actorref.Pseudonym("a ") || actorref.Pseudonym("x") != actorref.Pseudonym("x") {
-		t.Fatal("pseudonyms must be stable and byte exact")
+	if p.Pseudonym("a") == p.Pseudonym("a ") || p.Pseudonym("x") != p.Pseudonym("x") {
+		t.Fatal("pseudonyms must be byte-exact and stable")
 	}
-	if strings.Contains(actorref.Pseudonym("alice"), "alice") {
-		t.Fatal("the pseudonym shows the reference")
+	plain := sha256.Sum256([]byte("alice"))
+	if strings.Contains(p.Pseudonym("alice"), "alice") || p.Pseudonym("alice") == hex.EncodeToString(plain[:])[:16] {
+		t.Fatal("the pseudonym must depend on the key")
+	}
+	other, _ := actorref.NewPseudonymizer([]byte("another-key-0123456789"))
+	if other.Pseudonym("alice") == p.Pseudonym("alice") {
+		t.Fatal("another key must give other pseudonyms")
+	}
+	if _, err := actorref.NewPseudonymizer(nil); err == nil {
+		t.Fatal("empty key accepted")
 	}
 }

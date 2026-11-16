@@ -18,6 +18,7 @@
 package actorref
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -44,16 +45,31 @@ func Validate(ref string) error {
 // Valid reports whether Validate(ref) succeeds.
 func Valid(ref string) bool { return extref.Valid(ref) }
 
-// Pseudonym returns the value logged for an actor: the first 16 hex digits
-// of the SHA-256 of ref. The log records of one actor stay linkable, but they
-// do not show who it is.
+// Pseudonymizer derives the value logged for an actor: the first 16 hex
+// digits of HMAC-SHA256(key, ref), with a key of the deployment. The log
+// records of one actor stay linkable while the key is the same, but they
+// do not show who it is, and without the key the pseudonym of a known
+// reference (a user or worker name) cannot be computed to look it up.
+// Records written with different keys cannot be linked.
 //
 // Logging rule: actor references are personal data (a user name, an
 // @user:server ID). Log records at info level and above carry only
 // "actor" = Pseudonym(ref), never the reference itself or a principal UID
 // (which, in a standalone deployment, is the reference). The raw values may
 // appear only in debug-level records.
-func Pseudonym(ref string) string {
-	sum := sha256.Sum256([]byte(ref))
-	return hex.EncodeToString(sum[:8])
+type Pseudonymizer struct{ key []byte }
+
+// NewPseudonymizer returns a Pseudonymizer with key (it must not be empty).
+func NewPseudonymizer(key []byte) (*Pseudonymizer, error) {
+	if len(key) == 0 {
+		return nil, errors.New("actorref: empty pseudonym key")
+	}
+	return &Pseudonymizer{key: append([]byte(nil), key...)}, nil
+}
+
+// Pseudonym returns the pseudonym of ref.
+func (p *Pseudonymizer) Pseudonym(ref string) string {
+	m := hmac.New(sha256.New, p.key)
+	m.Write([]byte(ref))
+	return hex.EncodeToString(m.Sum(nil)[:8])
 }

@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
+	"strings"
 	"time"
 
-	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
 
@@ -102,10 +103,11 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 
 // AccessLog logs one info line per request (never the query string, which
 // may contain file paths). The caller appears only as "actor", the
-// pseudonym of its actor reference (actorref.Pseudonym): raw actor
-// references and principal UIDs are written only to a separate debug-level
-// record, so they appear in the logs only when the level is debug.
-func AccessLog(l *slog.Logger) func(http.Handler) http.Handler {
+// pseudonym of its actor reference (pseudonym, an
+// actorref.Pseudonymizer): raw actor references and principal UIDs are
+// written only to a separate debug-level record, so they appear in the
+// logs only when the level is debug.
+func AccessLog(l *slog.Logger, pseudonym func(string) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -117,11 +119,11 @@ func AccessLog(l *slog.Logger) func(http.Handler) http.Handler {
 			attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rec.status, "bytes", rec.bytes,
 				"duration_ms", time.Since(start).Milliseconds(), "request_id", RequestIDFrom(ctx)}
 			if slot.ok {
-				attrs = append(attrs, "actor", actorref.Pseudonym(slot.p.Ref))
+				attrs = append(attrs, "actor", pseudonym(slot.p.Ref))
 			}
 			l.Info("http request", attrs...)
 			if slot.ok && l.Enabled(ctx, slog.LevelDebug) {
-				l.Debug("http request actor", "request_id", RequestIDFrom(ctx), "actor", actorref.Pseudonym(slot.p.Ref),
+				l.Debug("http request actor", "request_id", RequestIDFrom(ctx), "actor", pseudonym(slot.p.Ref),
 					"actor_ref", slot.p.Ref, "principal_uid", slot.p.PrincipalUID)
 			}
 		})
@@ -166,4 +168,52 @@ func Authenticate(a ports.Authenticator, public map[string]bool) func(http.Handl
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 		})
 	}
+}
+
+// apiBase is the path of the business endpoints in the contract.
+const apiBase = "/api/v1"
+
+// Prefix serves the business endpoints below prefix instead of /api/v1: a
+// request to <prefix>/<rest> is routed as /api/v1/<rest>, and any other
+// path except the public ones gives a JSON 404. The access log keeps the
+// path as requested. With prefix /api/v1 it changes nothing.
+func Prefix(prefix string, public map[string]bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if prefix == "" || prefix == apiBase {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if public[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
+			esc := r.URL.EscapedPath()
+			rest, ok := strings.CutPrefix(esc, prefix)
+			if !ok || rest != "" && rest[0] != '/' {
+				WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
+				return
+			}
+			path, err := url.PathUnescape(apiBase + rest)
+			if err != nil {
+				WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
+				return
+			}
+			u := *r.URL
+			u.Path, u.RawPath = path, apiBase+rest
+			r2 := r.Clone(r.Context())
+			r2.URL = &u
+			next.ServeHTTP(w, r2)
+		})
+	}
+}
+
+type contentLengthKey struct{}
+
+// ContentLengthFrom returns the Content-Length of the request (-1 when
+// unknown), stored by NewHandler for the upload endpoint.
+func ContentLengthFrom(ctx context.Context) int64 {
+	if n, ok := ctx.Value(contentLengthKey{}).(int64); ok {
+		return n
+	}
+	return -1
 }

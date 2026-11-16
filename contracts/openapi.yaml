@@ -128,8 +128,11 @@ paths:
       operationId: getReadyz
       summary: Readiness probe
       description: |
-        Checks the configured dependencies. Errors: `db_unavailable`,
-        `storage_unavailable` (503).
+        Checks the dependencies. The service needs a database: without one
+        (not configured, or not reachable) it is not ready. Errors:
+        `db_unavailable`, `storage_unavailable` (503; `details.check` names
+        the dependency, `details.reason` = `not_configured` when it is not
+        configured).
       security: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
@@ -312,6 +315,10 @@ paths:
         `details.reason` = `checksum_mismatch`. An empty body is valid: it
         uploads the empty file
         (`sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`).
+        The server has a size limit per upload (`file_too_large`, with
+        `details.max_bytes`); a `Content-Length` above it is refused before
+        the body is read. Object storage is written before the upload is
+        recorded: the content is durable when the response arrives.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -381,15 +388,28 @@ paths:
         * A change with `delete: true` removes the file found; the
           write-time rules are not applied to it.
         * Each path may appear once per request; the request needs at least
-          one change.
+          one change. The server limits the number of changes per commit
+          (`invalid_request` with `details.reason` = `too_many_changes` and
+          `details.max_changes`).
+        * The names a change creates are also checked against the names the
+          base snapshot has in that directory, including names another
+          change of the same request deletes: changing only the case of a
+          name, or turning a file into a directory, takes two commits.
+        * Changes that leave the tree as it is are refused
+          (`invalid_request` with `details.reason` = `no_changes`).
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404, workspace or branch), `conflict` (409:
         `expected_generation` is not the current generation, with
         `details.current_generation`; or deleting a path that is not a file,
-        with `details.reason` = `path_not_found`), `idempotency_key_reuse`
-        (409), `blob_missing` (410, a referenced hash is not stored in this
-        workspace, with `details.hashes`), `invalid_path` (422).
+        with `details.reason` = `path_not_found`; or a request with the same
+        `Idempotency-Key` is still in progress, with `details.reason` =
+        `in_progress`), `idempotency_key_reuse` (409), `blob_missing` (410, a
+        referenced hash is not stored in this workspace, with
+        `details.hashes` and `details.reason`: `not_uploaded` when the
+        content was never uploaded to this workspace, `missing_in_storage`
+        when it was uploaded but its object is gone from storage),
+        `invalid_path` (422).
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
         - $ref: '#/components/parameters/RequestId'
@@ -531,8 +551,9 @@ paths:
       summary: Download a file of a snapshot
       description: |
         Returns the file content. A single `Range: bytes=...` range is
-        supported (206); several ranges are not. `ETag` is the quoted content
-        hash and `If-None-Match` with it gives 304.
+        supported (206); a header with several ranges, or one the server does
+        not understand, is ignored (200 with the whole file). `ETag` is the
+        quoted content hash and `If-None-Match` with it gives 304.
 
         Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
         `path` names a directory), `unauthenticated` (401), `not_found` (404,
@@ -619,7 +640,10 @@ paths:
         File-level differences from `base` to this snapshot, in path order
         (segment by segment; see "Path order").
         Without `base` the first parent is used (the empty tree for a root
-        snapshot). Both snapshots must belong to the same workspace.
+        snapshot). Both snapshots must belong to the same workspace. A file
+        whose content or mode differs is `modified`; a name that is a file in
+        one snapshot and a directory in the other gives the file first
+        (`deleted` or `added`) and then the files below the directory.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `not_found`
         (404, either snapshot).
@@ -659,12 +683,17 @@ paths:
         with `path` only that file or directory is restored (removed if it
         does not exist in `{snapshot_id}`) and everything else is kept from
         the head. `path` is looked up as described under "Looking up a
-        path". History is never rewritten.
+        path". History is never rewritten. A restore that leaves the head's
+        tree as it is (including a `path` that exists neither in
+        `{snapshot_id}` nor in the head) is refused with `invalid_request`
+        and `details.reason` = `no_changes`.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404, snapshot or branch), `conflict` (409,
-        generation mismatch with `details.current_generation`),
-        `idempotency_key_reuse` (409), `invalid_path` (422).
+        generation mismatch with `details.current_generation`; or
+        `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
+        `invalid_path` (422; `file_dir_conflict` when a directory above
+        `path` is a file in the head).
       parameters:
         - $ref: '#/components/parameters/SnapshotId'
         - $ref: '#/components/parameters/RequestId'
@@ -949,6 +978,17 @@ components:
           description: 'Result per dependency, for example {"db": "ok"}; not_configured when unused.'
           additionalProperties:
             type: string
+        unicode_version:
+          type: string
+          description: |
+            The Unicode version V of the write-time path rules this server
+            applies (docs/spec/content-format.md, section 2.4), for example
+            `15.0.0`.
+          example: 15.0.0
+        version:
+          type: string
+          description: Version of the server build.
+          example: v1.0.0
     Project:
       type: object
       required: [project_id, tenant_id, name, status, created_at, updated_at]

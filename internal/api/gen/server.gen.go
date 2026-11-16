@@ -466,6 +466,19 @@ type Readiness struct {
 	// Checks Result per dependency, for example {"db": "ok"}; not_configured when unused.
 	Checks map[string]string `json:"checks"`
 	Status ReadinessStatus   `json:"status"`
+
+	// UnicodeVersion The Unicode version V of the write-time path rules this server
+	// applies (docs/spec/content-format.md, section 2.4), for example
+	// `15.0.0`.
+	//
+	//
+	// Example: 15.0.0
+	UnicodeVersion *string `json:"unicode_version,omitempty"`
+
+	// Version Version of the server build.
+	//
+	// Example: v1.0.0
+	Version *string `json:"version,omitempty"`
 }
 
 // ReadinessStatus defines model for Readiness.Status.

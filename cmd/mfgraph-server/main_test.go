@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,9 +39,10 @@ func TestVersionAndUnknownCommand(t *testing.T) {
 	}
 }
 
-// TestServeHealthAnd501 starts the real server wiring (no database) and
-// checks health, the 501 envelope and graceful shutdown.
-func TestServeHealthAnd501(t *testing.T) {
+// TestServeWithoutDatabase starts the real server wiring without a
+// database and checks health, readiness (not ready), the 503 envelope of the
+// business endpoints and graceful shutdown.
+func TestServeWithoutDatabase(t *testing.T) {
 	cfg, err := config.Load(func(k string) string {
 		return map[string]string{config.EnvAuthTokens: testToken + "=" + testUID}[k]
 	})
@@ -79,10 +81,10 @@ func TestServeHealthAnd501(t *testing.T) {
 	if code, body := get("/healthz", false); code != 200 || body["status"] != "ok" {
 		t.Fatalf("healthz: %d %v", code, body)
 	}
-	if code, body := get("/readyz", false); code != 200 || body["checks"].(map[string]any)["db"] != "not_configured" {
+	if code, body := get("/readyz", false); code != 503 || body["code"] != "db_unavailable" {
 		t.Fatalf("readyz: %d %v", code, body)
 	}
-	if code, body := get("/api/v1/snapshots/"+testUID, true); code != 501 || body["code"] != "not_implemented" {
+	if code, body := get("/api/v1/snapshots/"+testUID, true); code != 503 || body["code"] != "db_unavailable" {
 		t.Fatalf("snapshot: %d %v", code, body)
 	}
 	if code, body := get("/api/v1/snapshots/"+testUID, false); code != 401 || body["code"] != "unauthenticated" {
@@ -174,5 +176,81 @@ func TestRefusesMismatchedUnicodeTables(t *testing.T) {
 		if code := run(context.Background(), []string{"version"}, func(string) string { return "" }, &out, &errOut); code != 0 {
 			t.Errorf("version must not depend on the Unicode tables: exit %d", code)
 		}
+	}
+}
+
+// TestServeOnUnixSocket: MFGRAPH_HTTP_ADDR=unix:<path> serves on a socket of
+// mode 0600; a stale socket is replaced; a regular file, or the socket of a
+// running server, stops the start.
+func TestServeOnUnixSocket(t *testing.T) {
+	dir, err := os.MkdirTemp("", "mfg") // short: socket paths are limited to about 100 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	sock := filepath.Join(dir, "api.sock")
+	// A stale socket: bound, then left behind without a server.
+	stale, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	stale.Close()
+	cfg, err := config.Load(func(k string) string {
+		return map[string]string{config.EnvHTTPAddr: "unix:" + sock, config.EnvAuthTokens: testToken + "=" + testUID}[k]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := listen(cfg)
+	if err != nil {
+		t.Fatalf("listen over a stale socket: %v", err)
+	}
+	fi, err := os.Stat(sock)
+	if err != nil || fi.Mode().Perm() != 0o600 || fi.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("socket mode: %v %v", fi.Mode(), err)
+	}
+	if _, err := listen(cfg); err == nil || !strings.Contains(err.Error(), "running server") {
+		t.Fatalf("second server on a live socket: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- serve(ctx, cfg, ln, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	}}}
+	resp, err := client.Get("http://mfgraph/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("healthz over the socket: %d", resp.StatusCode)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(sock); !os.IsNotExist(err) {
+		t.Fatalf("socket not removed on shutdown: %v", err)
+	}
+	// A regular file at the path is never replaced.
+	if err := os.WriteFile(sock, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listen(cfg); err == nil || !strings.Contains(err.Error(), "not a socket") {
+		t.Fatalf("listen over a regular file: %v", err)
+	}
+	if b, _ := os.ReadFile(sock); string(b) != "data" {
+		t.Fatal("the regular file was changed")
+	}
+}
+
+// TestShutdownTimeoutDefault: graceful shutdown is bounded by 8 s unless
+// configured otherwise.
+func TestShutdownTimeoutDefault(t *testing.T) {
+	cfg, err := config.Load(func(string) string { return "" })
+	if err != nil || cfg.ShutdownTimeout != 8*time.Second || cfg.HTTPAddr != "127.0.0.1:8094" {
+		t.Fatalf("%+v %v", cfg, err)
 	}
 }
