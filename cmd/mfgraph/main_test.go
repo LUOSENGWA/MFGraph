@@ -24,8 +24,8 @@ func TestVersionAndHelp(t *testing.T) {
 	if code, out, _ := runCLI("help"); code != 0 || !strings.Contains(out, "debug") {
 		t.Fatalf("help: %d %q", code, out)
 	}
-	if code, _, errOut := runCLI("commit"); code != 1 || !strings.Contains(errOut, "not implemented") {
-		t.Fatalf("placeholder: %d %q", code, errOut)
+	if code, _, errOut := runCLI("commit"); code != 2 || !strings.Contains(errOut, "usage: mfgraph commit") {
+		t.Fatalf("commit without arguments: %d %q", code, errOut)
 	}
 	if code, _, _ := runCLI("bogus"); code != 2 {
 		t.Fatalf("unknown command exit %d", code)

@@ -260,6 +260,13 @@ func layout(entries []Entry, lim limits, emit func(contenthash.Hash, []byte)) (c
 		h := put(Node{Kind: KindDirPage, Entries: entries[g.start:g.end]})
 		refs = append(refs, PageRef{Count: int64(g.end - g.start), First: entries[g.start].Name, Hash: h})
 	}
+	return layoutIndex(refs, lim, put)
+}
+
+// layoutIndex packs the references to the pages of a directory into
+// dir_index nodes, level by level, until a single top-level dir_index fits,
+// and returns the hash of the top-level index (the second half of layout).
+func layoutIndex(refs []PageRef, lim limits, put func(Node) contenthash.Hash) (contenthash.Hash, error) {
 	for {
 		rsizes := make([]int, len(refs))
 		for i, r := range refs {

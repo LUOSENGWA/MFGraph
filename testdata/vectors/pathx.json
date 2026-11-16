@@ -107,7 +107,23 @@
     {"name": "segment-258-bytes-cjk", "input_gen": {"segments": [{"unit": "\u4e2d", "repeat": 86}]}, "error": "segment_too_long"},
     {"name": "nfd-segment-256-bytes-after-nfc", "input_gen": {"segments": [{"unit": "e\u0301", "repeat": 128}]}, "error": "segment_too_long"},
     {"name": "empty-segment-wins-over-length", "input_gen": {"segments": [{"unit": "b", "repeat": 256}, {"unit": "", "repeat": 0}, {"unit": "x", "repeat": 1}]}, "error": "empty_segment", "multiple_violations": true},
-    {"name": "path-4097-bytes", "input_gen": {"segments": [{"unit": "a", "repeat": 255, "times": 15}, {"unit": "b", "repeat": 255}, {"unit": "c", "repeat": 1}]}, "error": "path_too_long"}
+    {"name": "path-4097-bytes", "input_gen": {"segments": [{"unit": "a", "repeat": 255, "times": 15}, {"unit": "b", "repeat": 255}, {"unit": "c", "repeat": 1}]}, "error": "path_too_long"},
+    {"name": "hangul-choseong-filler-u115f", "input": "a\u115fb", "error": "disallowed_char"},
+    {"name": "hangul-jungseong-filler-u1160", "input": "a\u1160b", "error": "disallowed_char"},
+    {"name": "hangul-filler-u3164", "input": "a\u3164b", "error": "disallowed_char"},
+    {"name": "halfwidth-hangul-filler-uffa0", "input": "a\uffa0b", "error": "disallowed_char"},
+    {"name": "inhibit-symmetric-swapping-u206a", "input": "a\u206ab", "error": "disallowed_char"},
+    {"name": "activate-symmetric-swapping-u206b", "input": "a\u206bb", "error": "disallowed_char"},
+    {"name": "inhibit-arabic-form-shaping-u206c", "input": "a\u206cb", "error": "disallowed_char"},
+    {"name": "activate-arabic-form-shaping-u206d", "input": "a\u206db", "error": "disallowed_char"},
+    {"name": "national-digit-shapes-u206e", "input": "a\u206eb", "error": "disallowed_char"},
+    {"name": "nominal-digit-shapes-u206f", "input": "a\u206fb", "error": "disallowed_char"},
+    {"name": "language-tag-ue0001", "input": "a\udb40\udc01b", "error": "disallowed_char"},
+    {"name": "hangul-jungseong-a-u1161-allowed", "input": "a\u1161b", "output": "a\u1161b"},
+    {"name": "hangul-letter-ssangnieun-u3165-allowed", "input": "a\u3165b", "output": "a\u3165b"},
+    {"name": "halfwidth-hangul-kiyeok-uffa1-allowed", "input": "a\uffa1b", "output": "a\uffa1b"},
+    {"name": "superscript-zero-u2070-allowed", "input": "a\u2070b", "output": "a\u2070b"},
+    {"name": "unassigned-ue0002-next-to-language-tag", "input": "a\udb40\udc02b", "error": "unassigned_char"}
   ],
   "fold": [
     {"input": "Plan.dwg", "fold": "plan.dwg"},
@@ -232,7 +248,12 @@
     {"name": "order-slash-before-characters", "input": "a\u202e/b", "error": "contains_slash"},
     {"name": "order-first-character-wins", "input": "a\u0085\u202e", "error": "control_char"},
     {"name": "order-control-before-noncharacter", "input": "a\u0085\uffff", "error": "control_char", "multiple_violations": true},
-    {"name": "order-noncharacter-before-control", "input": "a\uffff\u0085", "error": "noncharacter", "multiple_violations": true}
+    {"name": "order-noncharacter-before-control", "input": "a\uffff\u0085", "error": "noncharacter", "multiple_violations": true},
+    {"name": "hangul-filler-u3164-accepted", "input": "a\u3164b"},
+    {"name": "hangul-choseong-filler-u115f-accepted", "input": "a\u115fb"},
+    {"name": "halfwidth-hangul-filler-uffa0-accepted", "input": "a\uffa0b"},
+    {"name": "nominal-digit-shapes-u206f-accepted", "input": "a\u206fb"},
+    {"name": "language-tag-ue0001-accepted", "input": "a\udb40\udc01b"}
   ],
   "lookup": [
     {"name": "simple", "input": "docs/a.txt", "output": "docs/a.txt"},
@@ -265,6 +286,8 @@
     {"name": "double-slash", "input": "a//b", "error": "empty_segment"},
     {"name": "trailing-slash", "input": "a/", "error": "empty_segment"},
     {"name": "dot-segment", "input": "a/./b", "error": "dot_segment"},
-    {"name": "dot-dot-segment", "input": "a/../b", "error": "dot_segment"}
+    {"name": "dot-dot-segment", "input": "a/../b", "error": "dot_segment"},
+    {"name": "disallowed-char-hangul-filler-u3164-accepted", "input": "d/a\u3164b", "output": "d/a\u3164b"},
+    {"name": "disallowed-char-language-tag-ue0001-accepted", "input": "d/a\udb40\udc01b", "output": "d/a\udb40\udc01b"}
   ]
 }

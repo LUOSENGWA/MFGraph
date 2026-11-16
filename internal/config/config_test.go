@@ -18,16 +18,27 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.HTTPAddr != "127.0.0.1:8080" || c.DBDSN != "" || c.MigrateOnStart || !c.KernelMigrations ||
-		len(c.AuthTokens) != 0 || c.LogLevel != slog.LevelInfo || c.LogFormat != "json" || c.ShutdownTimeout != 15*time.Second {
+	if c.HTTPAddr != "127.0.0.1:8094" || c.APIPrefix != "/api/v1" || c.DBDSN != "" || c.MigrateOnStart || !c.KernelMigrations ||
+		c.StorageRoot != "" || c.TenantID != "00000000000000000000000000" || c.MaxUploadBytes != 1<<30 || c.MaxCommitChanges != 10000 ||
+		len(c.AuthTokens) != 0 || c.LogLevel != slog.LevelInfo || c.LogFormat != "json" || c.LogPseudonymKey != "" ||
+		c.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("defaults: %+v", c)
+	}
+	if _, ok := c.UnixSocket(); ok {
+		t.Fatal("the default address is not a socket")
 	}
 }
 
 func TestAllVariables(t *testing.T) {
 	c, err := config.Load(env(map[string]string{
-		config.EnvHTTPAddr:         ":9090",
+		config.EnvHTTPAddr:         "unix:/run/mfgraph/api.sock",
+		config.EnvAPIPrefix:        "/internal/v1/files",
 		config.EnvDBDSN:            "u:p@tcp(127.0.0.1:3306)/mfgraph",
+		config.EnvStorageRoot:      "/var/lib/mfgraph",
+		config.EnvTenantID:         uidA,
+		config.EnvMaxUploadBytes:   "1048576",
+		config.EnvMaxCommitChanges: "50",
+		config.EnvLogPseudonymKey:  "0123456789abcdef-secret",
 		config.EnvMigrateOnStart:   "true",
 		config.EnvKernelMigrations: "false",
 		config.EnvAuthTokens:       "token-aaaaaaaaaaaaaaaa=" + uidA + ", token-bbbbbbbbbbbbbbbb=" + uidA + ",token-cccccccccccccccc=alice",
@@ -38,32 +49,57 @@ func TestAllVariables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.HTTPAddr != ":9090" || !c.MigrateOnStart || c.KernelMigrations || len(c.AuthTokens) != 3 ||
+	if sock, ok := c.UnixSocket(); !ok || sock != "/run/mfgraph/api.sock" || c.APIPrefix != "/internal/v1/files" ||
+		c.StorageRoot != "/var/lib/mfgraph" || c.TenantID != uidA || c.MaxUploadBytes != 1<<20 || c.MaxCommitChanges != 50 {
+		t.Fatalf("parsed: %+v", c)
+	}
+	if !c.MigrateOnStart || c.KernelMigrations || len(c.AuthTokens) != 3 ||
 		c.AuthTokens["token-bbbbbbbbbbbbbbbb"] != uidA || c.AuthTokens["token-cccccccccccccccc"] != "alice" ||
 		c.LogLevel != slog.LevelDebug || c.LogFormat != "text" || c.ShutdownTimeout != 3*time.Second {
 		t.Fatalf("parsed: %+v", c)
 	}
 	for _, v := range c.Summary() {
-		if s, ok := v.(string); ok && strings.Contains(s, "token-") {
-			t.Fatal("Summary leaks a token")
+		if s, ok := v.(string); ok && (strings.Contains(s, "token-") || strings.Contains(s, "secret") || strings.Contains(s, "u:p@")) {
+			t.Fatal("Summary leaks a secret")
 		}
 	}
 }
 
 func TestInvalid(t *testing.T) {
 	cases := map[string]map[string]string{
-		"bad bool":           {config.EnvMigrateOnStart: "yes please"},
-		"migrate without db": {config.EnvMigrateOnStart: "true"},
-		"short token":        {config.EnvAuthTokens: "short=" + uidA},
-		"missing actor":      {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa"},
-		"empty actor":        {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa="},
-		"actor too long":     {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + strings.Repeat("x", 256)},
-		"control character":  {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\x01b"},
-		"invalid utf-8":      {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\xffb"},
-		"duplicate token":    {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + uidA + ",token-aaaaaaaaaaaaaaaa=" + uidA},
-		"bad level":          {config.EnvLogLevel: "loud"},
-		"bad format":         {config.EnvLogFormat: "xml"},
-		"bad timeout":        {config.EnvShutdownTimeout: "-1s"},
+		"bad bool":                    {config.EnvMigrateOnStart: "yes please"},
+		"migrate without db":          {config.EnvMigrateOnStart: "true"},
+		"short token":                 {config.EnvAuthTokens: "short=" + uidA},
+		"missing actor":               {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa"},
+		"empty actor":                 {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa="},
+		"actor too long":              {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + strings.Repeat("x", 256)},
+		"control character":           {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\x01b"},
+		"invalid utf-8":               {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\xffb"},
+		"duplicate token":             {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + uidA + ",token-aaaaaaaaaaaaaaaa=" + uidA},
+		"bad level":                   {config.EnvLogLevel: "loud"},
+		"bad format":                  {config.EnvLogFormat: "xml"},
+		"bad timeout":                 {config.EnvShutdownTimeout: "-1s"},
+		"empty socket path":           {config.EnvHTTPAddr: "unix:"},
+		"prefix without /":            {config.EnvAPIPrefix: "api/v1"},
+		"prefix with /":               {config.EnvAPIPrefix: "/api/v1/"},
+		"prefix //":                   {config.EnvAPIPrefix: "/api//v1"},
+		"prefix ..":                   {config.EnvAPIPrefix: "/api/../v1"},
+		"prefix space":                {config.EnvAPIPrefix: "/api v1"},
+		"prefix /":                    {config.EnvAPIPrefix: "/"},
+		"prefix healthz":              {config.EnvAPIPrefix: "/healthz/v1"},
+		"prefix too long":             {config.EnvAPIPrefix: "/" + strings.Repeat("a", 128)},
+		"tenant not a ULID":           {config.EnvTenantID: "tenant-1"},
+		"tenant lowercase":            {config.EnvTenantID: strings.ToLower(uidA)},
+		"upload limit 0":              {config.EnvMaxUploadBytes: "0"},
+		"upload limit int64":          {config.EnvMaxUploadBytes: "9223372036854775807"},
+		"upload limit over 5 TiB":     {config.EnvMaxUploadBytes: "5497558138881"},
+		"upload limit text":           {config.EnvMaxUploadBytes: "1GiB"},
+		"JSON body limit below 1 KiB": {config.EnvMaxJSONBodyBytes: "1023"},
+		"JSON body limit over 1 GiB":  {config.EnvMaxJSONBodyBytes: "1073741825"},
+		"JSON body limit text":        {config.EnvMaxJSONBodyBytes: "16MiB"},
+		"changes 0":                   {config.EnvMaxCommitChanges: "0"},
+		"changes huge":                {config.EnvMaxCommitChanges: "2000000"},
+		"short pseudonym key":         {config.EnvLogPseudonymKey: "short"},
 	}
 	for name, m := range cases {
 		_, err := config.Load(env(m))
@@ -91,6 +127,63 @@ func TestActorRefTokens(t *testing.T) {
 		}
 		if got := c.AuthTokens["token-aaaaaaaaaaaaaaaa"]; got != ref {
 			t.Errorf("actor %q parsed as %q", ref, got)
+		}
+	}
+}
+
+func TestCheckServe(t *testing.T) {
+	c, err := config.Load(env(map[string]string{config.EnvDBDSN: "u:p@tcp(127.0.0.1:3306)/x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CheckServe(); err == nil || !strings.Contains(err.Error(), config.EnvStorageRoot) {
+		t.Fatalf("a database without a storage root: %v", err)
+	}
+	c.StorageRoot = "/data"
+	if err := c.CheckServe(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (config.Config{}).CheckServe(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdempotencyLease(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.IdempotencyLease != time.Minute {
+		t.Fatalf("default: %v %v", c.IdempotencyLease, err)
+	}
+	for v, want := range map[string]time.Duration{"1s": time.Second, "90s": 90 * time.Second, "24h": 24 * time.Hour} {
+		c, err := config.Load(env(map[string]string{config.EnvIdempotencyLease: v}))
+		if err != nil || c.IdempotencyLease != want {
+			t.Errorf("%s: %v %v", v, c.IdempotencyLease, err)
+		}
+	}
+	for _, v := range []string{"0s", "999ms", "25h", "-1m", "60"} {
+		if _, err := config.Load(env(map[string]string{config.EnvIdempotencyLease: v})); err == nil {
+			t.Errorf("%s: accepted", v)
+		}
+	}
+}
+
+func TestJSONBodyLimitRange(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.MaxJSONBodyBytes != 16<<20 {
+		t.Fatalf("default: %d %v", c.MaxJSONBodyBytes, err)
+	}
+	for v, want := range map[string]int64{"1024": 1024, "1073741824": 1 << 30, "65536": 1 << 16} {
+		c, err := config.Load(env(map[string]string{config.EnvMaxJSONBodyBytes: v}))
+		if err != nil || c.MaxJSONBodyBytes != want {
+			t.Errorf("%s: %d %v", v, c.MaxJSONBodyBytes, err)
+		}
+	}
+}
+
+func TestUploadLimitRange(t *testing.T) {
+	for v, want := range map[string]int64{"1": 1, "5497558138880": 5 << 40, "1073741824": 1 << 30} {
+		c, err := config.Load(env(map[string]string{config.EnvMaxUploadBytes: v}))
+		if err != nil || c.MaxUploadBytes != want {
+			t.Errorf("%s: %d %v", v, c.MaxUploadBytes, err)
 		}
 	}
 }

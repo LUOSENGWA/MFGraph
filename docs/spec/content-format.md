@@ -76,8 +76,11 @@ reports.
      characters U+00AD (soft hyphen), U+180E (Mongolian vowel separator),
      U+200B (zero width space), U+2028 and U+2029 (line and paragraph
      separators), U+2060 (word joiner), U+2061–U+2064 (invisible
-     mathematical operators), U+FEFF (zero width no-break space) and
-     U+FFF9–U+FFFB (interlinear annotation controls);
+     mathematical operators), U+FEFF (zero width no-break space),
+     U+FFF9–U+FFFB (interlinear annotation controls), and, added after
+     format 1 was frozen (see below), the Hangul fillers U+115F, U+1160,
+     U+3164 and U+FFA0, the deprecated format characters U+206A–U+206F
+     and U+E0001 (language tag);
    * a code point that is unassigned (general category Cn) in Unicode version
      V (`unassigned_char`; see 2.4). The noncharacters are Cn too; the
      previous rule reports them as `noncharacter`.
@@ -120,6 +123,14 @@ I-JSON (RFC 7493), on which RFC 8785 builds. The disallowed list is fixed:
 other format characters (category Cf) are not rejected as a class. It is a
 write-time rule only (2.5): it may be extended later, and stored names that
 contain such characters stay readable.
+
+The disallowed list was extended once after format 1 was frozen, with
+U+115F, U+1160, U+3164, U+FFA0 (Hangul fillers, which display as blanks),
+U+206A–U+206F (deprecated format characters) and U+E0001 (the deprecated
+language tag). Write-time rules may become stricter in this way without a
+new format version; names written before keep their bytes, stay readable,
+can still be found, replaced and deleted (2.6), and only new names are
+checked.
 
 No other rule applies. In particular these are **allowed**:
 
@@ -257,6 +268,20 @@ without making stored data unreadable. The test vectors list such nodes in
     only in a later Unicode version, written by an implementation with a
     higher V) therefore never makes a later commit fail because of entries
     the commit does not create.
+* **Restoring one path.** A restore of one path finds it in the other
+  snapshot with the lookup rules and puts its entry (a file, or a directory
+  with everything below it) at the same stored path of the branch head,
+  under its stored name. A restored name that the head's directory does not
+  have byte for byte is treated as a created name, and so is every
+  directory above it that the head does not have: each is compared by fold
+  key with the names of its directory in the head (the case rule of 2.2),
+  and a conflict rejects the restore with `case_conflict` (names that
+  differ only in normalization also have the same fold key). A file in the
+  place of a directory above it gives `file_dir_conflict`. No other
+  write-time rule is applied to restored names, and the entries inside a
+  restored directory keep their stored bytes and are not checked again.
+  Example: after `README.md` was deleted and `readme.md` created, restoring
+  `README.md` from an earlier snapshot fails until `readme.md` is deleted.
 * **Lookups.** A path given to find an existing entry (listing a directory,
   downloading a file, a path given to a diff or a restore, and the path of a
   change that replaces or deletes a file) is processed in four steps:

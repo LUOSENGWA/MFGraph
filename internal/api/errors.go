@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/LUOSENGWA/MFGraph/internal/api/gen"
+	"github.com/LUOSENGWA/MFGraph/internal/core"
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
@@ -26,6 +27,7 @@ const (
 	CodePreconditionFailed  = "precondition_failed"
 	CodeQuotaExceeded       = "quota_exceeded"
 	CodeFileTooLarge        = "file_too_large"
+	CodeRequestTooLarge     = "request_too_large"
 	CodeInvalidPath         = "invalid_path"
 	CodeUnsupportedFormat   = "unsupported_format"
 	CodeRateLimited         = "rate_limited"
@@ -48,6 +50,7 @@ var codeStatus = map[string]int{
 	CodePreconditionFailed:  http.StatusPreconditionFailed,
 	CodeQuotaExceeded:       http.StatusRequestEntityTooLarge,
 	CodeFileTooLarge:        http.StatusRequestEntityTooLarge,
+	CodeRequestTooLarge:     http.StatusRequestEntityTooLarge,
 	CodeInvalidPath:         http.StatusUnprocessableEntity,
 	CodeUnsupportedFormat:   http.StatusUnprocessableEntity,
 	CodeRateLimited:         http.StatusTooManyRequests,
@@ -89,18 +92,19 @@ func NewError(code, message string, details map[string]any) *Error {
 	return &Error{Code: code, Message: message, Details: details}
 }
 
-func notImplemented(operation string) *Error {
-	return &Error{Code: CodeNotImplemented, Message: operation + " is not implemented in this build",
-		Details: map[string]any{"operation": operation}}
-}
-
 // toAPIError maps any error to an API error. Unknown errors become
 // "internal" without leaking their text.
 func toAPIError(err error) (*Error, bool) {
 	var ae *Error
+	var ce *core.Error
 	switch {
 	case errors.As(err, &ae):
 		return ae, true
+	case errors.As(err, &ce):
+		if _, known := codeStatus[ce.Code]; !known {
+			return &Error{Code: CodeInternal, Message: "internal error", cause: err}, false
+		}
+		return &Error{Code: ce.Code, Message: ce.Message, Details: ce.Details, cause: err}, true
 	case errors.Is(err, pathx.ErrInvalidPath):
 		return &Error{Code: CodeInvalidPath, Message: err.Error(),
 			Details: map[string]any{"kind": string(pathx.KindOf(err))}, cause: err}, true
@@ -110,6 +114,16 @@ func toAPIError(err error) (*Error, bool) {
 		return &Error{Code: CodeNotFound, Message: "not found", cause: err}, true
 	case errors.Is(err, ports.ErrForbidden):
 		return &Error{Code: CodeForbidden, Message: "forbidden", cause: err}, true
+	case errors.Is(err, ports.ErrDeadlock):
+		return &Error{Code: CodeDBUnavailable, Message: "the database rolled this request back to end a deadlock; repeat it",
+			Details: map[string]any{"reason": core.ReasonDeadlock}, cause: err}, true
+	case errors.Is(err, ports.ErrLockTimeout):
+		return &Error{Code: CodeDBUnavailable, Message: "the database did not grant a lock in time; repeat the request",
+			Details: map[string]any{"reason": core.ReasonLockTimeout}, cause: err}, true
+	case errors.Is(err, ports.ErrDBUnavailable):
+		return &Error{Code: CodeDBUnavailable, Message: "the database is not available", cause: err}, true
+	case errors.Is(err, ports.ErrStorageUnavailable):
+		return &Error{Code: CodeStorageUnavailable, Message: "the storage is not available", cause: err}, true
 	}
 	return &Error{Code: CodeInternal, Message: "internal error", cause: err}, false
 }
@@ -118,8 +132,11 @@ func toAPIError(err error) (*Error, bool) {
 // {"code","message","request_id","details"} with the matching status.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	ae, known := toAPIError(err)
-	if !known {
+	switch {
+	case !known:
 		logger(r).Error("internal error", "request_id", RequestIDFrom(r.Context()), "err", err)
+	case ae.Code == CodeDBUnavailable || ae.Code == CodeStorageUnavailable:
+		logger(r).Warn("dependency unavailable", "request_id", RequestIDFrom(r.Context()), "code", ae.Code, "err", err)
 	}
 	status := ae.Status
 	if status == 0 {
@@ -136,10 +153,23 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="mfgraph"`)
 	}
+	if retryable(ae) {
+		w.Header().Set("Retry-After", "1")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// retryable reports the errors after which the same request can be
+// repeated at once: a lock wait timeout or a deadlock in the database.
+func retryable(ae *Error) bool {
+	if ae.Code != CodeDBUnavailable {
+		return false
+	}
+	r := ae.Details["reason"]
+	return r == core.ReasonLockTimeout || r == core.ReasonDeadlock
 }
 
 type loggerKey struct{}

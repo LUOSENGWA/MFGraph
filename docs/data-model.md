@@ -68,6 +68,7 @@ A workstream may have multiple branches. A branch belongs to exactly one workspa
 Migrations live in [`migrations/`](../migrations) and are applied by `mfgraph-server migrate` (or `MFGRAPH_MIGRATE_ON_START=true`). The first core slice defines:
 
 - `kernel/0000_bootstrap.sql` — kernel tables for standalone deployments (`projects`, minimal `principals`); a host platform provides its own and does not run this file
+- `kernel/0001_project_owner.sql` — `projects.owner_ref` (`VARBINARY(255) NULL`, the actor reference of the creator, who owns the project in a standalone deployment), `owner_principal_uid` and an index; projects without an owner are visible to nobody
 - `mysql/0001_workspaces.sql`
 - `mysql/0002_workstreams_branches.sql`
 - `mysql/0003_snapshots.sql` — `snapshots`, `snapshot_parents`
@@ -75,6 +76,8 @@ Migrations live in [`migrations/`](../migrations) and are applied by `mfgraph-se
 - `mysql/0006_uploads.sql`
 - `mysql/0008_usage_outbox_idempotency.sql`
 
-Numbers 0005 and 0007 are reserved. Later slices add locks, packs/chunks, the optional path index (`snapshot_entries`), derived artifacts, project commits, fencing and GC state as new files. Applied files are immutable: the runner records a SHA-256 per file in `schema_migrations(component, version, checksum, applied_at_us)` and refuses to continue when it changes.
+Numbers 0005 and 0007 are reserved. Later slices add locks, packs/chunks, the optional path index (`snapshot_entries`), derived artifacts, project commits, fencing and GC state as new files. Applied files are immutable: the runner records a SHA-256 per file in `schema_migrations(component, version, checksum, applied_at_us)` and refuses to continue when it changes. A later migration may also extend an existing table with `ALTER TABLE ... ADD COLUMN` (nullable) or `ADD KEY`, one per statement; a statement whose column or index exists is skipped, so an interrupted run can be repeated.
+
+The repositories (`internal/store/mysql`) use only what MySQL 8.0 and seekdb share: no CTEs, window functions, JSON functions, `SKIP LOCKED`/`NOWAIT`, `RETURNING` or generated columns; keyset pagination instead of `OFFSET`; VARBINARY values are passed and read as bytes. A commit moves the branch head with `UPDATE branches SET head_snapshot_id = ?, generation = generation + 1 ... WHERE branch_id = ? AND workspace_id = ? AND generation = ?` in the transaction that inserts the snapshot and its outbox events.
 
 Use expand/contract; never combine destructive DDL and code switch in one release.

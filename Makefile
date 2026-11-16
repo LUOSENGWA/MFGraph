@@ -18,7 +18,7 @@ VECTORS_VERIFY_FLAGS = $(if $(VECTORS_REQUIRE_UCD),--require-ucd $(VECTORS_REQUI
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build test test-e2e e2e-compile test-heavy test-mysql test-seekdb generate generate-check openapi-check run vet fmt fmt-check clean \
+.PHONY: all build test test-e2e test-e2e-mysql test-e2e-seekdb e2e-compile test-heavy test-mysql test-seekdb generate generate-check openapi-check run vet fmt fmt-check clean \
 	dev-db-up dev-db-down dev-db-reset dev-seekdb-up \
 	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review \
 	tidy-check deps-check docs-check ci ci-mysql ci-seekdb
@@ -29,11 +29,11 @@ all: build test
 ci: tidy-check fmt-check vet e2e-compile build test test-heavy deps-check \
 	openapi-check generate-check vectors-verify-heavy vectors-crosscheck docs-check
 
-## ci-mysql: the CI migration job against the local Docker MySQL (requires Docker)
-ci-mysql: dev-db-up test-mysql
+## ci-mysql: the CI database jobs against the local Docker MySQL (requires Docker)
+ci-mysql: dev-db-up test-mysql test-e2e-mysql
 
-## ci-seekdb: the CI seekdb job against the local Docker seekdb (requires Docker)
-ci-seekdb: dev-seekdb-up test-seekdb
+## ci-seekdb: the CI seekdb database jobs against the local Docker seekdb (requires Docker)
+ci-seekdb: dev-seekdb-up test-seekdb test-e2e-seekdb
 
 ## tidy-check: go.mod/go.sum are tidy and verified
 tidy-check:
@@ -60,9 +60,17 @@ test:
 	$(GO) test ./...
 
 ## test-e2e: black-box acceptance tests against the real server binary (build tag e2e).
-## Expected to FAIL with 501 not_implemented until the first core slice is implemented.
+## They need a database: set MFGRAPH_E2E_DB_DSN (see test-e2e-mysql / test-e2e-seekdb);
+## without it every test is skipped with the reason, or fails with MFGRAPH_E2E_REQUIRE_DB=1 (CI).
 test-e2e:
 	$(GO) test -tags e2e -count=1 -v ./test/e2e/...
+
+## test-e2e-mysql / test-e2e-seekdb: the acceptance tests on the dev MySQL 8.0 / seekdb
+test-e2e-mysql:
+	MFGRAPH_E2E_DB_DSN='$(MYSQL_TEST_DSN)' MFGRAPH_E2E_REQUIRE_DB=1 $(GO) test -tags e2e -count=1 -v ./test/e2e/...
+
+test-e2e-seekdb:
+	MFGRAPH_E2E_DB_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_E2E_DB_WAIT=$(SEEKDB_WAIT) MFGRAPH_E2E_REQUIRE_DB=1 $(GO) test -tags e2e -count=1 -v ./test/e2e/...
 
 ## e2e-compile: make sure the e2e tests compile (used by CI)
 e2e-compile:
@@ -72,14 +80,18 @@ e2e-compile:
 test-heavy:
 	MFGRAPH_HEAVY_VECTORS=1 $(GO) test -count=1 ./internal/tree/...
 
-## test-mysql: migration tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
-test-mysql:
-	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v ./internal/migrate/... ./cmd/mfgraph-server/...
+# Packages with database tests (tests named *MySQL*): the migrations and the
+# MySQL repositories (contract tests).
+DB_TEST_PKGS = ./internal/migrate/... ./internal/store/mysql/... ./cmd/mfgraph-server/...
 
-## test-seekdb: the same migration tests against seekdb (start it with `make dev-seekdb-up`);
+## test-mysql: migration and repository tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
+test-mysql:
+	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v $(DB_TEST_PKGS)
+
+## test-seekdb: the same tests against seekdb (start it with `make dev-seekdb-up`);
 ## the tests first wait up to SEEKDB_WAIT for the server to answer queries
 test-seekdb:
-	MFGRAPH_TEST_MYSQL_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_TEST_DB_WAIT=$(SEEKDB_WAIT) $(GO) test -count=1 -run MySQL -v ./internal/migrate/... ./cmd/mfgraph-server/...
+	MFGRAPH_TEST_MYSQL_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_TEST_DB_WAIT=$(SEEKDB_WAIT) $(GO) test -count=1 -run MySQL -v $(DB_TEST_PKGS)
 
 ## generate: regenerate internal/api/gen from contracts/openapi.yaml (needs network for oapi-codegen)
 generate:
@@ -93,10 +105,15 @@ generate-check: generate
 openapi-check:
 	$(GO) test -count=1 -run 'OpenAPI' ./internal/api/...
 
-## run: start the server locally without a database (business endpoints answer 501)
+## run: start the server on 127.0.0.1:8094 with the dev MySQL (make dev-db-up), migrations
+## applied on start, objects in ./data/objects and a development token
 DEV_TOKENS ?= dev-token-change-me-0000=01JD3X5Q8Z9W2V4T6R8P0N2M4K
+DEV_DB_DSN ?= root:mfgraph@tcp(127.0.0.1:3306)/mfgraph
+DEV_STORAGE_ROOT ?= data/objects
 run: build
-	MFGRAPH_AUTH_TOKENS='$(DEV_TOKENS)' ./$(BIN)/mfgraph-server
+	mkdir -p $(DEV_STORAGE_ROOT)
+	MFGRAPH_AUTH_TOKENS='$(DEV_TOKENS)' MFGRAPH_DB_DSN='$(DEV_DB_DSN)' MFGRAPH_MIGRATE_ON_START=true \
+		MFGRAPH_STORAGE_ROOT='$(DEV_STORAGE_ROOT)' ./$(BIN)/mfgraph-server
 
 ## vet: go vet
 vet:

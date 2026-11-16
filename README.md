@@ -6,7 +6,7 @@
 
 MFGraph is a self-hosted service, in early development, for versioning project workspaces as a graph. It separates the business hierarchy (`project` → `project_node`), the content layer (`workspace` → `snapshot`), the execution layer (`workstream` → `branch`), and the process layer (external workflow engine). A workspace is a node in the project graph; the project-level commit layer (superproject) is a **v1 core feature**.
 
-> Status: **early development (M0)**. The content formats ([specification](docs/spec/content-format.md)), the database schema of the first core slice ([`migrations/`](migrations)), the HTTP contract ([`contracts/openapi.yaml`](contracts/openapi.yaml)) and a code skeleton are in place. Only `/healthz` and `/readyz` are implemented; every other endpoint answers `501 not_implemented` until the first core slice lands.
+> Status: **early development (M1.0a)**. The first core slice works: projects, a workspace with its `main` branch, whole-file uploads, commits, browsing, downloads, diffs and restores over REST and a thin CLI, with MySQL 8.0 or seekdb as the database and a local (POSIX) file system for the objects. See the [roadmap](docs/roadmap.md#m10a-scope-and-deviations) for what it does not do yet (multipart uploads, S3, locks, GC, quotas, roles, more branches).
 >
 > Note: the byte formats in [`docs/spec/`](docs/spec/content-format.md), the migrations and the OpenAPI contract are authoritative. The other documents describe the planned v1 design; where they differ, the contracts win. MFGraph does not assign or dispatch tasks.
 
@@ -75,6 +75,40 @@ The code follows the contracts in `docs/spec/`, `contracts/` and `migrations/`; 
 
 License: **Apache-2.0** (see [LICENSE](LICENSE)).
 
+## Quick start
+
+Requires Go (version in `go.mod`), `make` and Docker (for MySQL).
+
+```bash
+make build                      # ./bin/mfgraph-server and ./bin/mfgraph
+make dev-db-up                  # MySQL 8.0 on 127.0.0.1:3306 (throwaway credentials)
+export MFGRAPH_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/mfgraph'
+./bin/mfgraph-server migrate    # create the tables
+mkdir -p data/objects
+MFGRAPH_STORAGE_ROOT=data/objects MFGRAPH_AUTH_TOKENS='dev-token-change-me-0000=alice' ./bin/mfgraph-server
+```
+
+The server listens on `127.0.0.1:8094` (`make run` does the same). In another terminal:
+
+```bash
+export MFGRAPH_TOKEN=dev-token-change-me-0000       # MFGRAPH_URL defaults to http://127.0.0.1:8094
+P=$(./bin/mfgraph project create demo)
+WS=$(./bin/mfgraph workspace create "$P")         # <workspace_id> TAB main_branch=<branch_id>
+W=${WS%%$'\t'*}; B=${WS##*=}
+echo 'hello' > hello.txt && echo 'draft' > plan.md
+S1=$(./bin/mfgraph commit "$W" -m 'first' hello.txt=hello.txt docs/plan.md=plan.md)
+echo 'final' > plan.md
+S2=$(./bin/mfgraph commit "$W" -m 'second' docs/plan.md=plan.md)
+./bin/mfgraph log "$W"                  # two snapshots, newest first
+./bin/mfgraph ls "$S2" docs             # one directory of a snapshot
+./bin/mfgraph cat "$S1" docs/plan.md    # draft
+./bin/mfgraph diff "$S2"                # modified docs/plan.md
+S3=$(./bin/mfgraph restore "$S1" --branch "$B")   # a new snapshot with the tree of S1
+./bin/mfgraph cat "$S3" docs/plan.md    # draft again
+```
+
+The same calls are plain REST: see [API](docs/api.md) and the [contract](contracts/openapi.yaml). Configuration (Unix domain sockets, API prefix, limits) is described in [deployment](docs/deployment.md).
+
 ## Development
 
 Prerequisites: Go (version in `go.mod`), `make`, Python 3 (stdlib only, for the doc and vector scripts). Docker is needed **only** for the database-backed targets (MySQL 8.0 and seekdb); everything else runs without it.
@@ -86,10 +120,10 @@ make vet          # go vet
 make fmt-check    # gofmt check
 make openapi-check  # validate contracts/openapi.yaml (kin-openapi) and its conventions
 make generate     # regenerate internal/api/gen from the contract (needs network)
-make run          # start mfgraph-server on 127.0.0.1:8080 with a development token
+make run          # start mfgraph-server on 127.0.0.1:8094 on the dev MySQL with a development token
 ```
 
-The server is configured with `MFGRAPH_*` environment variables: `MFGRAPH_HTTP_ADDR`, `MFGRAPH_DB_DSN` (MySQL DSN, optional in this build), `MFGRAPH_MIGRATE_ON_START`, `MFGRAPH_KERNEL_MIGRATIONS`, `MFGRAPH_AUTH_TOKENS` (`token=ACTOR_REF,...`, for example `token=alice` or `token=<ULID>`; see [actor references](docs/api.md#actor-references)), `MFGRAPH_LOG_LEVEL`, `MFGRAPH_LOG_FORMAT`, `MFGRAPH_SHUTDOWN_TIMEOUT`. `mfgraph-server migrate` applies pending migrations and exits. In this build only `/healthz` and `/readyz` are implemented; every other endpoint of [`contracts/openapi.yaml`](contracts/openapi.yaml) answers `501 not_implemented`.
+The server is configured with `MFGRAPH_*` environment variables (table in [deployment](docs/deployment.md#running-mfgraph-server-m10a)): `MFGRAPH_HTTP_ADDR` (`host:port` or `unix:<path>`), `MFGRAPH_API_PREFIX`, `MFGRAPH_DB_DSN` (required for the service to work), `MFGRAPH_MIGRATE_ON_START`, `MFGRAPH_KERNEL_MIGRATIONS`, `MFGRAPH_STORAGE_ROOT`, `MFGRAPH_TENANT_ID`, `MFGRAPH_MAX_UPLOAD_BYTES`, `MFGRAPH_MAX_JSON_BODY_BYTES`, `MFGRAPH_MAX_COMMIT_CHANGES`, `MFGRAPH_AUTH_TOKENS` (`token=ACTOR_REF,...`, for example `token=alice` or `token=<ULID>`; see [actor references](docs/api.md#actor-references)), `MFGRAPH_LOG_LEVEL`, `MFGRAPH_LOG_FORMAT`, `MFGRAPH_LOG_PSEUDONYM_KEY`, `MFGRAPH_SHUTDOWN_TIMEOUT`, `MFGRAPH_IDEMPOTENCY_LEASE`. `mfgraph-server migrate` applies pending migrations and exits.
 
 MySQL 8.0 and seekdb for development run in Docker (`deploy/docker-compose.dev.yml`, bound to `127.0.0.1`, throwaway credentials; see [deployment](docs/deployment.md#database)):
 
@@ -97,21 +131,22 @@ MySQL 8.0 and seekdb for development run in Docker (`deploy/docker-compose.dev.y
 make dev-db-up      # start MySQL 8.0 and wait until healthy (requires Docker)
 make dev-seekdb-up  # start seekdb (MySQL 5.7 subset, port 2881) and wait until healthy
 make dev-db-down    # stop them (data kept); make dev-db-reset also deletes the data volumes
-make test-mysql     # migration tests against MySQL: empty database, re-run, tampered file, ...
-make test-seekdb    # the same migration tests against seekdb
+make test-mysql     # migration and repository tests against MySQL: empty database, re-run, tampered file, ...
+make test-seekdb    # the same tests against seekdb
+make test-e2e-mysql # the acceptance tests (test/e2e) against the dev MySQL; test-e2e-seekdb for seekdb
 ```
 
 Other checks:
 
 ```bash
-make ci           # everything the CI workflow runs except the MySQL job (no Docker needed)
-make ci-mysql     # the CI MySQL job against the local container (requires Docker)
-make ci-seekdb    # the CI seekdb job against the local container (requires Docker)
-make test-e2e     # end-to-end acceptance tests; they fail with 501 until the first core slice exists
+make ci           # everything the CI workflow runs except the database jobs (no Docker needed)
+make ci-mysql     # the CI MySQL jobs against the local container: migrations, repositories, acceptance tests
+make ci-seekdb    # the same against the local seekdb container
+make test-e2e     # acceptance tests; they need MFGRAPH_E2E_DB_DSN and are skipped without it
 make vectors-verify vectors-crosscheck   # independent checks of testdata/vectors
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same Make targets on GitHub Actions, with a MySQL 8.0 service container and a seekdb service container for the two migration jobs.
+CI (`.github/workflows/ci.yml`) runs the same Make targets on GitHub Actions, with MySQL 8.0 and seekdb service containers for the database jobs (migrations and repositories, and the acceptance tests).
 
 ## Contributing
 

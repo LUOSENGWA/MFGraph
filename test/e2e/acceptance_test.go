@@ -264,6 +264,50 @@ func TestConcurrentCommitsOneWins(t *testing.T) {
 	}
 }
 
+// A restore and a commit with the same expected_generation: one 201, one
+// 409 conflict, and the branch moves once.
+func TestRestoreAndCommitRace(t *testing.T) {
+	s := start(t, newEnv(t))
+	c := s.client(tokenA)
+	sd := seed(t, c)
+	second := c.commit(sd.ws.WorkspaceId, sd.branch.BranchId, sd.first.Generation, put("a.txt", c.upload(sd.ws.WorkspaceId, "changed\n")))
+	h := c.upload(sd.ws.WorkspaceId, "racing commit\n")
+	results := make([]response, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		results[0] = c.json("POST", "/api/v1/snapshots/"+sd.first.SnapshotId+"/restore",
+			gen.RestoreRequest{BranchId: sd.branch.BranchId, ExpectedGeneration: second.Generation}, nil)
+	}()
+	go func() {
+		defer wg.Done()
+		results[1] = c.commitRaw(sd.ws.WorkspaceId, gen.CommitRequest{BranchId: sd.branch.BranchId,
+			ExpectedGeneration: second.Generation, Changes: []gen.Change{put("race.txt", h)}}, "")
+	}()
+	wg.Wait()
+	var winner gen.CommitResult
+	created, conflict := 0, 0
+	for i, r := range results {
+		switch {
+		case r.status == http.StatusCreated:
+			created++
+			c.expect(r, "the request that won", http.StatusCreated, &winner)
+		case r.status == http.StatusConflict && r.code() == "conflict":
+			conflict++
+		default:
+			t.Fatalf("request %d: got %d %s; body: %s", i, r.status, r.code(), truncate(r.body))
+		}
+	}
+	if created != 1 || conflict != 1 {
+		t.Fatalf("created=%d conflict=%d, want 1 and 1", created, conflict)
+	}
+	br := c.mainBranch(sd.ws)
+	if br.Generation != second.Generation+1 || br.HeadSnapshotId == nil || *br.HeadSnapshotId != winner.SnapshotId {
+		t.Fatalf("branch %+v, want generation %d at %s", br, second.Generation+1, winner.SnapshotId)
+	}
+}
+
 // 6. retrying with the same Idempotency-Key returns the same snapshot.
 func TestIdempotentCommitRetry(t *testing.T) {
 	s := start(t, newEnv(t))

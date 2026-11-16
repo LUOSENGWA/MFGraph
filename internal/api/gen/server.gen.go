@@ -322,11 +322,19 @@ type CommitResult struct {
 
 // CreateProjectRequest defines model for CreateProjectRequest.
 type CreateProjectRequest struct {
+	// Name Free text, stored as given: valid UTF-8 of at most 255 bytes (the
+	// byte limit is the stricter one), not empty and not only white
+	// space, without control characters (U+0000-U+001F,
+	// U+007F-U+009F), noncharacters or characters of the fixed
+	// disallowed list of the path rules (bidi controls and invisible
+	// characters). Otherwise `invalid_request` (400).
 	Name string `json:"name"`
 }
 
 // CreateWorkspaceRequest defines model for CreateWorkspaceRequest.
 type CreateWorkspaceRequest struct {
+	// DisplayName Optional free text, stored as given, with the character rules
+	// and the 255-byte limit of a project name; it may be empty.
 	DisplayName *string `json:"display_name,omitempty"`
 
 	// ProjectId ULID, 26 uppercase Crockford base32 characters.
@@ -368,9 +376,9 @@ type Error struct {
 	// Code Stable machine-readable code: invalid_request, unauthenticated,
 	// forbidden, not_found, conflict, idempotency_key_reuse,
 	// upload_expired, blob_missing, precondition_failed,
-	// quota_exceeded, file_too_large, invalid_path, unsupported_format,
-	// rate_limited, internal, not_implemented, storage_unavailable,
-	// db_unavailable.
+	// quota_exceeded, file_too_large, request_too_large, invalid_path,
+	// unsupported_format, rate_limited, internal, not_implemented,
+	// storage_unavailable, db_unavailable.
 	//
 	//
 	// Example: not_implemented
@@ -466,6 +474,19 @@ type Readiness struct {
 	// Checks Result per dependency, for example {"db": "ok"}; not_configured when unused.
 	Checks map[string]string `json:"checks"`
 	Status ReadinessStatus   `json:"status"`
+
+	// UnicodeVersion The Unicode version V of the write-time path rules this server
+	// applies (docs/spec/content-format.md, section 2.4), for example
+	// `15.0.0`.
+	//
+	//
+	// Example: 15.0.0
+	UnicodeVersion *string `json:"unicode_version,omitempty"`
+
+	// Version Version of the server build.
+	//
+	// Example: v1.0.0
+	Version *string `json:"version,omitempty"`
 }
 
 // ReadinessStatus defines model for Readiness.Status.
@@ -703,6 +724,9 @@ type NotFound = Error
 // PayloadTooLarge defines model for PayloadTooLarge.
 type PayloadTooLarge = Error
 
+// RequestTooLarge defines model for RequestTooLarge.
+type RequestTooLarge = Error
+
 // ServiceUnavailable defines model for ServiceUnavailable.
 type ServiceUnavailable = Error
 
@@ -711,6 +735,9 @@ type Unauthenticated = Error
 
 // UnprocessableEntity defines model for UnprocessableEntity.
 type UnprocessableEntity = Error
+
+// UnsupportedMediaType defines model for UnsupportedMediaType.
+type UnsupportedMediaType = Error
 
 // CreateProjectParams defines parameters for CreateProject.
 type CreateProjectParams struct {
@@ -2071,11 +2098,15 @@ type NotFoundJSONResponse Error
 
 type PayloadTooLargeJSONResponse Error
 
+type RequestTooLargeJSONResponse Error
+
 type ServiceUnavailableJSONResponse Error
 
 type UnauthenticatedJSONResponse Error
 
 type UnprocessableEntityJSONResponse Error
+
+type UnsupportedMediaTypeJSONResponse Error
 
 type CreateProjectRequestObject struct {
 	Params CreateProjectParams
@@ -2152,6 +2183,36 @@ func (response CreateProject409JSONResponse) VisitCreateProjectResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProject413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response CreateProject413JSONResponse) VisitCreateProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProject415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response CreateProject415JSONResponse) VisitCreateProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -2401,8 +2462,10 @@ type GetSnapshotFileResponseObject interface {
 }
 
 type GetSnapshotFile200ResponseHeaders struct {
-	AcceptRanges *string
-	ETag         *string
+	AcceptRanges        *string
+	ContentDisposition  *string
+	ETag                *string
+	XContentTypeOptions *string
 }
 
 type GetSnapshotFile200ApplicationoctetStreamResponse struct {
@@ -2420,8 +2483,14 @@ func (response GetSnapshotFile200ApplicationoctetStreamResponse) VisitGetSnapsho
 	if response.Headers.AcceptRanges != nil {
 		w.Header().Set("Accept-Ranges", fmt.Sprint(*response.Headers.AcceptRanges))
 	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
 	if response.Headers.ETag != nil {
 		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
+	if response.Headers.XContentTypeOptions != nil {
+		w.Header().Set("X-Content-Type-Options", fmt.Sprint(*response.Headers.XContentTypeOptions))
 	}
 	w.WriteHeader(200)
 
@@ -2433,9 +2502,11 @@ func (response GetSnapshotFile200ApplicationoctetStreamResponse) VisitGetSnapsho
 }
 
 type GetSnapshotFile206ResponseHeaders struct {
-	AcceptRanges *string
-	ContentRange *string
-	ETag         *string
+	AcceptRanges        *string
+	ContentDisposition  *string
+	ContentRange        *string
+	ETag                *string
+	XContentTypeOptions *string
 }
 
 type GetSnapshotFile206ApplicationoctetStreamResponse struct {
@@ -2453,11 +2524,17 @@ func (response GetSnapshotFile206ApplicationoctetStreamResponse) VisitGetSnapsho
 	if response.Headers.AcceptRanges != nil {
 		w.Header().Set("Accept-Ranges", fmt.Sprint(*response.Headers.AcceptRanges))
 	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
 	if response.Headers.ContentRange != nil {
 		w.Header().Set("Content-Range", fmt.Sprint(*response.Headers.ContentRange))
 	}
 	if response.Headers.ETag != nil {
 		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
+	if response.Headers.XContentTypeOptions != nil {
+		w.Header().Set("X-Content-Type-Options", fmt.Sprint(*response.Headers.XContentTypeOptions))
 	}
 	w.WriteHeader(206)
 
@@ -2691,6 +2768,36 @@ func (response RestoreSnapshot409JSONResponse) VisitRestoreSnapshotResponse(w ht
 	return err
 }
 
+type RestoreSnapshot413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response RestoreSnapshot413JSONResponse) VisitRestoreSnapshotResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSnapshot415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response RestoreSnapshot415JSONResponse) VisitRestoreSnapshotResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RestoreSnapshot422JSONResponse struct {
 	UnprocessableEntityJSONResponse
 }
@@ -2911,6 +3018,36 @@ func (response CreateWorkspace409JSONResponse) VisitCreateWorkspaceResponse(w ht
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWorkspace413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response CreateWorkspace413JSONResponse) VisitCreateWorkspaceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateWorkspace415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response CreateWorkspace415JSONResponse) VisitCreateWorkspaceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -3186,6 +3323,36 @@ func (response CreateCommit410JSONResponse) VisitCreateCommitResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response CreateCommit413JSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response CreateCommit415JSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
 	_, err := buf.WriteTo(w)
 	return err
 }

@@ -24,6 +24,12 @@ info:
       request with the same actor (actor reference), key and route returns
       the stored response of the first request. The same key with a different request
       body gives `409 idempotency_key_reuse`. Keys are kept for 24 hours.
+      While the first request runs, a repeat gets `409 conflict` with
+      `details.reason` = `in_progress`. A request holds its key for a lease
+      (60 seconds by default): a repeat after the lease runs the request
+      again, and the first request, if it still runs, then fails with
+      `409 conflict` without making its change, so the change is made at
+      most once.
     * **Errors.** Every error has the same flat body:
       `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`
       (`request_id` and `details` are optional). `code` is stable and machine
@@ -31,9 +37,25 @@ info:
       HTTP status. Each operation lists the codes it can return; any
       operation may also return `internal` (500), `not_implemented` (501),
       `rate_limited` (429) and `db_unavailable` / `storage_unavailable` (503).
+      `db_unavailable` with `details.reason` = `lock_timeout` or `deadlock`
+      means that concurrent requests held the rows this one needed: nothing
+      was changed, the response carries `Retry-After: 1`, and the request
+      can be repeated as it is (with the same `Idempotency-Key`).
+    * **Request bodies.** Every POST takes a JSON body and must send
+      `Content-Type: application/json`, with no parameter but
+      `charset=utf-8`; anything else gives `415` with code
+      `invalid_request` and `details.reason` = `unsupported_content_type`.
+      The body must be one JSON value, with nothing but white space after
+      it (`400 invalid_request` otherwise). The body of every request except
+      an upload is limited by the server (16 MiB by default): a larger body
+      gives `413 request_too_large` with `details.max_bytes`, and the server
+      stops reading it at the limit and closes the connection. Uploads have
+      their own limit (`file_too_large`).
     * **Pagination.** List endpoints take an opaque `cursor` and `limit`
       (default 50, maximum 500) and return `{"items": [...], "next_cursor": ...}`;
-      `next_cursor` is `null` on the last page.
+      `next_cursor` is `null` on the last page. A `cursor` that is not the
+      `next_cursor` of a page of the same list gives `400 invalid_request`
+      with `details.reason` = `invalid_cursor`.
     * **Identifiers.** IDs are ULIDs (26 uppercase Crockford base32
       characters). URL paths contain only IDs; file paths are always passed as
       the `path` query parameter or in request bodies.
@@ -59,7 +81,9 @@ info:
       described under "Looking up a path" and does not apply them: the file
       keeps its stored path. Entries carried over from the base snapshot, or
       restored from another snapshot, keep their stored bytes and are not
-      checked again.
+      checked again; but a restored name that the head's directory does not
+      have, and every directory above it that the head does not have, must
+      not have the case-fold key of another name in that directory.
     * **Looking up a path** (the `path` parameter of the tree and file
       operations, `path` of a restore, and `path` of a commit change that
       replaces or deletes a file): (1) the path as sent must be valid UTF-8,
@@ -128,8 +152,11 @@ paths:
       operationId: getReadyz
       summary: Readiness probe
       description: |
-        Checks the configured dependencies. Errors: `db_unavailable`,
-        `storage_unavailable` (503).
+        Checks the dependencies. The service needs a database: without one
+        (not configured, or not reachable) it is not ready. Errors:
+        `db_unavailable`, `storage_unavailable` (503; `details.check` names
+        the dependency, `details.reason` = `not_configured` when it is not
+        configured).
       security: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
@@ -155,8 +182,9 @@ paths:
         endpoint is not exposed. The project is created in the tenant of the
         caller.
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `idempotency_key_reuse` (409).
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `idempotency_key_reuse` (409),
+        `request_too_large` (413).
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -181,6 +209,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
   /api/v1/projects/{project_id}:
@@ -215,8 +247,9 @@ paths:
         (`ref_name` `main`, generation 1, no head). The storage prefix is
         chosen by the server and never changes.
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+        (409), `request_too_large` (413).
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -243,6 +276,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
   /api/v1/workspaces/{workspace_id}:
@@ -312,6 +349,10 @@ paths:
         `details.reason` = `checksum_mismatch`. An empty body is valid: it
         uploads the empty file
         (`sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`).
+        The server has a size limit per upload (`file_too_large`, with
+        `details.max_bytes`); a `Content-Length` above it is refused before
+        the body is read. Object storage is written before the upload is
+        recorded: the content is durable when the response arrives.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -381,15 +422,29 @@ paths:
         * A change with `delete: true` removes the file found; the
           write-time rules are not applied to it.
         * Each path may appear once per request; the request needs at least
-          one change.
+          one change. The server limits the number of changes per commit
+          (`invalid_request` with `details.reason` = `too_many_changes` and
+          `details.max_changes`).
+        * The names a change creates are also checked against the names the
+          base snapshot has in that directory, including names another
+          change of the same request deletes: changing only the case of a
+          name, or turning a file into a directory, takes two commits.
+        * Changes that leave the tree as it is are refused
+          (`invalid_request` with `details.reason` = `no_changes`).
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `not_found` (404, workspace or branch), `conflict` (409:
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `not_found` (404, workspace or branch),
+        `request_too_large` (413), `conflict` (409:
         `expected_generation` is not the current generation, with
         `details.current_generation`; or deleting a path that is not a file,
-        with `details.reason` = `path_not_found`), `idempotency_key_reuse`
-        (409), `blob_missing` (410, a referenced hash is not stored in this
-        workspace, with `details.hashes`), `invalid_path` (422).
+        with `details.reason` = `path_not_found`; or a request with the same
+        `Idempotency-Key` is still in progress, with `details.reason` =
+        `in_progress`), `idempotency_key_reuse` (409), `blob_missing` (410, a
+        referenced hash is not stored in this workspace, with
+        `details.hashes` and `details.reason`: `not_uploaded` when the
+        content was never uploaded to this workspace, `missing_in_storage`
+        when it was uploaded but its object is gone from storage),
+        `invalid_path` (422).
       parameters:
         - $ref: '#/components/parameters/WorkspaceId'
         - $ref: '#/components/parameters/RequestId'
@@ -421,6 +476,10 @@ paths:
           $ref: '#/components/responses/Gone'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
   /api/v1/workspaces/{workspace_id}/timeline:
@@ -530,13 +589,20 @@ paths:
       operationId: getSnapshotFile
       summary: Download a file of a snapshot
       description: |
-        Returns the file content. A single `Range: bytes=...` range is
-        supported (206); several ranges are not. `ETag` is the quoted content
-        hash and `If-None-Match` with it gives 304.
+        Returns the file content as `application/octet-stream`, with
+        `Content-Disposition: attachment` and the file name, and
+        `X-Content-Type-Options: nosniff`. A single `Range: bytes=...` range
+        is supported (206); a header with several ranges, or one the server
+        does not understand, is ignored (200 with the whole file). `ETag` is
+        the quoted content hash and `If-None-Match` with it gives 304. The
+        stored object is checked before the response starts: one that is
+        missing, or whose size differs from the file's, gives
+        `blob_missing`.
 
         Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
         `path` names a directory), `unauthenticated` (401), `not_found` (404,
-        snapshot or path), `blob_missing` (410, content lost from storage),
+        snapshot or path), `blob_missing` (410, content lost from storage or
+        damaged, `details.reason` = `missing_in_storage`),
         `invalid_request` with status 416 (range not satisfiable),
         `invalid_path` (422).
       parameters:
@@ -562,6 +628,10 @@ paths:
               $ref: '#/components/headers/ETag'
             Accept-Ranges:
               $ref: '#/components/headers/AcceptRanges'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
           content:
             application/octet-stream:
               schema:
@@ -574,6 +644,10 @@ paths:
               $ref: '#/components/headers/ETag'
             Accept-Ranges:
               $ref: '#/components/headers/AcceptRanges'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
             Content-Range:
               description: '`bytes <first>-<last>/<size>`'
               schema:
@@ -619,7 +693,10 @@ paths:
         File-level differences from `base` to this snapshot, in path order
         (segment by segment; see "Path order").
         Without `base` the first parent is used (the empty tree for a root
-        snapshot). Both snapshots must belong to the same workspace.
+        snapshot). Both snapshots must belong to the same workspace. A file
+        whose content or mode differs is `modified`; a name that is a file in
+        one snapshot and a directory in the other gives the file first
+        (`deleted` or `added`) and then the files below the directory.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `not_found`
         (404, either snapshot).
@@ -659,12 +736,22 @@ paths:
         with `path` only that file or directory is restored (removed if it
         does not exist in `{snapshot_id}`) and everything else is kept from
         the head. `path` is looked up as described under "Looking up a
-        path". History is never rewritten.
+        path". History is never rewritten. A restore that leaves the head's
+        tree as it is (including a `path` that exists neither in
+        `{snapshot_id}` nor in the head) is refused with `invalid_request`
+        and `details.reason` = `no_changes`.
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `not_found` (404, snapshot or branch), `conflict` (409,
-        generation mismatch with `details.current_generation`),
-        `idempotency_key_reuse` (409), `invalid_path` (422).
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `not_found` (404, snapshot or branch),
+        `request_too_large` (413), `conflict` (409,
+        generation mismatch with `details.current_generation`; or
+        `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
+        `invalid_path` (422; `case_conflict` when the restored name, or a
+        directory above it that the head does not have, has the case-fold
+        key of another name of its directory in the head, for example
+        restoring `README.md` while the head has `readme.md`;
+        `file_dir_conflict` when a directory above `path` is a file in the
+        head).
       parameters:
         - $ref: '#/components/parameters/SnapshotId'
         - $ref: '#/components/parameters/RequestId'
@@ -694,6 +781,10 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
 components:
@@ -711,6 +802,20 @@ components:
       schema:
         type: string
         enum: [bytes]
+    ContentDisposition:
+      description: |
+        `attachment` with the name of the file (the last segment of its
+        stored path): `filename*` is the name in UTF-8, percent-encoded
+        (RFC 6266, RFC 8187), and `filename` an ASCII fallback in which every
+        other character, `"`, `\` and `%` is replaced by `_`.
+      schema:
+        type: string
+        example: attachment; filename="__.txt"; filename*=UTF-8''%E6%96%87%E4%BB%B6.txt
+    ContentTypeOptions:
+      description: '`nosniff`: clients must not guess another type than `application/octet-stream`.'
+      schema:
+        type: string
+        enum: [nosniff]
   parameters:
     RequestId:
       name: X-Request-Id
@@ -819,6 +924,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    RequestTooLarge:
+      description: '`request_too_large`: the request body exceeds the server limit (`details.max_bytes`).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMediaType:
+      description: '`invalid_request` with `details.reason` = `unsupported_content_type`: the body is not sent as `application/json`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     UnprocessableEntity:
       description: '`invalid_path`, with `details.kind` (`PathErrorKind`) naming the violated rule.'
       content:
@@ -826,7 +943,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     ServiceUnavailable:
-      description: '`db_unavailable` or `storage_unavailable`; retry later.'
+      description: '`db_unavailable` or `storage_unavailable`; retry later (`Retry-After: 1` with `details.reason` `lock_timeout` or `deadlock`).'
       content:
         application/json:
           schema:
@@ -891,9 +1008,9 @@ components:
             Stable machine-readable code: invalid_request, unauthenticated,
             forbidden, not_found, conflict, idempotency_key_reuse,
             upload_expired, blob_missing, precondition_failed,
-            quota_exceeded, file_too_large, invalid_path, unsupported_format,
-            rate_limited, internal, not_implemented, storage_unavailable,
-            db_unavailable.
+            quota_exceeded, file_too_large, request_too_large, invalid_path,
+            unsupported_format, rate_limited, internal, not_implemented,
+            storage_unavailable, db_unavailable.
           example: not_implemented
         message:
           type: string
@@ -949,6 +1066,17 @@ components:
           description: 'Result per dependency, for example {"db": "ok"}; not_configured when unused.'
           additionalProperties:
             type: string
+        unicode_version:
+          type: string
+          description: |
+            The Unicode version V of the write-time path rules this server
+            applies (docs/spec/content-format.md, section 2.4), for example
+            `15.0.0`.
+          example: 15.0.0
+        version:
+          type: string
+          description: Version of the server build.
+          example: v1.0.0
     Project:
       type: object
       required: [project_id, tenant_id, name, status, created_at, updated_at]
@@ -974,6 +1102,13 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+          description: |
+            Free text, stored as given: valid UTF-8 of at most 255 bytes (the
+            byte limit is the stricter one), not empty and not only white
+            space, without control characters (U+0000-U+001F,
+            U+007F-U+009F), noncharacters or characters of the fixed
+            disallowed list of the path rules (bidi controls and invisible
+            characters). Otherwise `invalid_request` (400).
     Workspace:
       type: object
       required: [workspace_id, project_id, tenant_id, workspace_type, display_name, status, main_branch_id, created_at, updated_at]
@@ -1007,6 +1142,9 @@ components:
         display_name:
           type: string
           maxLength: 255
+          description: |
+            Optional free text, stored as given, with the character rules
+            and the 255-byte limit of a project name; it may be empty.
     Branch:
       type: object
       required: [branch_id, workspace_id, branch_name, ref_name, branch_type, head_snapshot_id, generation, status, created_at, updated_at]

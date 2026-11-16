@@ -63,7 +63,7 @@ jobs:
       - run: make vectors-crosscheck
 
   migrations:
-    name: migrations on MySQL 8.0
+    name: migrations and repositories on MySQL 8.0
     runs-on: ubuntu-latest
     services:
       mysql:
@@ -85,7 +85,7 @@ jobs:
       - run: make test-mysql MYSQL_TEST_DSN='root:mfgraph@tcp(127.0.0.1:3306)/'
 
   migrations-seekdb:
-    name: migrations on seekdb
+    name: migrations and repositories on seekdb
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -123,6 +123,72 @@ jobs:
           done
           echo "seekdb did not become ready within 10 minutes"; exit 1
       - run: make test-seekdb SEEKDB_TEST_DSN='root@tcp(127.0.0.1:2881)/' SEEKDB_WAIT=600s
+
+  e2e-mysql:
+    name: acceptance tests on MySQL 8.0
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: mfgraph
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmfgraph --silent"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make test-e2e
+        env:
+          MFGRAPH_E2E_DB_DSN: root:mfgraph@tcp(127.0.0.1:3306)/
+          MFGRAPH_E2E_REQUIRE_DB: "1"
+
+  e2e-seekdb:
+    name: acceptance tests on seekdb
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      seekdb:
+        # Keep the tag in sync with deploy/docker-compose.dev.yml (checked by
+        # TestSeekdbImagePinned).
+        image: oceanbase/seekdb:1.4.0-100000172026082615
+        ports:
+          - 2881:2881
+        options: >-
+          --health-cmd "mysql -h127.0.0.1 -P2881 -uroot --connect-timeout=2 -e 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-start-period 60s
+          --health-retries 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: wait until seekdb answers queries
+        run: |
+          for i in $(seq 1 120); do
+            if command -v mysql >/dev/null 2>&1; then
+              if mysql -h127.0.0.1 -P2881 -uroot --connect-timeout=2 -e 'SELECT 1' >/dev/null 2>&1; then
+                echo "seekdb answers queries (attempt $i)"; exit 0
+              fi
+            elif (exec 3<>/dev/tcp/127.0.0.1/2881) 2>/dev/null; then
+              echo "seekdb port is open (attempt $i); the tests wait for queries"; exit 0
+            fi
+            sleep 5
+          done
+          echo "seekdb did not become ready within 10 minutes"; exit 1
+      - run: make test-e2e
+        env:
+          MFGRAPH_E2E_DB_DSN: root@tcp(127.0.0.1:2881)/
+          MFGRAPH_E2E_DB_WAIT: 600s
+          MFGRAPH_E2E_REQUIRE_DB: "1"
 
   docs:
     name: links and sensitive-data scan

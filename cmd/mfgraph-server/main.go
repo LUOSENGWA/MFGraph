@@ -5,7 +5,11 @@
 //	mfgraph-server version   print the version
 //
 // Configuration comes from MFGRAPH_* environment variables; see
-// internal/config.
+// internal/config. The service needs a database (MFGRAPH_DB_DSN) and a
+// storage root (MFGRAPH_STORAGE_ROOT): without a database it starts, but
+// /readyz and every business endpoint answer 503 db_unavailable. It
+// listens on host:port or, with MFGRAPH_HTTP_ADDR=unix:<path>, on a Unix
+// domain socket (mode 0600).
 //
 // Before it serves or migrates, the server checks that the Unicode tables
 // compiled into it match the specification (pathx.CheckUnicodeVersions): the
@@ -15,6 +19,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -29,11 +34,18 @@ import (
 
 	_ "github.com/go-sql-driver/mysql" // database/sql driver "mysql"
 
+	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/api"
+	"github.com/LUOSENGWA/MFGraph/internal/authz"
+	"github.com/LUOSENGWA/MFGraph/internal/blob/posix"
 	"github.com/LUOSENGWA/MFGraph/internal/config"
+	"github.com/LUOSENGWA/MFGraph/internal/core"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
 	"github.com/LUOSENGWA/MFGraph/internal/migrate"
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
+	"github.com/LUOSENGWA/MFGraph/internal/ports"
+	"github.com/LUOSENGWA/MFGraph/internal/store/mysql"
+	"github.com/LUOSENGWA/MFGraph/internal/treestore"
 	"github.com/LUOSENGWA/MFGraph/migrations"
 )
 
@@ -76,6 +88,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if !unicodeTablesMatch(logger) {
 		return 1
 	}
+	if cmd == "serve" {
+		if err := cfg.CheckServe(); err != nil {
+			logger.Error("refusing to start", "err", err.Error())
+			return 2
+		}
+	}
 	if cmd == "migrate" {
 		if err := migrateOnly(ctx, cfg, logger); err != nil {
 			logger.Error("migration failed", "err", err)
@@ -83,7 +101,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		}
 		return 0
 	}
-	ln, err := net.Listen("tcp", cfg.HTTPAddr)
+	ln, err := listen(cfg)
 	if err != nil {
 		logger.Error("listen", "addr", cfg.HTTPAddr, "err", err)
 		return 1
@@ -116,11 +134,53 @@ func newLogger(cfg config.Config, w io.Writer) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(w, opts))
 }
 
+// listen opens the TCP or Unix domain socket listener of cfg.HTTPAddr.
+func listen(cfg config.Config) (net.Listener, error) {
+	if path, ok := cfg.UnixSocket(); ok {
+		return listenUnix(path)
+	}
+	return net.Listen("tcp", cfg.HTTPAddr)
+}
+
+// listenUnix listens on a Unix domain socket that only the server's user
+// can use (mode 0600). A socket left at path by a server that is gone is
+// removed; anything else at path (a file, a directory, or a socket a
+// running server answers on) stops the start.
+func listenUnix(path string) (net.Listener, error) {
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("%s exists and is not a socket; refusing to replace it", path)
+		}
+		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
+			c.Close()
+			return nil, fmt.Errorf("%s is the socket of a running server", path)
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, fmt.Errorf("remove the stale socket %s: %w", path, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	ln, err := listenUnixPrivate(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
+}
+
 func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(32)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 	pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := db.PingContext(pctx); err != nil {
@@ -158,11 +218,30 @@ func migrateOnly(ctx context.Context, cfg config.Config, logger *slog.Logger) er
 	return runMigrations(ctx, cfg, db, logger)
 }
 
+// pseudonymizer returns the log pseudonymizer: with the configured key, or
+// with a random one (logged as a warning: pseudonyms then change with every
+// start).
+func pseudonymizer(cfg config.Config, logger *slog.Logger) (*actorref.Pseudonymizer, error) {
+	key := []byte(cfg.LogPseudonymKey)
+	if len(key) == 0 {
+		logger.Warn("no " + config.EnvLogPseudonymKey + " configured: a random key is used, so the actor pseudonyms " +
+			"in the logs cannot be linked across restarts")
+		key = make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, err
+		}
+	}
+	return actorref.NewPseudonymizer(key)
+}
+
 // serve runs the HTTP server on ln until ctx is canceled, then shuts down
-// gracefully.
+// gracefully within cfg.ShutdownTimeout.
 func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog.Logger) error {
-	logger.Info("starting mfgraph-server", append([]any{"version", version}, cfg.Summary()...)...)
-	dbCheck := api.ReadinessCheck{Name: "db", Code: api.CodeDBUnavailable}
+	defer ln.Close()
+	logger.Info("starting mfgraph-server", append([]any{"version", version, "unicode_version", pathx.UnicodeVersion}, cfg.Summary()...)...)
+	dbCheck := api.ReadinessCheck{Name: "db", Code: api.CodeDBUnavailable, Required: true}
+	storageCheck := api.ReadinessCheck{Name: "storage", Code: api.CodeStorageUnavailable}
+	var svc *core.Service
 	if cfg.DBDSN != "" {
 		db, err := openDB(ctx, cfg.DBDSN)
 		if err != nil {
@@ -174,7 +253,28 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 				return err
 			}
 		}
-		dbCheck.Check = db.PingContext
+		objects, err := posix.New(cfg.StorageRoot, logger)
+		if err != nil {
+			return err
+		}
+		store := mysql.New(db)
+		prefixes := treestore.CachedPrefixes(func(ctx context.Context, ws string) (string, error) {
+			w, err := store.GetWorkspace(ctx, nil, ws)
+			return w.StoragePrefix, err
+		}, 10_000)
+		trees, err := treestore.New(objects, prefixes)
+		if err != nil {
+			return err
+		}
+		svc, err = core.New(core.Config{TenantID: cfg.TenantID, MaxUploadBytes: cfg.MaxUploadBytes,
+			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease}, core.Deps{Store: store, Objects: objects, Trees: trees,
+			Authz: authz.ProjectOwner{}, Clock: ports.ClockFunc(time.Now), IDs: ids.NewGenerator(), Logger: logger})
+		if err != nil {
+			return err
+		}
+		dbCheck.Check, storageCheck.Check = store.Ping, objects.Check
+	} else {
+		logger.Warn("no " + config.EnvDBDSN + " configured: /readyz and every business endpoint answer 503 db_unavailable")
 	}
 	authn, err := api.NewStaticTokens(cfg.AuthTokens)
 	if err != nil {
@@ -183,12 +283,22 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	if len(cfg.AuthTokens) == 0 {
 		logger.Warn("no " + config.EnvAuthTokens + " configured: every authenticated endpoint answers 401")
 	}
+	pseudo, err := pseudonymizer(cfg, logger)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
 		Handler: api.NewHandler(api.Options{
 			Authenticator: authn,
 			IDGen:         ids.NewGenerator(),
-			Readiness:     []api.ReadinessCheck{dbCheck},
+			Readiness:     []api.ReadinessCheck{dbCheck, storageCheck},
 			Logger:        logger,
+			Service:       svc,
+			APIPrefix:     cfg.APIPrefix,
+			Version:       version,
+			Pseudonym:     pseudo.Pseudonym,
+			// The upload limit is MaxUploadBytes (core).
+			MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -197,13 +307,13 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	logger.Info("listening", "addr", ln.Addr().String())
+	logger.Info("listening", "addr", ln.Addr().String(), "api_prefix", cfg.APIPrefix)
 	select {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
 	}
-	logger.Info("shutting down")
+	logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String())
 	sctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(sctx); err != nil {

@@ -78,7 +78,7 @@ func TestMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	if got := append(rs[0].Applied, rs[1].Applied...); len(got) != 7 || len(rs[0].Skipped)+len(rs[1].Skipped) != 0 {
+	if got := append(rs[0].Applied, rs[1].Applied...); len(got) != 8 || len(rs[0].Skipped)+len(rs[1].Skipped) != 0 {
 		t.Fatalf("first run applied %v", got)
 	}
 	tables := listTables(t, db, dbName)
@@ -95,7 +95,7 @@ func TestMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
-	if len(rs[0].Applied)+len(rs[1].Applied) != 0 || len(rs[0].Skipped)+len(rs[1].Skipped) != 7 {
+	if len(rs[0].Applied)+len(rs[1].Applied) != 0 || len(rs[0].Skipped)+len(rs[1].Skipped) != 8 {
 		t.Fatalf("second run: %+v", rs)
 	}
 
@@ -118,6 +118,15 @@ func TestMySQL(t *testing.T) {
 	rs, err = migrate.RunAll(ctx, target, plans[1:], time.Now)
 	if err != nil || !reflect.DeepEqual(rs[0].Applied, []string{"0008_usage_outbox_idempotency"}) {
 		t.Fatalf("resume run: %+v %v", rs, err)
+	}
+	// The same for a migration of ALTER statements: the columns and the
+	// index exist, the statements are skipped and the version is recorded.
+	if _, err := db.ExecContext(ctx, "DELETE FROM schema_migrations WHERE component = ? AND version = ?", "kernel", "0001_project_owner"); err != nil {
+		t.Fatal(err)
+	}
+	rs, err = migrate.RunAll(ctx, target, plans[:1], time.Now)
+	if err != nil || !reflect.DeepEqual(rs[0].Applied, []string{"0001_project_owner"}) {
+		t.Fatalf("resume run of ALTER statements: %+v %v", rs, err)
 	}
 
 	// 5. A gap filled later (e.g. 0005 added after 0006/0008 were applied).
@@ -354,6 +363,7 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 		"workspaces.storage_prefix": "varbinary(942)", "blobs.storage_key": "varbinary(1024)",
 		"idempotency_keys.idempotency_key": "varbinary(128)",
 		// Actor references.
+		"projects.owner_ref":   "varbinary(255)",
 		"workspaces.owner_ref": "varbinary(255)", "workstreams.owner_ref": "varbinary(255)",
 		"workstreams.created_by_ref": "varbinary(255)", "branches.created_by_ref": "varbinary(255)",
 		"snapshots.author_ref": "varbinary(255)", "snapshots.on_behalf_of_ref": "varbinary(255)",

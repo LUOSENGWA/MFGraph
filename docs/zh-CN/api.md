@@ -4,7 +4,36 @@
 
 REST/JSON，版本化在 `/api/v1` 下。MCP 与 CLI 都是同一 API 的薄适配器。
 
-第一个核心切片的契约是 [`contracts/openapi.yaml`](../../contracts/openapi.yaml)（OpenAPI 3.0.3）：健康检查、项目、project 级 workspace、分支、整文件上传进暂存（`PUT /api/v1/workspaces/{id}/objects`）、提交、时间线、目录浏览、文件下载、diff 和恢复。下文列出的是规划中的 v1 接口；后续切片只新增接口，不改变已有接口。
+第一个核心切片的契约是 [`contracts/openapi.yaml`](../../contracts/openapi.yaml)（OpenAPI 3.0.3）：健康检查、项目、project 级 workspace、分支、整文件上传进暂存（`PUT /api/v1/workspaces/{id}/objects`）、提交、时间线、目录浏览、文件下载、diff 和恢复，已全部实现（M1.0a）。再往下列出的是规划中的 v1 接口；后续切片只新增接口，不改变已有接口。
+
+## 第一个核心切片（M1.0a）
+
+```text
+GET    /healthz                                   存活检查（免鉴权）
+GET    /readyz                                    就绪检查：db、storage；unicode_version、version
+POST   /api/v1/projects                           创建项目（创建者是拥有者）
+GET    /api/v1/projects/{project_id}
+POST   /api/v1/workspaces                         创建工作区及其 main 分支
+GET    /api/v1/workspaces/{workspace_id}          含 main_branch_id
+GET    /api/v1/workspaces/{workspace_id}/branches
+PUT    /api/v1/workspaces/{workspace_id}/objects  上传一个完整文件（暂存）
+POST   /api/v1/workspaces/{workspace_id}/commits  唯一产生快照的接口
+GET    /api/v1/workspaces/{workspace_id}/timeline?branch_id=
+GET    /api/v1/snapshots/{snapshot_id}
+GET    /api/v1/snapshots/{snapshot_id}/tree?path=
+GET    /api/v1/snapshots/{snapshot_id}/file?path=
+GET    /api/v1/snapshots/{snapshot_id}/diff?base=
+POST   /api/v1/snapshots/{snapshot_id}/restore
+```
+
+- **必须连数据库。** 没有数据库（未设置 `MFGRAPH_DB_DSN` 或连不上）时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；没有"无数据库模式"。
+- **路径前缀。** 业务接口的默认前缀是 `/api/v1`；`MFGRAPH_API_PREFIX` 可以改到别处（例如 `/files/v1`，这时 `/files/v1/projects` 就是契约里的 `POST /api/v1/projects`），`/healthz` 和 `/readyz` 始终在根路径。其他路径一律返回 JSON 格式的 404。
+- **谁能做什么（独立部署）。** 任何已认证的调用者都可以创建项目；创建者是这个项目及其下所有工作区的唯一拥有者，其他人访问一律 `404 not_found`。角色以后再做；嵌入宿主平台时由宿主平台的访问控制判定。
+- **限制。** 单次上传最多 `MFGRAPH_MAX_UPLOAD_BYTES`（1 GiB；超过返回 `413 file_too_large`，带 `details.max_bytes`，读取请求体之前先按 `Content-Length` 检查）；其他请求的请求体最多 `MFGRAPH_MAX_JSON_BODY_BYTES`（16 MiB；超过返回 `413 request_too_large`，带 `details.max_bytes`，先按 `Content-Length` 检查，超出上限的部分不会被读取）；一次提交最多 `MFGRAPH_MAX_COMMIT_CHANGES` 条改动（10000）；列表每页最多 500 条（默认 50）。读取接口的文件路径放在 `path` 查询参数里（编码前最多 4096 字节；百分号编码后的中文路径可达约 12 KB，超过部分代理的上限）。
+- **下载。** `GET .../file` 返回 `application/octet-stream`，带 `Content-Disposition: attachment`（文件名以 UTF-8 的 `filename*` 和 ASCII 的 `filename` 后备形式给出）、`X-Content-Type-Options: nosniff`、`ETag`；`If-None-Match` 匹配时返回 304；支持单段 `Range`（206，或 416）。存储对象缺失或损坏时，在发送任何内容之前返回 `410 blob_missing`（`missing_in_storage`）。
+- **名称。** 项目名和工作区显示名是自由文本，最多 255 字节（UTF-8），不能含控制字符、非字符、双向控制字符和不可见字符（即路径规则的禁止清单）；项目名不能为空，也不能只有空白。否则返回 `400 invalid_request`。
+- **JSON 请求体。** 所有 POST 都要发送 `Content-Type: application/json`（参数只允许 `charset=utf-8`；否则返回 `415`，错误码 `invalid_request`，`details.reason` 为 `unsupported_content_type`），请求体必须是单个 JSON 值：值后面除空白外还有内容时返回 `400 invalid_request`。
+- **命令行。** `mfgraph` 是这些接口的薄客户端：`project create`、`workspace create`、`upload`、`commit`、`log`、`ls`、`cat`、`diff`、`restore`（`mfgraph help`）。它读取 `MFGRAPH_URL`（`http://host:port` 或 `unix:<socket>`）、`MFGRAPH_TOKEN` 和 `MFGRAPH_API_PREFIX`，服务端返回的错误原样输出。
 
 ## Workspace / 项目树
 
@@ -93,9 +122,26 @@ X-Correlation-Id: <optional>
 
 ## 错误
 
-所有错误都使用同一种扁平结构：`{"code": "...", "message": "...", "request_id": "...", "details": {...}}`。错误码：`invalid_request`（400）、`unauthenticated`（401）、`forbidden`（403）、`not_found`（404）、`conflict` 与 `idempotency_key_reuse`（409）、`upload_expired` 与 `blob_missing`（410）、`precondition_failed`（412）、`quota_exceeded` 与 `file_too_large`（413）、`invalid_path` 与 `unsupported_format`（422）、`rate_limited`（429）、`internal`（500）、`not_implemented`（501）、`storage_unavailable` 与 `db_unavailable`（503）。
+所有错误都使用同一种扁平结构：`{"code": "...", "message": "...", "request_id": "...", "details": {...}}`。错误码：`invalid_request`（400）、`unauthenticated`（401）、`forbidden`（403）、`not_found`（404）、`conflict` 与 `idempotency_key_reuse`（409）、`upload_expired` 与 `blob_missing`（410）、`precondition_failed`（412）、`quota_exceeded`、`file_too_large` 与 `request_too_large`（413）、`invalid_path` 与 `unsupported_format`（422）、`rate_limited`（429）、`internal`（500）、`not_implemented`（501）、`storage_unavailable` 与 `db_unavailable`（503）。
 
 `invalid_path` 错误的 `details.kind` 说明违反了哪条规则，取值见[契约](../../contracts/openapi.yaml)中的 `PathErrorKind` 枚举。只有在单一违规时，这个类别才是确定的。
+
+第一个核心切片的其他 `details`：
+
+| 错误码 | `details` |
+|---|---|
+| `invalid_request`（400） | `reason`：`checksum_mismatch`（上传）、`no_changes`（提交或恢复后树没有变化）、`too_many_changes`（带 `max_changes`）、`not_a_directory`（对文件列目录）、`not_a_file`（下载目录）、`invalid_cursor`（`cursor` 不是同一列表某一页的 `next_cursor`） |
+| `conflict`（409） | `current_generation`（`expected_generation` 已过期），或 `reason`：`path_not_found`（删除的路径不是文件）、`in_progress`（相同 `Idempotency-Key` 的请求还在执行） |
+| `blob_missing`（410） | `hashes`，以及 `reason`：`not_uploaded`（从未上传到这个工作区）或 `missing_in_storage`（上传过，但对象已丢失） |
+| `file_too_large`（413） | `max_bytes` |
+| `request_too_large`（413） | `max_bytes`（上传以外的请求的请求体） |
+| `db_unavailable` / `storage_unavailable`（503） | 依赖未配置时 `reason` 为 `not_configured`；`/readyz` 另带 `check`。`db_unavailable` 的 `reason` 为 `lock_timeout`（MySQL 与 seekdb 的 1205 错误）或 `deadlock`（MySQL 的 1213 错误；seekdb 把死锁报告为锁等待超时）时带 `Retry-After: 1`：并发请求占着这次请求需要的行，没有做任何改动，原样重试即可 |
+
+`Idempotency-Key` 保留 24 小时。使用它的第一个请求还在执行时，重复请求得到 `409 conflict`，`reason` 为 `in_progress`。第一个请求持有这个 key 的时间是 `MFGRAPH_IDEMPOTENCY_LEASE`（60 秒）：超过之后，重复请求会接管这个 key 并执行；第一个请求如果还在执行，会以 `409 conflict` 失败，不做任何改动。因此即使服务在请求中途停止，同一改动也最多执行一次。
+
+提交新建的名字要和基准快照里该目录已有的名字做冲突检查，包括同一请求中另一条改动要删除的名字：只改名字的大小写，或者把文件改成目录，需要两次提交。
+
+按 `path` 恢复时，恢复给 head 增加的名字视为新建的名字：head 的对应目录里没有按字节完全相同的名字时的恢复名字，以及它上面 head 中不存在的每个目录。它们不能与 head 中所在目录的其他名字有相同的大小写折叠键（`invalid_path`，`case_conflict`）：`README.md` 被删除、之后又新建了 `readme.md`，那么在删除 `readme.md` 之前，恢复 `README.md` 会失败。恢复出的目录里面的条目不检查。
 
 ## 文件路径
 

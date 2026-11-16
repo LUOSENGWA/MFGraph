@@ -34,6 +34,10 @@ type Resource struct {
 	TenantID    string
 	ProjectID   string
 	WorkspaceID string // empty for tenant- and project-level resources
+	// OwnerRef is the actor reference of the owner of the project the
+	// resource belongs to (empty when the project has no recorded owner).
+	// A standalone deployment decides on it (authz.ProjectOwner).
+	OwnerRef string
 }
 
 // Authorizer decides whether a principal may perform an action. Principals
