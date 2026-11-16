@@ -4,11 +4,16 @@
 // Durability: an object is written to a temporary file on the same file
 // system (created with O_EXCL), fsynced, renamed to its final name, and
 // the directory is fsynced; a put returns only then. A reader therefore
-// sees either no object or the complete one. Objects are content-addressed,
-// so an existing file is kept if it has the expected size; a file of
-// another size (a truncated or damaged object) is replaced atomically by
-// the new bytes, and a warning is logged. A full hash check of stored
-// objects is a background audit, not part of a put.
+// sees either no object or the complete one. A put that finds the object,
+// or a directory on its way, already there (perhaps written a moment ago by
+// a concurrent put that has not made it durable yet) fsyncs the directory
+// that holds the object, and the parents of directories it has not seen
+// before, before it returns too.
+//
+// Objects are content-addressed, so an existing file is kept if it has the
+// expected size; a file of another size (a truncated or damaged object) is
+// replaced atomically by the new bytes, and a warning is logged. A full
+// hash check of stored objects is a background audit, not part of a put.
 package posix
 
 import (
@@ -21,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
@@ -38,6 +44,9 @@ const (
 type Store struct {
 	root string
 	log  *slog.Logger
+	// durable holds the directories whose entries this process has made
+	// durable (fsynced the parent after creating or finding them).
+	durable sync.Map
 }
 
 var _ ports.BlobStore = (*Store)(nil)
@@ -107,8 +116,11 @@ func (s *Store) path(key string) (string, error) {
 	return filepath.Join(s.root, filepath.FromSlash(key)), nil
 }
 
-// syncDir fsyncs a directory, so that a rename into it is durable.
-func syncDir(dir string) error {
+// syncDir fsyncs a directory, so that a rename into it is durable. Tests
+// replace it to observe the calls.
+var syncDir = syncDirOS
+
+func syncDirOS(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
@@ -120,22 +132,49 @@ func syncDir(dir string) error {
 	return err
 }
 
-// mkdirAll creates dir and fsyncs the parents of the directories it
-// creates, so that the new directory entries are durable too.
-func mkdirAll(dir string) error {
-	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-		return nil
+// ensureDir creates dir (below the root) if needed and makes the entries
+// of dir and of the directories above it durable: for every level this
+// process has not handled before, it creates the directory if it is
+// missing and fsyncs its parent, whether this put created the directory or
+// found it (a concurrent put may have created it and not fsynced the parent
+// yet). Handled levels are remembered, so a directory costs these fsyncs
+// once per process; a remembered directory that has disappeared since (an
+// operator removed it) is handled again.
+func (s *Store) ensureDir(dir string) error {
+	var levels []string
+	for d := dir; d != s.root; d = filepath.Dir(d) {
+		if _, ok := s.durable.Load(d); ok {
+			if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+				break
+			}
+			s.durable.Delete(d)
+		}
+		if filepath.Dir(d) == d {
+			return fmt.Errorf("posix: %s is not below the root %s", dir, s.root)
+		}
+		levels = append(levels, d)
 	}
-	parent := filepath.Dir(dir)
-	if parent != dir {
-		if err := mkdirAll(parent); err != nil {
+	for i := len(levels) - 1; i >= 0; i-- {
+		d := levels[i]
+		if err := os.Mkdir(d, dirPerm); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err
 		}
+		if err := syncDir(filepath.Dir(d)); err != nil {
+			return err
+		}
+		s.durable.Store(d, true)
 	}
-	if err := os.Mkdir(dir, dirPerm); err != nil && !errors.Is(err, fs.ErrExist) {
+	return nil
+}
+
+// settled makes the entry of an object found under path durable before a
+// put reports it as existing: its directory chain and the directory itself.
+func (s *Store) settled(path string) error {
+	dir := filepath.Dir(path)
+	if err := s.ensureDir(dir); err != nil {
 		return err
 	}
-	return syncDir(parent)
+	return syncDir(dir)
 }
 
 // existing reports whether an intact object (a regular file of size bytes)
@@ -160,7 +199,7 @@ func (s *Store) existing(key, path string, size int64) bool {
 }
 
 // commit makes the temporary file tmp durable under path.
-func commit(tmp *os.File, path string) error {
+func (s *Store) commit(tmp *os.File, path string) error {
 	if err := tmp.Chmod(filePerm); err != nil {
 		return err
 	}
@@ -171,7 +210,7 @@ func commit(tmp *os.File, path string) error {
 		return err
 	}
 	dir := filepath.Dir(path)
-	if err := mkdirAll(dir); err != nil {
+	if err := s.ensureDir(dir); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
@@ -212,10 +251,10 @@ func (s *Store) PutIfAbsent(ctx context.Context, key string, r io.Reader, size i
 		return false, err
 	}
 	if s.existing(key, path, size) {
-		return false, nil
+		return false, s.settled(path)
 	}
 	dir := filepath.Dir(path)
-	if err := mkdirAll(dir); err != nil {
+	if err := s.ensureDir(dir); err != nil {
 		return false, err
 	}
 	tmp, err := os.CreateTemp(dir, tmpPattern)
@@ -235,7 +274,7 @@ func (s *Store) PutIfAbsent(ctx context.Context, key string, r io.Reader, size i
 		discard(tmp)
 		return false, fmt.Errorf("%w: got %s, want %s", ports.ErrHashMismatch, hasher.Sum(), h)
 	}
-	if err := commit(tmp, path); err != nil {
+	if err := s.commit(tmp, path); err != nil {
 		os.Remove(tmp.Name())
 		return false, err
 	}
@@ -255,7 +294,7 @@ func (s *Store) PutStream(ctx context.Context, tmpDir string, r io.Reader, maxSi
 	if err != nil {
 		return ports.ObjectInfo{}, false, err
 	}
-	if err := mkdirAll(dir); err != nil {
+	if err := s.ensureDir(dir); err != nil {
 		return ports.ObjectInfo{}, false, err
 	}
 	tmp, err := os.CreateTemp(dir, tmpPattern)
@@ -286,9 +325,9 @@ func (s *Store) PutStream(ctx context.Context, tmpDir string, r io.Reader, maxSi
 	info := ports.ObjectInfo{Key: key, Size: n, Hash: h}
 	if s.existing(key, path, n) {
 		discard(tmp)
-		return info, false, nil
+		return info, false, s.settled(path)
 	}
-	if err := commit(tmp, path); err != nil {
+	if err := s.commit(tmp, path); err != nil {
 		os.Remove(tmp.Name())
 		return ports.ObjectInfo{}, false, err
 	}
