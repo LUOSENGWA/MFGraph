@@ -254,3 +254,109 @@ func TestShutdownTimeoutDefault(t *testing.T) {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 }
+
+func TestParseArgs(t *testing.T) {
+	ok := map[string]invocation{
+		"":        {cmd: "serve"},
+		"migrate": {cmd: "migrate"},
+		"serve --config etc/module.env --socket /run/x.sock": {cmd: "serve", config: "etc/module.env", socket: "/run/x.sock"},
+		"--config etc/module.env migrate":                    {cmd: "migrate", config: "etc/module.env"},
+		"--config=a.env serve --socket=/s.sock":              {cmd: "serve", config: "a.env", socket: "/s.sock"},
+		"--socket /s.sock":                                   {cmd: "serve", socket: "/s.sock"},
+		"--version":                                          {cmd: "version"},
+		"-h":                                                 {cmd: "help"},
+		"--config a.env version":                             {cmd: "version", config: "a.env"},
+	}
+	for line, want := range ok {
+		got, err := parseArgs(strings.Fields(line))
+		if err != nil || got != want {
+			t.Errorf("%q: %+v %v, want %+v", line, got, err, want)
+		}
+	}
+	for _, line := range []string{"bogus", "serve migrate", "--config", "--config=", "--socket", "--config a --config b",
+		"--config=a migrate --config b", "--port 1", "serve extra", "-x serve"} {
+		if got, err := parseArgs(strings.Fields(line)); err == nil {
+			t.Errorf("%q: accepted as %+v", line, got)
+		}
+	}
+}
+
+// TestConfigFile: --config is read before or after the command, the
+// environment wins over it, and a bad file stops the start with its line.
+func TestConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// The file sets an invalid log format; the environment overrides it,
+	// so migrate gets as far as the missing database.
+	bad := write("bad-format.env", "MFGRAPH_LOG_FORMAT=xml\n")
+	for _, args := range [][]string{{"--config", bad, "migrate"}, {"migrate", "--config=" + bad}} {
+		var out, errOut bytes.Buffer
+		if code := run(context.Background(), args, func(string) string { return "" }, &out, &errOut); code != 2 ||
+			!strings.Contains(errOut.String(), config.EnvLogFormat) {
+			t.Fatalf("%v: exit %d %s", args, code, errOut.String())
+		}
+		errOut.Reset()
+		envFormat := func(k string) string { return map[string]string{config.EnvLogFormat: "json"}[k] }
+		if code := run(context.Background(), args, envFormat, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "is required") {
+			t.Fatalf("%v with the environment's format: exit %d %s", args, code, errOut.String())
+		}
+	}
+	var out, errOut bytes.Buffer
+	exp := write("expansion.env", "# x\nMFGRAPH_DSN=${SECRET_DSN}\n")
+	if code := run(context.Background(), []string{"--config", exp, "migrate"}, func(string) string { return "" }, &out, &errOut); code != 2 ||
+		!strings.Contains(errOut.String(), "line 2") || strings.Contains(errOut.String(), "SECRET_DSN") {
+		t.Fatalf("expansion: exit %d %s", code, errOut.String())
+	}
+	errOut.Reset()
+	if code := run(context.Background(), []string{"--config", filepath.Join(dir, "missing.env")}, func(string) string { return "" },
+		&out, &errOut); code != 2 {
+		t.Fatalf("missing file: exit %d %s", code, errOut.String())
+	}
+}
+
+// TestModuleModeRefusesToStart: invalid module settings stop the start with
+// exit code 2 and a message that names the setting but never the token or
+// the DSN.
+func TestModuleModeRefusesToStart(t *testing.T) {
+	const token, dsn = "module-token-0123456789abcdef", "u:dbsecret@tcp(127.0.0.1:1)/x"
+	base := map[string]string{config.EnvMode: "module", config.EnvModuleSocket: filepath.Join(t.TempDir(), "m.sock"),
+		config.EnvModuleInternalToken: token, config.EnvDSN: dsn, config.EnvDataDir: t.TempDir(),
+		config.EnvTenantID: "01JD3X5Q8Z9W2V4T6R8P0N2T00"}
+	cases := map[string][2]string{ // variable, value ("" removes it)
+		"TCP address":       {config.EnvHTTPAddr, "127.0.0.1:0"},
+		"no tenant":         {config.EnvTenantID, ""},
+		"all-zero tenant":   {config.EnvTenantID, "00000000000000000000000000"},
+		"wrong MODULE_ID":   {config.EnvModuleID, "files"},
+		"alias conflict":    {config.EnvDBDSN, "u:other@tcp(127.0.0.1:1)/y"},
+		"kernel migrations": {config.EnvKernelMigrations, "true"},
+		"no token":          {config.EnvModuleInternalToken, ""},
+		"no data dir":       {config.EnvDataDir, ""},
+		"no DSN":            {config.EnvDSN, ""},
+	}
+	for name, kv := range cases {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		if kv[1] == "" {
+			delete(m, kv[0])
+		} else {
+			m[kv[0]] = kv[1]
+		}
+		var out, errOut bytes.Buffer
+		code := run(context.Background(), []string{"serve"}, func(k string) string { return m[k] }, &out, &errOut)
+		log := errOut.String()
+		if code != 2 || strings.Contains(log, "listening") {
+			t.Errorf("%s: exit %d\n%s", name, code, log)
+		}
+		if strings.Contains(log, token) || strings.Contains(log, "dbsecret") || strings.Contains(log, "u:other") {
+			t.Errorf("%s: the log leaks a secret:\n%s", name, log)
+		}
+	}
+}

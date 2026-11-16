@@ -1,15 +1,25 @@
 // Command mfgraph-server runs the MFGraph HTTP service.
 //
-//	mfgraph-server [serve]   start the HTTP server (default)
-//	mfgraph-server migrate   apply pending database migrations and exit
-//	mfgraph-server version   print the version
+//	mfgraph-server [options] [serve]   start the HTTP server (default)
+//	mfgraph-server [options] migrate   apply pending database migrations and exit
+//	mfgraph-server version             print the version
 //
-// Configuration comes from MFGRAPH_* environment variables; see
-// internal/config. The service needs a database (MFGRAPH_DB_DSN) and a
-// storage root (MFGRAPH_STORAGE_ROOT): without a database it starts, but
-// /readyz and every business endpoint answer 503 db_unavailable. It
-// listens on host:port or, with MFGRAPH_HTTP_ADDR=unix:<path>, on a Unix
-// domain socket (mode 0600).
+// Options, before or after the command:
+//
+//	--config FILE   read settings from FILE (KEY=VALUE lines, see
+//	                config.ParseFile); a relative path is relative to the
+//	                working directory
+//	--socket PATH   listen on the Unix domain socket PATH
+//
+// Settings come from MFGRAPH_* (and, for a module process, MODULE_*)
+// environment variables; see internal/config. Command-line options win over
+// the environment, which wins over the configuration file, which wins over
+// the defaults. The service needs a database (MFGRAPH_DB_DSN) and a storage
+// root (MFGRAPH_STORAGE_ROOT): in standalone mode it starts without a
+// database, but /readyz and every business endpoint answer 503
+// db_unavailable. It listens on host:port or, with
+// MFGRAPH_HTTP_ADDR=unix:<path>, on a Unix domain socket (mode 0600); module
+// mode (MFGRAPH_MODE=module) listens only on a socket.
 //
 // Before it serves or migrates, the server checks that the Unicode tables
 // compiled into it match the specification (pathx.CheckUnicodeVersions): the
@@ -29,6 +39,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -62,24 +73,97 @@ func main() {
 	os.Exit(run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 }
 
-func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
-	cmd := "serve"
-	if len(args) > 0 {
-		cmd = args[0]
+const usage = `Usage: mfgraph-server [--config FILE] [--socket PATH] [serve|migrate|version|help]
+The options may also follow the command.`
+
+// invocation is a parsed command line.
+type invocation struct {
+	cmd    string // serve (default), migrate, version or help
+	config string // --config
+	socket string // --socket
+}
+
+// parseArgs parses the command and the options --config and --socket
+// ("--opt value" or "--opt=value"), which may come before or after the
+// command; each may be given once.
+func parseArgs(args []string) (invocation, error) {
+	var inv invocation
+	seen := map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if name, value, hasValue := strings.Cut(a, "="); name == "--config" || name == "--socket" {
+			if seen[name] {
+				return inv, fmt.Errorf("%s is given twice", name)
+			}
+			seen[name] = true
+			if !hasValue {
+				if i+1 == len(args) {
+					return inv, fmt.Errorf("%s needs a value", name)
+				}
+				i++
+				value = args[i]
+			}
+			if value == "" {
+				return inv, fmt.Errorf("%s needs a value", name)
+			}
+			if name == "--config" {
+				inv.config = value
+			} else {
+				inv.socket = value
+			}
+			continue
+		}
+		switch a {
+		case "--version":
+			a = "version"
+		case "-h", "--help":
+			a = "help"
+		}
+		switch {
+		case strings.HasPrefix(a, "-"):
+			return inv, fmt.Errorf("unknown option %q", a)
+		case inv.cmd != "":
+			return inv, fmt.Errorf("unexpected argument %q after the command %s", a, inv.cmd)
+		case a == "serve" || a == "migrate" || a == "version" || a == "help":
+			inv.cmd = a
+		default:
+			return inv, fmt.Errorf("unknown command %q", a)
+		}
 	}
-	switch cmd {
-	case "version", "--version":
-		fmt.Fprintf(stdout, "mfgraph-server %s\n", version)
-		return 0
-	case "help", "-h", "--help":
-		fmt.Fprintln(stdout, "Usage: mfgraph-server [serve|migrate|version]")
-		return 0
-	case "serve", "migrate":
-	default:
-		fmt.Fprintf(stderr, "mfgraph-server: unknown command %q\n", cmd)
+	if inv.cmd == "" {
+		inv.cmd = "serve"
+	}
+	return inv, nil
+}
+
+func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	inv, err := parseArgs(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "mfgraph-server: %v\n%s\n", err, usage)
 		return 2
 	}
-	cfg, err := config.Load(getenv)
+	cmd := inv.cmd
+	switch cmd {
+	case "version":
+		fmt.Fprintf(stdout, "mfgraph-server %s\n", version)
+		return 0
+	case "help":
+		fmt.Fprintln(stdout, usage)
+		return 0
+	}
+	lookup := getenv
+	if inv.config != "" {
+		file, err := config.ReadFile(inv.config)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		lookup = config.Layered(getenv, file)
+	}
+	cfg, err := config.Load(lookup)
+	if err == nil && inv.socket != "" {
+		err = cfg.SetSocket(inv.socket)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -88,9 +172,16 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if !unicodeTablesMatch(logger) {
 		return 1
 	}
+	for _, w := range cfg.Warnings() {
+		logger.Warn(w)
+	}
 	if cmd == "serve" {
 		if err := cfg.CheckServe(); err != nil {
 			logger.Error("refusing to start", "err", err.Error())
+			return 2
+		}
+		if cfg.Module() {
+			logger.Error("refusing to start", "err", "module mode is not available in this build")
 			return 2
 		}
 	}
