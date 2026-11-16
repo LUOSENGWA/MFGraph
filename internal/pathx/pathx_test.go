@@ -389,7 +389,7 @@ func TestAllowedAndRejectedCharacters(t *testing.T) {
 		0x206c: pathx.KindDisallowedChar, 0x206d: pathx.KindDisallowedChar, 0x206e: pathx.KindDisallowedChar,
 		0x206f: pathx.KindDisallowedChar, 0xe0001: pathx.KindDisallowedChar,
 		0xe0002: pathx.KindUnassignedChar,
-		0x0378: pathx.KindUnassignedChar, 0x1fffd: pathx.KindUnassignedChar,
+		0x0378:  pathx.KindUnassignedChar, 0x1fffd: pathx.KindUnassignedChar,
 		0xfffe: pathx.KindNoncharacter, 0xfdd0: pathx.KindNoncharacter, 0x10ffff: pathx.KindNoncharacter,
 	}
 	for r, want := range rejected {
