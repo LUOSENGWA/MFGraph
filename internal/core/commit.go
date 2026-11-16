@@ -246,7 +246,9 @@ func blobMissing(reason, message string, hashes []string) *Error {
 	return newError(CodeBlobMissing, message, map[string]any{"reason": reason, "hashes": hashes})
 }
 
-func storageKey(ws ports.Workspace, b ports.Blob) string { return ws.StoragePrefix + "/" + b.StorageKey }
+func storageKey(ws ports.Workspace, b ports.Blob) string {
+	return ws.StoragePrefix + "/" + b.StorageKey
+}
 
 // treeError maps the errors of tree.Apply and tree.Graft.
 func treeError(err error) error {
