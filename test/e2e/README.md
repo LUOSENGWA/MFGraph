@@ -4,9 +4,14 @@ Black-box tests for the first core slice. `TestMain` builds `mfgraph-server`,
 and each test starts it as a separate process with its own configuration,
 talks to it over HTTP only, and stops it with SIGTERM.
 
+The service needs a database, so the tests need one too: they run against
+MySQL 8.0 or seekdb and are skipped, with that reason, when
+`MFGRAPH_E2E_DB_DSN` is not set. CI runs them on both servers.
+
 ```bash
-make test-e2e                                    # no database
-MFGRAPH_E2E_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/' make test-e2e   # with MySQL (make dev-db-up)
+make dev-db-up && make test-e2e-mysql        # MySQL 8.0: root:mfgraph@tcp(127.0.0.1:3306)/
+make dev-seekdb-up && make test-e2e-seekdb   # seekdb:    root@tcp(127.0.0.1:2881)/
+MFGRAPH_E2E_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/' make test-e2e   # any DSN of a user that may create databases
 ```
 
 | test | acceptance criterion |
@@ -21,13 +26,14 @@ MFGRAPH_E2E_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/' make test-e2e   # with My
 | `TestCrossWorkspaceIsNotFound` | the token of workspace A reading a snapshot of workspace B → 404 |
 | `TestModeKeptWhenOmitted` | replacing a 493 file without `mode` keeps 493; new files get 420; an explicit `mode` wins |
 
-Environment passed to the server: `MFGRAPH_HTTP_ADDR` (a free local port),
-`MFGRAPH_AUTH_TOKENS` (two principals, one with a plain-name actor reference and one with a ULID), `MFGRAPH_STORAGE_ROOT` (a temporary
-directory for the POSIX blob store of the first core slice), and, when
-`MFGRAPH_E2E_DB_DSN` is set, `MFGRAPH_DB_DSN` pointing at a fresh database plus
-`MFGRAPH_MIGRATE_ON_START=true`. Set `MFGRAPH_E2E_SERVER_BIN` to test a
-prebuilt binary.
+A further test, `TestCLISmoke`, runs every subcommand of the `mfgraph`
+command-line client against the server.
 
-**Status:** the business endpoints are not implemented yet, so every test
-fails at its first business request with `501 not_implemented`. That is the
-expected state until the first core slice lands.
+Environment passed to the server: `MFGRAPH_HTTP_ADDR` (a free local port),
+`MFGRAPH_AUTH_TOKENS` (two principals, one with a plain-name actor reference
+and one with a ULID), `MFGRAPH_STORAGE_ROOT` (a temporary directory for the
+POSIX blob store), `MFGRAPH_DB_DSN` pointing at a fresh database of the
+server of `MFGRAPH_E2E_DB_DSN` plus `MFGRAPH_MIGRATE_ON_START=true`, and a
+log pseudonym key. With `MFGRAPH_E2E_DB_WAIT` (a duration, used for seekdb)
+the tests first wait that long for the database. Set
+`MFGRAPH_E2E_SERVER_BIN` to test a prebuilt binary.

@@ -34,7 +34,14 @@ const (
 
 var serverBin string
 
+// skipReason is why the tests are skipped: the service needs a database.
+const skipReason = "MFGRAPH_E2E_DB_DSN is not set: the acceptance tests need a database (MySQL 8.0 or seekdb); " +
+	"see test/e2e/README.md"
+
 func TestMain(m *testing.M) {
+	if os.Getenv("MFGRAPH_E2E_DB_DSN") == "" {
+		os.Exit(m.Run()) // every test skips; nothing to build
+	}
 	if bin := os.Getenv("MFGRAPH_E2E_SERVER_BIN"); bin != "" {
 		serverBin = bin
 		os.Exit(m.Run())
@@ -60,32 +67,52 @@ func TestMain(m *testing.M) {
 // env must find the same data.
 type env map[string]string
 
-// newEnv prepares storage (and, with MFGRAPH_E2E_DB_DSN, a fresh database).
+// newEnv prepares storage and a fresh database on the server of
+// MFGRAPH_E2E_DB_DSN; without it the test is skipped. With
+// MFGRAPH_E2E_DB_WAIT (a duration) it waits that long for the database to
+// answer (seekdb initializes a fresh data directory first).
 func newEnv(t *testing.T) env {
 	t.Helper()
+	dsn := os.Getenv("MFGRAPH_E2E_DB_DSN")
+	if dsn == "" {
+		t.Skip(skipReason)
+	}
 	e := env{
-		"MFGRAPH_AUTH_TOKENS":  tokenA + "=" + actorA + "," + tokenB + "=" + actorB,
-		"MFGRAPH_STORAGE_ROOT": t.TempDir(),
-		"MFGRAPH_LOG_FORMAT":   "text",
+		"MFGRAPH_AUTH_TOKENS":       tokenA + "=" + actorA + "," + tokenB + "=" + actorB,
+		"MFGRAPH_STORAGE_ROOT":      t.TempDir(),
+		"MFGRAPH_LOG_FORMAT":        "text",
+		"MFGRAPH_LOG_PSEUDONYM_KEY": "e2e-pseudonym-key-0123456789",
 	}
-	if dsn := os.Getenv("MFGRAPH_E2E_DB_DSN"); dsn != "" {
-		cfg, err := mysql.ParseDSN(dsn)
-		if err != nil {
-			t.Fatal(err)
-		}
-		admin, err := sql.Open("mysql", cfg.FormatDSN())
-		if err != nil {
-			t.Fatal(err)
-		}
-		name := fmt.Sprintf("mfgraph_e2e_%d", time.Now().UnixNano())
-		if _, err := admin.Exec("CREATE DATABASE " + name + " CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { admin.Exec("DROP DATABASE " + name); admin.Close() })
-		cfg.DBName = name
-		e["MFGRAPH_DB_DSN"] = cfg.FormatDSN()
-		e["MFGRAPH_MIGRATE_ON_START"] = "true"
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		t.Fatal(err)
 	}
+	admin, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait time.Duration
+	if v := os.Getenv("MFGRAPH_E2E_DB_WAIT"); v != "" {
+		if wait, err = time.ParseDuration(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for deadline := time.Now().Add(wait); ; time.Sleep(2 * time.Second) {
+		if err = admin.Ping(); err == nil || time.Now().After(deadline) {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatalf("database of MFGRAPH_E2E_DB_DSN: %v", err)
+	}
+	name := fmt.Sprintf("mfgraph_e2e_%d", time.Now().UnixNano())
+	if _, err := admin.Exec("CREATE DATABASE " + name + " CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { admin.Exec("DROP DATABASE " + name); admin.Close() })
+	cfg.DBName = name
+	e["MFGRAPH_DB_DSN"] = cfg.FormatDSN()
+	e["MFGRAPH_MIGRATE_ON_START"] = "true"
 	return e
 }
 
