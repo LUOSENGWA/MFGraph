@@ -1,0 +1,249 @@
+package core
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/ports"
+	"github.com/LUOSENGWA/MFGraph/internal/tree"
+)
+
+// Defaults of Config.
+const (
+	DefaultStorageBackendID = "default"
+	DefaultMaxUploadBytes   = 1 << 30
+	DefaultMaxCommitChanges = 10_000
+	DefaultIdempotencyTTL   = 24 * time.Hour
+	DefaultLimit            = 50
+	MaxLimit                = 500
+	// MaxIdempotencyKey bounds an Idempotency-Key (contract: 1-128 visible
+	// ASCII characters).
+	MaxIdempotencyKey = 128
+)
+
+// Config holds the settings of the use cases.
+type Config struct {
+	// TenantID is the tenant of every project and workspace (a ULID; in a
+	// standalone deployment MFGRAPH_TENANT_ID).
+	TenantID string
+	// StorageBackendID names the storage backend that new workspaces use.
+	StorageBackendID string
+	// MaxUploadBytes bounds one upload (file_too_large above it).
+	MaxUploadBytes int64
+	// MaxCommitChanges bounds the changes of one commit.
+	MaxCommitChanges int
+	// IdempotencyTTL is how long an idempotency record is kept.
+	IdempotencyTTL time.Duration
+}
+
+// Deps are the ports the use cases run on.
+type Deps struct {
+	Store   ports.Store
+	Objects ports.BlobStore // file contents
+	Trees   ports.TreeStore // tree nodes
+	Authz   ports.Authorizer
+	Clock   ports.Clock
+	IDs     ports.IDGen
+}
+
+// Service implements the use cases of the first core slice: projects,
+// workspaces with a main branch, uploads, commits, browsing, downloads,
+// diffs and restores. It is safe for concurrent use.
+type Service struct {
+	cfg Config
+	d   Deps
+}
+
+// New returns a Service; zero settings get their defaults.
+func New(cfg Config, d Deps) (*Service, error) {
+	if !isULID(cfg.TenantID) {
+		return nil, fmt.Errorf("core: tenant ID %q is not a ULID", cfg.TenantID)
+	}
+	if cfg.StorageBackendID == "" {
+		cfg.StorageBackendID = DefaultStorageBackendID
+	}
+	if cfg.MaxUploadBytes <= 0 {
+		cfg.MaxUploadBytes = DefaultMaxUploadBytes
+	}
+	if cfg.MaxCommitChanges <= 0 {
+		cfg.MaxCommitChanges = DefaultMaxCommitChanges
+	}
+	if cfg.IdempotencyTTL <= 0 {
+		cfg.IdempotencyTTL = DefaultIdempotencyTTL
+	}
+	if d.Store == nil || d.Objects == nil || d.Trees == nil || d.Authz == nil || d.Clock == nil || d.IDs == nil {
+		return nil, errors.New("core: missing dependency")
+	}
+	return &Service{cfg: cfg, d: d}, nil
+}
+
+// Config returns the effective settings.
+func (s *Service) Config() Config { return s.cfg }
+
+func (s *Service) nowUs() int64 { return s.d.Clock.Now().UnixMicro() }
+
+// isULID reports a canonical ULID (26 uppercase Crockford base32
+// characters, the first one 0-7).
+func isULID(id string) bool {
+	if len(id) != 26 || id[0] > '7' {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if !strings.ContainsRune("0123456789ABCDEFGHJKMNPQRSTVWXYZ", rune(id[i])) {
+			return false
+		}
+	}
+	return true
+}
+
+func checkID(name, id string) error {
+	if !isULID(id) {
+		return invalid(name + " must be a ULID (26 uppercase Crockford base32 characters)")
+	}
+	return nil
+}
+
+func checkLength(name, s string, max int) error {
+	if !utf8.ValidString(s) {
+		return invalid(name + " is not valid UTF-8")
+	}
+	if n := utf8.RuneCountInString(s); n > max {
+		return invalid(fmt.Sprintf("%s has %d characters, at most %d are allowed", name, n, max))
+	}
+	return nil
+}
+
+// mapErr turns the errors of ports into core errors; other errors pass.
+func mapErr(err error, what string) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ports.ErrNotFound):
+		return &Error{Code: CodeNotFound, Message: what + " not found", Err: err}
+	case errors.Is(err, ports.ErrDBUnavailable):
+		return &Error{Code: CodeDBUnavailable, Message: "the database is not available", Err: err}
+	case errors.Is(err, ports.ErrStorageUnavailable):
+		return &Error{Code: CodeStorageUnavailable, Message: "the storage is not available", Err: err}
+	}
+	return err
+}
+
+// access resolves a workspace and its project and checks action. A
+// workspace that does not exist and one the caller may not see both give
+// not_found.
+func (s *Service) access(ctx context.Context, p ports.Principal, workspaceID string, action ports.Action) (ports.Workspace, ports.Project, error) {
+	ws, err := s.d.Store.GetWorkspace(ctx, nil, workspaceID)
+	if err != nil {
+		return ports.Workspace{}, ports.Project{}, mapErr(err, "workspace")
+	}
+	proj, err := s.d.Store.GetProject(ctx, nil, ws.ProjectID)
+	if err != nil {
+		return ports.Workspace{}, ports.Project{}, mapErr(err, "workspace")
+	}
+	res := ports.Resource{Type: ports.ResourceWorkspace, ID: ws.ID, TenantID: ws.TenantID, ProjectID: ws.ProjectID,
+		WorkspaceID: ws.ID, OwnerRef: proj.OwnerRef}
+	if err := s.check(ctx, p, action, res, "workspace"); err != nil {
+		return ports.Workspace{}, ports.Project{}, err
+	}
+	return ws, proj, nil
+}
+
+func (s *Service) check(ctx context.Context, p ports.Principal, action ports.Action, res ports.Resource, what string) error {
+	switch err := s.d.Authz.Check(ctx, p, action, res); {
+	case err == nil:
+		return nil
+	case errors.Is(err, ports.ErrForbidden):
+		return &Error{Code: CodeForbidden, Message: "not allowed to " + string(action), Err: err}
+	case errors.Is(err, ports.ErrNotFound):
+		return &Error{Code: CodeNotFound, Message: what + " not found", Err: err}
+	default:
+		return err
+	}
+}
+
+// snapshotAccess resolves a snapshot to its workspace and checks action.
+func (s *Service) snapshotAccess(ctx context.Context, p ports.Principal, snapshotID string, action ports.Action) (ports.Snapshot, ports.Workspace, error) {
+	if err := checkID("snapshot_id", snapshotID); err != nil {
+		return ports.Snapshot{}, ports.Workspace{}, err
+	}
+	snap, err := s.d.Store.GetSnapshot(ctx, nil, snapshotID)
+	if err != nil {
+		return ports.Snapshot{}, ports.Workspace{}, mapErr(err, "snapshot")
+	}
+	ws, _, err := s.access(ctx, p, snap.WorkspaceID, action)
+	if err != nil {
+		if CodeOf(err) == CodeNotFound {
+			err = notFound("snapshot")
+		}
+		return ports.Snapshot{}, ports.Workspace{}, err
+	}
+	return snap, ws, nil
+}
+
+// getter reads the tree nodes of a workspace.
+func (s *Service) getter(workspaceID string) tree.Getter {
+	return tree.GetterFunc(func(ctx context.Context, h contenthash.Hash) ([]byte, error) {
+		return s.d.Trees.Get(ctx, workspaceID, h)
+	})
+}
+
+// Page is the size and position of one page of a list.
+type Page struct {
+	Limit  int    // 1..MaxLimit; 0 = DefaultLimit
+	Cursor string // the NextCursor of the previous page; "" = first page
+}
+
+func (pg Page) limit() (int, error) {
+	switch {
+	case pg.Limit == 0:
+		return DefaultLimit, nil
+	case pg.Limit < 1 || pg.Limit > MaxLimit:
+		return 0, invalid(fmt.Sprintf("limit must be between 1 and %d", MaxLimit))
+	}
+	return pg.Limit, nil
+}
+
+// Cursors are opaque to clients: a kind letter and the position, in
+// unpadded base64url.
+func encodeCursor(kind byte, pos string) string {
+	return base64.RawURLEncoding.EncodeToString(append([]byte{kind}, pos...))
+}
+
+func decodeCursor(kind byte, c string) (string, error) {
+	b, err := base64.RawURLEncoding.DecodeString(c)
+	if err != nil || len(b) < 2 || b[0] != kind {
+		return "", invalid("invalid cursor")
+	}
+	return string(b[1:]), nil
+}
+
+const (
+	cursorBranches = 'b'
+	cursorTree     = 't'
+	cursorDiff     = 'd'
+	cursorTimeline = 's'
+)
+
+func timelineCursor(c ports.TimelineCursor) string {
+	return encodeCursor(cursorTimeline, strconv.FormatInt(c.CreatedAtUs, 10)+":"+c.SnapshotID)
+}
+
+func parseTimelineCursor(c string) (*ports.TimelineCursor, error) {
+	pos, err := decodeCursor(cursorTimeline, c)
+	if err != nil {
+		return nil, err
+	}
+	us, id, ok := strings.Cut(pos, ":")
+	n, perr := strconv.ParseInt(us, 10, 64)
+	if !ok || perr != nil || !isULID(id) {
+		return nil, invalid("invalid cursor")
+	}
+	return &ports.TimelineCursor{CreatedAtUs: n, SnapshotID: id}, nil
+}
