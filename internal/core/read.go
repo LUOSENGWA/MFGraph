@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
@@ -217,7 +218,12 @@ func (s *Service) Diff(ctx context.Context, p ports.Principal, snapshotID, baseI
 		if err != nil {
 			return DiffResult{}, err
 		}
+		// The position is a stored path: 1 to tree.MaxDepth non-empty
+		// segments.
 		after = strings.Split(pos, "/")
+		if len(after) > tree.MaxDepth || slices.Contains(after, "") {
+			return DiffResult{}, invalidCursor()
+		}
 	}
 	target, ws, err := s.snapshotAccess(ctx, p, snapshotID, ports.ActionWorkspaceRead)
 	if err != nil {

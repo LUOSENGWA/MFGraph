@@ -129,7 +129,7 @@ Other details of the first core slice:
 
 | Code | `details` |
 |---|---|
-| `invalid_request` (400) | `reason`: `checksum_mismatch` (upload), `no_changes` (a commit or restore that leaves the tree as it is), `too_many_changes` (with `max_changes`), `not_a_directory` (tree listing of a file), `not_a_file` (download of a directory) |
+| `invalid_request` (400) | `reason`: `checksum_mismatch` (upload), `no_changes` (a commit or restore that leaves the tree as it is), `too_many_changes` (with `max_changes`), `not_a_directory` (tree listing of a file), `not_a_file` (download of a directory), `invalid_cursor` (a `cursor` that is not the `next_cursor` of a page of the same list) |
 | `conflict` (409) | `current_generation` (a stale `expected_generation`), or `reason`: `path_not_found` (a delete of a path that is not a file), `in_progress` (a request with the same `Idempotency-Key` is running) |
 | `blob_missing` (410) | `hashes`, and `reason`: `not_uploaded` (never uploaded to this workspace) or `missing_in_storage` (uploaded, but the object is gone) |
 | `file_too_large` (413) | `max_bytes` |

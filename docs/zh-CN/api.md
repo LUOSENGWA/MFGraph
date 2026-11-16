@@ -129,7 +129,7 @@ X-Correlation-Id: <optional>
 
 | 错误码 | `details` |
 |---|---|
-| `invalid_request`（400） | `reason`：`checksum_mismatch`（上传）、`no_changes`（提交或恢复后树没有变化）、`too_many_changes`（带 `max_changes`）、`not_a_directory`（对文件列目录）、`not_a_file`（下载目录） |
+| `invalid_request`（400） | `reason`：`checksum_mismatch`（上传）、`no_changes`（提交或恢复后树没有变化）、`too_many_changes`（带 `max_changes`）、`not_a_directory`（对文件列目录）、`not_a_file`（下载目录）、`invalid_cursor`（`cursor` 不是同一列表某一页的 `next_cursor`） |
 | `conflict`（409） | `current_generation`（`expected_generation` 已过期），或 `reason`：`path_not_found`（删除的路径不是文件）、`in_progress`（相同 `Idempotency-Key` 的请求还在执行） |
 | `blob_missing`（410） | `hashes`，以及 `reason`：`not_uploaded`（从未上传到这个工作区）或 `missing_in_storage`（上传过，但对象已丢失） |
 | `file_too_large`（413） | `max_bytes` |

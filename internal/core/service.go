@@ -256,13 +256,18 @@ func encodeCursor(kind byte, pos string) string {
 	return base64.RawURLEncoding.EncodeToString(append([]byte{kind}, pos...))
 }
 
+// decodeCursor returns the position of a cursor of the given kind. Every
+// cursor that cannot be parsed gives invalid_request with reason
+// invalid_cursor.
 func decodeCursor(kind byte, c string) (string, error) {
 	b, err := base64.RawURLEncoding.DecodeString(c)
 	if err != nil || len(b) < 2 || b[0] != kind {
-		return "", invalid("invalid cursor")
+		return "", invalidCursor()
 	}
 	return string(b[1:]), nil
 }
+
+func invalidCursor() *Error { return invalidReason(ReasonInvalidCursor, "invalid cursor") }
 
 const (
 	cursorBranches = 'b'
@@ -283,7 +288,7 @@ func parseTimelineCursor(c string) (*ports.TimelineCursor, error) {
 	us, id, ok := strings.Cut(pos, ":")
 	n, perr := strconv.ParseInt(us, 10, 64)
 	if !ok || perr != nil || !isULID(id) {
-		return nil, invalid("invalid cursor")
+		return nil, invalidCursor()
 	}
 	return &ports.TimelineCursor{CreatedAtUs: n, SnapshotID: id}, nil
 }

@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -738,6 +739,39 @@ func TestDownloadOfLostContent(t *testing.T) {
 	e.must(e.objs.Delete(ctx, storagekey.Join(sd.ws.Workspace.StoragePrefix, storagekey.ObjectKey(f.Entry.Hash))))
 	_, err = f.Open(ctx, 0, -1)
 	wantCode(t, "lost content", err, core.CodeBlobMissing, "reason", core.ReasonMissingInStorage)
+}
+
+// TestInvalidCursors: every cursor that is not a next_cursor of the same
+// list gives invalid_request with reason invalid_cursor.
+func TestInvalidCursors(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	sd := e.seed(alice)
+	ws, snap := sd.ws.Workspace.ID, sd.first.SnapshotID
+	cursor := func(pos string) string { return base64.RawURLEncoding.EncodeToString([]byte(pos)) }
+	deep := "d" + strings.Repeat("a/", tree.MaxDepth) + "a" // 2049 segments
+	lists := map[string]func(c string) error{
+		"timeline": func(c string) error {
+			_, _, err := e.svc.Timeline(ctx, alice, ws, sd.branch, core.Page{Cursor: c})
+			return err
+		},
+		"tree": func(c string) error { _, err := e.svc.ListTree(ctx, alice, snap, "", core.Page{Cursor: c}); return err },
+		"diff": func(c string) error { _, err := e.svc.Diff(ctx, alice, snap, "", core.Page{Cursor: c}); return err },
+		"branches": func(c string) error {
+			_, _, err := e.svc.ListBranches(ctx, alice, ws, core.Page{Cursor: c})
+			return err
+		},
+	}
+	for name, list := range lists {
+		for _, c := range []string{"!", "x", cursor("z-other-kind"), cursor(deep), cursor("d//"), cursor("da//b"),
+			cursor("s12:not-a-ulid"), cursor("snot-a-time:" + snap)} {
+			err := list(c)
+			wantCode(t, name+" cursor "+c[:min(len(c), 12)], err, core.CodeInvalidRequest, "reason", core.ReasonInvalidCursor)
+		}
+	}
+	// The deepest valid position is accepted.
+	if _, err := e.svc.Diff(ctx, alice, snap, "", core.Page{Cursor: cursor("d" + strings.Repeat("a/", tree.MaxDepth-1) + "a")}); err != nil {
+		t.Fatalf("a cursor of %d segments: %v", tree.MaxDepth, err)
+	}
 }
 
 // TestUploadLimitAtInt64Max: the largest limit there is stores the content

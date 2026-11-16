@@ -37,6 +37,9 @@ const (
 	// request can be repeated as it is.
 	ReasonLockTimeout = "lock_timeout"
 	ReasonDeadlock    = "deadlock"
+	// ReasonInvalidCursor (invalid_request): a cursor that is not the
+	// next_cursor of a page of the same list.
+	ReasonInvalidCursor = "invalid_cursor"
 )
 
 // Error is a failure with a stable code and machine-readable details.

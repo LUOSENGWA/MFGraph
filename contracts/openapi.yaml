@@ -53,7 +53,9 @@ info:
       their own limit (`file_too_large`).
     * **Pagination.** List endpoints take an opaque `cursor` and `limit`
       (default 50, maximum 500) and return `{"items": [...], "next_cursor": ...}`;
-      `next_cursor` is `null` on the last page.
+      `next_cursor` is `null` on the last page. A `cursor` that is not the
+      `next_cursor` of a page of the same list gives `400 invalid_request`
+      with `details.reason` = `invalid_cursor`.
     * **Identifiers.** IDs are ULIDs (26 uppercase Crockford base32
       characters). URL paths contain only IDs; file paths are always passed as
       the `path` query parameter or in request bodies.
