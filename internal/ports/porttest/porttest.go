@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
@@ -498,6 +499,43 @@ func testIdempotency(t *testing.T, s Store) {
 	wantErr(t, "deleted record", err, ports.ErrNotFound)
 	if _, err := s.GetIdempotency(ctx, nil, rec.ActorRef+" ", rec.Route, rec.Key); err != nil {
 		t.Fatalf("record of the other actor: %v", err)
+	}
+
+	// A request taking over an in-progress record (a delete conditional on
+	// creation time and status) while the request that holds it completes
+	// it: the delete waits for the completion and then deletes nothing.
+	race := rec
+	race.Key = "k-race"
+	tx(t, s, func(tx ports.Tx) error { return s.InsertIdempotency(ctx, tx, race) })
+	locked, release := make(chan struct{}), make(chan struct{})
+	completed, deleted := make(chan error, 1), make(chan error, 1)
+	go func() {
+		completed <- s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+			if err := s.CompleteIdempotency(ctx, tx, race.ActorRef, race.Route, race.Key, 100, []byte(`{"won":true}`)); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	go func() {
+		deleted <- s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+			return s.DeleteIdempotency(ctx, tx, race.ActorRef, race.Route, race.Key, 100, ports.IdempotencyInProgress)
+		})
+	}()
+	time.Sleep(50 * time.Millisecond) // let the delete wait for the row
+	close(release)
+	if err := <-completed; err != nil {
+		t.Fatalf("completion: %v", err)
+	}
+	if err := <-deleted; err != nil {
+		t.Fatalf("takeover delete: %v", err)
+	}
+	if got, err := s.GetIdempotency(ctx, nil, race.ActorRef, race.Route, race.Key); err != nil ||
+		got.Status != ports.IdempotencyCompleted || string(got.Response) != `{"won":true}` {
+		t.Fatalf("after a takeover raced with the completion: %+v %v", got, err)
 	}
 }
 
