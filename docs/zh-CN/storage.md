@@ -14,9 +14,9 @@ Capabilities
 第一个核心切片实现了 `PutIfAbsent`、`PutStream`、`Get`（支持范围读取）、`Stat` 和 `Delete`（`internal/ports`），有测试用的内存实现和 POSIX 文件系统实现（`internal/blob/posix`）：
 
 - 每个对象是文件 `<root>/<存储前缀>/<key>`；含空段、`.`、`..`、反斜杠或 NUL 字节的 key 一律拒绝；
-- 写入先在同一个文件系统上建临时文件（`.tmp-*.part`，用 `O_EXCL` 创建），fsync 之后 rename 到最终位置，再 fsync 所在目录（新建目录时也 fsync 其上级），然后才返回；
+- 写入先在同一个文件系统上建临时文件（`.tmp-*.part`，用 `O_EXCL` 创建），fsync 之后 rename 到最终位置，再 fsync 所在目录（新建目录时也 fsync 其上级），然后才返回。写入时如果发现对象或路径上的目录已经存在（可能是并发写入刚刚写的），同样先 fsync 对象所在目录，以及本进程尚未处理过的每级目录的上级，再返回；
 - `PutStream` 边写边计算上传内容的 hash，key 由 hash 决定，所以内容只写一次、最后 rename，内存占用不随文件大小增长；超过大小上限或校验和不符时什么都不保存；
-- 对象按内容寻址：key 上已有大小相符的对象就保留；大小不符或无法检查的对象当作损坏，原子替换为新内容，并记录一条警告日志（全量 hash 的后台巡检以后再做）。
+- 对象按内容寻址：key 上已有大小相符的对象就保留；大小不符或无法检查的对象当作损坏，原子替换为新内容，并记录一条警告日志（全量 hash 的后台巡检以后再做）。下载开始前先检查存储对象的大小：对象缺失或损坏时返回 `410 blob_missing` 并记录警告，不会返回被截断的内容。
 
 树节点通过 tree store（`internal/treestore`）存取：它把 zstd 压缩后的 canonical 字节存在同一个 BlobStore 的 `tree/<hh>/<hex>.json.zst` 下。
 

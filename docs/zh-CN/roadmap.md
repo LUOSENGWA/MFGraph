@@ -12,7 +12,7 @@
 
 ## M1 — 核心（G1）
 
-- **M1.0a** — **已完成**：单 workspace / 单 branch（`main`）/ POSIX 本地盘 / 整文件对象；`上传 → 提交 → 浏览/下载 → diff → 恢复 → 重启`；REST 与薄 CLI。9 个验收用例（`test/e2e`）在 CI 中于 MySQL 8.0 和 seekdb 上通过。
+- **M1.0a** — **已完成**：单 workspace / 单 branch（`main`）/ POSIX 本地盘 / 整文件对象；`上传 → 提交 → 浏览/下载 → diff → 恢复 → 重启`；REST 与薄 CLI。验收测试（`test/e2e`：9 条验收标准、一个恢复与提交的竞争用例和 CLI 冒烟测试）在 CI 中于 MySQL 8.0 和 seekdb 上通过。
 - **M1.0b**：chunk/pack（不压缩）、断点续传与分片上传、预签名与 S3、锁/fencing、GC、配额、project commit、MCP、outbox 发布器。
 - **M1.1**：硬化——角色、按名字创建分支、完整 CLI。
 - 门：1 GiB 上传服务端不缓冲；kill -9 后无半成品 snapshot；两并发 commit 只有一个 CAS 成功；锁 fencing；GC 不删已提交快照；POSIX + S3 contract test 全绿。
@@ -23,7 +23,8 @@
 - **上传。** `PUT /workspaces/{id}/objects` 流式接收整个文件（边写临时文件边计算 hash，最后只 rename 一次；内存占用不随文件大小增长），校验 `X-Content-SHA256`，对象可靠落盘之后才记录暂存 blob。上限：每个请求 1 GiB（`MFGRAPH_MAX_UPLOAD_BYTES`）。
 - **提交。** `POST /workspaces/{id}/commits` 按[规范](../spec/zh-CN/content-format.md)的路径规则把最多 10000 条改动（`MFGRAPH_MAX_COMMIT_CHANGES`）应用到分支 head，只重写改动路径上的目录，并在一个事务里记录快照、父快照、分支 compare-and-swap、blob 转 live 和 outbox 事件。所有 POST 都支持 `Idempotency-Key`。
 - **读取。** 快照元数据、时间线（新的在前，可按分支过滤）、目录列表（分页目录不会整个读入）、下载（ETag、`If-None-Match`、单段 Range）、按路径顺序的 diff（相同的子树和页直接跳过）。
-- **恢复**整个快照（原样复用其树）或其中一个路径，生成以分支 head 为父快照的新快照。
+- **恢复**整个快照（原样复用其树）或其中一个路径，生成以分支 head 为父快照的新快照。head 对应目录里没有的恢复名字，不能与该目录已有的名字有大小写冲突。
+- **请求。** JSON 请求体必须是 `application/json`、单个 JSON 值，最多 `MFGRAPH_MAX_JSON_BODY_BYTES`（16 MiB）；下载是带 `nosniff` 的附件，开始前先检查存储对象；请求在租约期内持有其 `Idempotency-Key`（`MFGRAPH_IDEMPOTENCY_LEASE`，60 秒），之后重试的请求会接管；数据库的锁等待超时和死锁返回 503 并带 `Retry-After: 1`。
 - **运维。** 必须连数据库（没有数据库时服务返回 503）；监听 TCP 或 Unix domain socket；API 路径前缀可配置；`/readyz` 报告 Unicode 版本 V 和服务版本；8 秒内优雅退出；日志假名使用部署自己的密钥。
 
 ### M1.0a：范围与偏差
@@ -41,7 +42,11 @@
 | 垃圾回收 | 不做，孤立对象和暂存上传会累积 | GC | M1.0b |
 | 长路径查询 | `GET` 加 `path` 查询参数（最长 4096 字节） | 需要时新增 `POST` 形式的接口 | 以后 |
 | 存储前缀嵌套 | 默认前缀段数固定，不会嵌套 | 宿主平台自选前缀时检查 | M2 |
-| 存储对象巡检 | 每次写入时按大小检查已有对象 | 后台全量 hash 巡检 | M4 |
+| 存储对象巡检 | 每次写入和每次下载前按大小检查已有对象 | 后台全量 hash 巡检 | M4 |
+| 大目录 | 新建名字的提交或恢复为做大小写检查会读入整个目录；不限制单个请求缓存的节点数，也不限制并发请求数 | 单请求节点缓存上限和并发限制 | M1.0b |
+| 慢速上传 | 只限制大小；没有最低速率、总时长和连接数限制 | 最低速率、总超时和连接数限制 | M1.0b |
+| 崩溃一致性 | 可靠写入（fsync 加 rename，先写对象再写数据库） | G1 门中的 kill -9 一致性测试 | M1.0b |
+| 过期的幂等记录 | 同一 key 再次使用时替换，否则保留 | 由垃圾回收删除 | M1.0b |
 
 ## M2 — 集成（G2）
 

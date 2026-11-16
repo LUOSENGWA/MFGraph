@@ -14,9 +14,9 @@ Capabilities
 The first core slice implements `PutIfAbsent`, `PutStream`, `Get` (with ranges), `Stat` and `Delete` (`internal/ports`), in memory for tests and on a POSIX file system (`internal/blob/posix`):
 
 - an object is the file `<root>/<storage prefix>/<key>`; keys with empty, `.` or `..` segments, backslashes or NUL bytes are refused;
-- a put writes a temporary file on the same file system (`.tmp-*.part`, created with `O_EXCL`), fsyncs it, renames it to its final name and fsyncs the directory (and the parents of new directories) before it returns;
+- a put writes a temporary file on the same file system (`.tmp-*.part`, created with `O_EXCL`), fsyncs it, renames it to its final name and fsyncs the directory (and the parents of new directories) before it returns. A put that finds the object, or a directory on its way, already there (possibly written a moment ago by a concurrent put) fsyncs the object's directory, and the parent of every directory the process has not handled before, before it returns too;
 - `PutStream` hashes an upload while it writes it; the key follows from the hash, so the bytes are written once and renamed, and memory use does not grow with the size; a size limit or a checksum mismatch stores nothing;
-- objects are content-addressed: an existing object of the expected size is kept; one of another size, or one that cannot be examined, is treated as damaged and replaced atomically, with a warning in the log (a background audit of full hashes comes later).
+- objects are content-addressed: an existing object of the expected size is kept; one of another size, or one that cannot be examined, is treated as damaged and replaced atomically, with a warning in the log (a background audit of full hashes comes later). A download checks the size of the stored object before it starts: a missing or damaged object gives `410 blob_missing` and a warning, never a truncated response.
 
 Tree nodes go through the tree store (`internal/treestore`), which keeps the zstd-compressed canonical bytes in the same blob store under `tree/<hh>/<hex>.json.zst`.
 

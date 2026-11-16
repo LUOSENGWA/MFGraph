@@ -12,7 +12,7 @@
 
 ## M1 — core (G1)
 
-- **M1.0a** — **done**: single workspace / single branch (`main`) / POSIX local disk / whole-file objects; `upload → commit → browse/download → diff → restore → restart`; REST and a thin CLI. The nine acceptance tests (`test/e2e`) pass on MySQL 8.0 and on seekdb in CI.
+- **M1.0a** — **done**: single workspace / single branch (`main`) / POSIX local disk / whole-file objects; `upload → commit → browse/download → diff → restore → restart`; REST and a thin CLI. The acceptance tests (`test/e2e`: the nine acceptance criteria, a restore/commit race and a CLI smoke test) pass on MySQL 8.0 and on seekdb in CI.
 - **M1.0b**: chunk/pack (uncompressed), resumable and multipart upload, presigned URLs and S3, locks/fencing, GC, quotas, project commit, MCP, an outbox publisher.
 - **M1.1**: hardening — roles, branches by name, a full CLI.
 - exit: 1 GiB upload without server-side buffering; no half snapshot after kill -9; two concurrent commits → one CAS win; lock fencing; GC never deletes committed snapshots; POSIX + S3 contract tests green.
@@ -23,7 +23,8 @@
 - **Uploads.** `PUT /workspaces/{id}/objects` streams a whole file (hashed while it is written to a temporary file, then renamed once; memory use does not grow with the size), checks `X-Content-SHA256`, and records a staged blob only after the object is durable. Limit: 1 GiB per request (`MFGRAPH_MAX_UPLOAD_BYTES`).
 - **Commits.** `POST /workspaces/{id}/commits` applies up to 10,000 changes (`MFGRAPH_MAX_COMMIT_CHANGES`) to the branch head with the path rules of the [specification](spec/content-format.md#26-applying-the-rules), rewrites only the directories on the changed paths, and records snapshot, parent, branch compare-and-swap, live blobs and outbox events in one transaction. `Idempotency-Key` is honoured on every POST.
 - **Reads.** Snapshot metadata, timeline (newest first, per branch), directory listings (a paged directory is never read as a whole), downloads with ETag, `If-None-Match` and single byte ranges, diffs in path order (equal subtrees and pages are skipped).
-- **Restore** of a whole snapshot (its tree reused as is) or of one path, as a new snapshot whose parent is the branch head.
+- **Restore** of a whole snapshot (its tree reused as is) or of one path, as a new snapshot whose parent is the branch head. A restored name that the head's directory does not have must not conflict in case with the names there.
+- **Requests.** JSON bodies are `application/json`, one JSON value, at most `MFGRAPH_MAX_JSON_BODY_BYTES` (16 MiB); downloads are attachments with `nosniff` and check the stored object before they start; a request holds its `Idempotency-Key` for a lease (`MFGRAPH_IDEMPOTENCY_LEASE`, 60 s), after which a retry takes over; lock wait timeouts and deadlocks of the database are answered with 503 and `Retry-After: 1`.
 - **Operations.** A database is required (without one the service answers 503); TCP or Unix domain socket; a configurable API prefix; `/readyz` reports the Unicode version V and the build version; graceful shutdown within 8 s; log pseudonyms keyed per deployment.
 
 ### M1.0a: scope and deviations
@@ -41,7 +42,11 @@
 | Garbage collection | none; orphaned objects and staged uploads accumulate | GC | M1.0b |
 | Long paths in queries | `GET` with a `path` query parameter (up to 4096 bytes) | a `POST` form when needed | later |
 | Nested storage prefixes | impossible with the default prefixes (fixed number of segments) | checked when a host platform chooses prefixes | M2 |
-| Audit of stored objects | an existing object is checked by size on every put | a background audit of full hashes | M4 |
+| Audit of stored objects | an existing object is checked by size on every put and before every download | a background audit of full hashes | M4 |
+| Large directories | a commit or restore that creates a name reads the whole directory for the case check; no limit on the nodes one request caches, and no limit on concurrent requests | a per-request node cache limit and concurrency limits | M1.0b |
+| Slow uploads | bounded in size; no minimum rate, total time or connection limit | a minimum rate, a total timeout and connection limits | M1.0b |
+| Crash consistency | durable writes (fsync and rename, objects before the database) | a kill -9 consistency test in the G1 gate | M1.0b |
+| Expired idempotency records | replaced when their key is used again, otherwise kept | deleted by garbage collection | M1.0b |
 
 ## M2 — integrations (G2)
 

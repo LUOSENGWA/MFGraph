@@ -56,6 +56,7 @@ Roles:
 - retention/legal hold/WORM for regulated profiles;
 - audit append-only; no tokens/file content in logs.
 - actor references are personal data: log records at info level and above identify a caller only as `actor`, the first 16 hex digits of HMAC-SHA256(key, actor reference) with a key of the deployment (`MFGRAPH_LOG_PSEUDONYM_KEY`, at least 16 bytes), so the records of one actor can be linked without showing who it is, and the pseudonym of a known name cannot be computed without the key. Without a configured key the server uses a random one per start (and warns): pseudonyms then change with every restart, and changing the key has the same effect. The raw reference (and a principal UID, which in a standalone deployment equals it) appears only in debug-level records.
+- **first core slice, requests and responses:** the body of every request but an upload is at most `MFGRAPH_MAX_JSON_BODY_BYTES` (16 MiB) and is never read beyond that limit; JSON bodies must be sent as `application/json` and be one JSON value. Uploads are bounded by `MFGRAPH_MAX_UPLOAD_BYTES`; limits for slow uploads (a minimum rate, a total time, connections per caller) come with M1.0b. Downloads are `application/octet-stream` with `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` (error responses carry nosniff too), so a browser does not render stored content as a page. Project names and workspace display names, like file names, may not contain control characters, bidi controls or invisible characters.
 
 ## Threat model (STRIDE)
 
