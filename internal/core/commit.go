@@ -314,7 +314,8 @@ func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Worksp
 		return CommitResult{}, fmt.Errorf("core: snapshot counts %d files, %d bytes", files, bytes)
 	}
 	snap := ports.Snapshot{ID: s.d.IDs.NewID(), WorkspaceID: ws.ID, ProjectID: ws.ProjectID, BranchID: branch.ID,
-		RefName: branch.RefName, AuthorRef: p.Ref, AuthorPrincipalUID: p.PrincipalUID, Message: r.message,
+		RefName: branch.RefName, AuthorRef: p.Ref, AuthorPrincipalUID: p.PrincipalUID, AuthorType: p.ActorType,
+		OnBehalfOfRef: p.OnBehalfOfRef, OnBehalfOfType: p.OnBehalfOfType, Message: r.message,
 		TriggerKind: r.trigger, RootTreeHash: r.root, TreeFormatVersion: tree.FormatVersion, ParentIDs: parents,
 		EntryCount: files, TotalBytes: bytes, CreatedAtUs: now}
 	result := CommitResult{SnapshotID: snap.ID, BranchID: branch.ID, RefName: branch.RefName, Generation: branch.Generation + 1,

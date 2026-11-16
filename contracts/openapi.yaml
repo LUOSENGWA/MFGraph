@@ -1289,6 +1289,12 @@ components:
           $ref: '#/components/schemas/Timestamp'
     Snapshot:
       type: object
+      description: |
+        A snapshot: an immutable version of the workspace tree. The author is
+        `author_ref` (with `author_type`); when the author acted on behalf of
+        another actor, as a host platform can say, `on_behalf_of_ref` names
+        that actor (with `on_behalf_of_type`). The optional actor fields are
+        omitted (or `null`) when they do not apply; clients treat both alike.
       required: [snapshot_id, workspace_id, project_id, branch_id, ref_name, author_ref, message, trigger_kind,
         root_tree_hash, tree_format_version, parent_ids, entry_count, total_bytes, created_at]
       properties:
@@ -1316,6 +1322,27 @@ components:
             ULID of the author when it is known (in a standalone deployment the
             ULID whose string form is `author_ref`); `null` until a host
             platform provides ULIDs for its actors.
+        author_type:
+          type: string
+          nullable: true
+          pattern: '^[a-z0-9_-]{1,16}$'
+          description: |
+            Type of the author as the host platform names it (for example
+            `human` or `worker`): actors of different types may have the same
+            reference. Omitted in a standalone deployment, which has no actor
+            types.
+        on_behalf_of_ref:
+          $ref: '#/components/schemas/ActorRef'
+        on_behalf_of_principal_uid:
+          type: string
+          nullable: true
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+          description: ULID of the actor of `on_behalf_of_ref` when it is known; omitted until a host platform provides ULIDs.
+        on_behalf_of_type:
+          type: string
+          nullable: true
+          pattern: '^[a-z0-9_-]{1,16}$'
+          description: Type of the actor of `on_behalf_of_ref` when the host platform gives one; omitted otherwise.
         message:
           type: string
         trigger_kind:

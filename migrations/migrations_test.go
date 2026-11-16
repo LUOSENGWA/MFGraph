@@ -24,7 +24,17 @@ var wantTables = map[string][]string{
 var wantVersions = map[string][]string{
 	"kernel": {"0000_bootstrap", "0001_project_owner"},
 	"mysql": {"0001_workspaces", "0002_workstreams_branches", "0003_snapshots", "0004_blobs",
-		"0006_uploads", "0008_usage_outbox_idempotency"},
+		"0006_uploads", "0008_usage_outbox_idempotency", "0009_actor_types"},
+}
+
+// actorTypeColumns hold the type a host platform gives an actor, next to
+// the actor reference of the same name: VARCHAR(16), nullable (standalone
+// deployments have no types).
+var actorTypeColumns = map[string]string{
+	"snapshots.author_type":       "author_ref",
+	"snapshots.on_behalf_of_type": "on_behalf_of_ref",
+	"idempotency_keys.actor_type": "actor_ref",
+	"workspaces.owner_type":       "owner_ref",
 }
 
 // byteColumns hold names, paths, refs and keys that are compared byte for
@@ -180,6 +190,17 @@ func TestMigrationFiles(t *testing.T) {
 	for table, body := range bodies {
 		checkColumns(t, created[table], table, body, seenByteColumns)
 		checkActorColumns(t, created[table], table, body, seenActorColumns)
+	}
+	for col, ref := range actorTypeColumns {
+		table, name, _ := strings.Cut(col, ".")
+		cols := columns(bodies[table])
+		c, ok := cols[name]
+		if !ok || c.typ != "VARCHAR(16)" || nullability(c.rest) != "NULL" {
+			t.Errorf("actor type column %s must be VARCHAR(16) NULL, is %+v", col, c)
+		}
+		if _, ok := cols[ref]; !ok {
+			t.Errorf("actor type column %s has no actor reference %s.%s", col, table, ref)
+		}
 	}
 	for col := range byteColumns {
 		if !seenByteColumns[col] {

@@ -93,8 +93,14 @@ func TestModuleContainment(t *testing.T) {
 	type call func(p ports.Principal, id string) error
 	onWorkspace := map[string]call{
 		"get workspace": func(p ports.Principal, id string) error { _, err := e.svc.GetWorkspace(ctx, p, id); return err },
-		"branches":      func(p ports.Principal, id string) error { _, _, err := e.svc.ListBranches(ctx, p, id, core.Page{}); return err },
-		"timeline":      func(p ports.Principal, id string) error { _, _, err := e.svc.Timeline(ctx, p, id, "", core.Page{}); return err },
+		"branches": func(p ports.Principal, id string) error {
+			_, _, err := e.svc.ListBranches(ctx, p, id, core.Page{})
+			return err
+		},
+		"timeline": func(p ports.Principal, id string) error {
+			_, _, err := e.svc.Timeline(ctx, p, id, "", core.Page{})
+			return err
+		},
 		"upload": func(p ports.Principal, id string) error {
 			_, _, err := e.svc.PutObject(ctx, p, core.PutObjectRequest{WorkspaceID: id, Body: strings.NewReader("x"), ContentLength: -1})
 			return err
@@ -107,9 +113,15 @@ func TestModuleContainment(t *testing.T) {
 	}
 	onSnapshot := map[string]call{
 		"snapshot": func(p ports.Principal, id string) error { _, err := e.svc.GetSnapshot(ctx, p, id); return err },
-		"tree":     func(p ports.Principal, id string) error { _, err := e.svc.ListTree(ctx, p, id, "", core.Page{}); return err },
-		"file":     func(p ports.Principal, id string) error { _, err := e.svc.GetFile(ctx, p, id, "a.txt"); return err },
-		"diff":     func(p ports.Principal, id string) error { _, err := e.svc.Diff(ctx, p, id, "", core.Page{}); return err },
+		"tree": func(p ports.Principal, id string) error {
+			_, err := e.svc.ListTree(ctx, p, id, "", core.Page{})
+			return err
+		},
+		"file": func(p ports.Principal, id string) error { _, err := e.svc.GetFile(ctx, p, id, "a.txt"); return err },
+		"diff": func(p ports.Principal, id string) error {
+			_, err := e.svc.Diff(ctx, p, id, "", core.Page{})
+			return err
+		},
 		"restore": func(p ports.Principal, id string) error {
 			_, err := e.svc.Restore(ctx, p, id, core.RestoreRequest{BranchID: branch, ExpectedGeneration: 2}, "")
 			return err
@@ -152,5 +164,60 @@ func TestModuleContainment(t *testing.T) {
 	// Another actor of the same project sees everything.
 	if _, err := e.svc.GetSnapshot(ctx, workerP, snap); err != nil {
 		t.Fatalf("another actor of the project: %v", err)
+	}
+}
+
+// TestActorTypes: module mode records the actor types and the actor acted
+// for with the snapshot and the workspace; an idempotency record is
+// replayed only to an actor of the same type (no type and no type match).
+func TestActorTypes(t *testing.T) {
+	e := newModuleEnv(t, core.Config{})
+	sd := e.moduleSeed(workerP)
+	snap, err := e.svc.GetSnapshot(ctx, workerP, sd.first.SnapshotID)
+	if err != nil || snap.AuthorRef != "worker-7" || snap.AuthorType != "worker" || snap.OnBehalfOfRef != "manager" ||
+		snap.OnBehalfOfType != "human" || snap.AuthorPrincipalUID != "" {
+		t.Fatalf("snapshot actors: %+v %v", snap, err)
+	}
+	if ws, err := e.store.GetWorkspace(ctx, nil, sd.ws.Workspace.ID); err != nil || ws.OwnerRef != "worker-7" || ws.OwnerType != "worker" {
+		t.Fatalf("workspace owner: %+v %v", ws, err)
+	}
+
+	// The same reference with another type is another actor.
+	humanWorker := ports.Principal{Ref: "worker-7", ActorType: "human", ProjectScope: projP}
+	untyped := ports.Principal{Ref: "worker-7", ProjectScope: projP}
+	req := core.CreateWorkspaceRequest{ProjectID: projP, DisplayName: "idem"}
+	first, err := e.svc.CreateWorkspace(ctx, workerP, req, "key-1")
+	e.must(err)
+	again, err := e.svc.CreateWorkspace(ctx, workerP, req, "key-1")
+	if err != nil || again.Workspace.ID != first.Workspace.ID {
+		t.Fatalf("replay to the same actor: %+v %v", again, err)
+	}
+	for _, p := range []ports.Principal{humanWorker, untyped} {
+		_, err := e.svc.CreateWorkspace(ctx, p, req, "key-1")
+		wantCode(t, "replay to an actor of type "+p.ActorType, err, core.CodeIdempotencyKeyReuse)
+	}
+	// An untyped record replays to the untyped actor only.
+	u1, err := e.svc.CreateWorkspace(ctx, untyped, req, "key-2")
+	e.must(err)
+	if u2, err := e.svc.CreateWorkspace(ctx, untyped, req, "key-2"); err != nil || u2.Workspace.ID != u1.Workspace.ID {
+		t.Fatalf("untyped replay: %+v %v", u2, err)
+	}
+	_, err = e.svc.CreateWorkspace(ctx, workerP, req, "key-2")
+	wantCode(t, "typed actor on an untyped record", err, core.CodeIdempotencyKeyReuse)
+	// Once expired, the record of the other type is replaced.
+	e.clock.Advance(25 * time.Hour)
+	if r, err := e.svc.CreateWorkspace(ctx, humanWorker, req, "key-1"); err != nil || r.Workspace.ID == first.Workspace.ID {
+		t.Fatalf("after expiry: %+v %v", r, err)
+	}
+}
+
+// TestStandaloneHasNoActorTypes: standalone principals have no type, so
+// nothing is recorded.
+func TestStandaloneHasNoActorTypes(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	sd := e.seed(alice)
+	snap, err := e.svc.GetSnapshot(ctx, alice, sd.first.SnapshotID)
+	if err != nil || snap.AuthorType != "" || snap.OnBehalfOfRef != "" || snap.OnBehalfOfType != "" {
+		t.Fatalf("standalone snapshot: %+v %v", snap, err)
 	}
 }

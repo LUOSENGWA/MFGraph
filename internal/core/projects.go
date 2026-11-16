@@ -116,7 +116,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 			return WorkspaceView{}, err
 		}
 		ws := ports.Workspace{ID: id, TenantID: proj.TenantID, ProjectID: proj.ID, Type: ports.WorkspaceTypeProject,
-			OwnerRef: p.Ref, OwnerPrincipalUID: p.PrincipalUID, StorageBackendID: s.cfg.StorageBackendID,
+			OwnerRef: p.Ref, OwnerPrincipalUID: p.PrincipalUID, OwnerType: p.ActorType, StorageBackendID: s.cfg.StorageBackendID,
 			StoragePrefix: prefix, StoragePrefixKey: storagekey.PrefixKey(prefix), DisplayName: req.DisplayName,
 			Status: ports.StatusActive, CreatedAtUs: now, UpdatedAtUs: now}
 		main := ports.Branch{ID: s.d.IDs.NewID(), WorkspaceID: id, ProjectID: proj.ID, Name: ports.MainRefName,

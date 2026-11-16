@@ -70,6 +70,7 @@ type Workspace struct {
 	Type              string
 	OwnerRef          string
 	OwnerPrincipalUID string // "" = NULL
+	OwnerType         string // the actor type of OwnerRef; "" = NULL
 	StorageBackendID  string
 	StoragePrefix     string
 	StoragePrefixKey  string // storagekey.PrefixKey(StoragePrefix)
@@ -108,14 +109,20 @@ type Snapshot struct {
 	RefName            string
 	AuthorRef          string
 	AuthorPrincipalUID string // "" = NULL
-	Message            string
-	TriggerKind        string
-	RootTreeHash       contenthash.Hash
-	TreeFormatVersion  int
-	ParentIDs          []string
-	EntryCount         int64 // number of files
-	TotalBytes         int64 // sum of the file sizes
-	CreatedAtUs        int64
+	AuthorType         string // the actor type of AuthorRef; "" = NULL
+	// OnBehalfOfRef is the actor the author acted for; "" = NULL. Its
+	// principal UID is not known yet (always NULL) and its type may be
+	// unknown.
+	OnBehalfOfRef     string
+	OnBehalfOfType    string // "" = NULL
+	Message           string
+	TriggerKind       string
+	RootTreeHash      contenthash.Hash
+	TreeFormatVersion int
+	ParentIDs         []string
+	EntryCount        int64 // number of files
+	TotalBytes        int64 // sum of the file sizes
+	CreatedAtUs       int64
 }
 
 // Blob is a row of blobs: one content object of a workspace. StorageKey is
@@ -130,10 +137,13 @@ type Blob struct {
 }
 
 // IdempotencyRecord is a row of idempotency_keys, keyed by (ActorRef,
-// Route, Key). RequestHash is the lowercase hex SHA-256 of the normalized
-// request; Response is the stored response body once Status is completed.
+// Route, Key). ActorType is the type of the actor that created it ("" =
+// NULL): a record is only replayed to an actor of the same type.
+// RequestHash is the lowercase hex SHA-256 of the normalized request;
+// Response is the stored response body once Status is completed.
 type IdempotencyRecord struct {
 	ActorRef    string
+	ActorType   string
 	Route       string
 	Key         string
 	RequestHash string

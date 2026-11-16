@@ -82,9 +82,11 @@ func branchJSON(b ports.Branch) gen.Branch {
 
 func snapshotJSON(s ports.Snapshot) gen.Snapshot {
 	return gen.Snapshot{SnapshotId: s.ID, WorkspaceId: s.WorkspaceID, ProjectId: s.ProjectID, BranchId: nullable(s.BranchID),
-		RefName: s.RefName, AuthorRef: s.AuthorRef, AuthorPrincipalUid: nullable(s.AuthorPrincipalUID), Message: s.Message,
-		TriggerKind: s.TriggerKind, RootTreeHash: s.RootTreeHash.String(), TreeFormatVersion: int32(s.TreeFormatVersion),
-		ParentIds: append([]string{}, s.ParentIDs...), EntryCount: s.EntryCount, TotalBytes: s.TotalBytes, CreatedAt: ts(s.CreatedAtUs)}
+		RefName: s.RefName, AuthorRef: s.AuthorRef, AuthorPrincipalUid: nullable(s.AuthorPrincipalUID),
+		AuthorType: nullable(s.AuthorType), OnBehalfOfRef: nullable(s.OnBehalfOfRef), OnBehalfOfType: nullable(s.OnBehalfOfType),
+		Message: s.Message, TriggerKind: s.TriggerKind, RootTreeHash: s.RootTreeHash.String(),
+		TreeFormatVersion: int32(s.TreeFormatVersion), ParentIds: append([]string{}, s.ParentIDs...), EntryCount: s.EntryCount,
+		TotalBytes: s.TotalBytes, CreatedAt: ts(s.CreatedAtUs)}
 }
 
 func commitJSON(r core.CommitResult) gen.CommitResult {

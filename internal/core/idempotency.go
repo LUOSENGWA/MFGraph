@@ -51,11 +51,15 @@ type completer func(ctx context.Context, tx ports.Tx, response any) error
 
 // idempotent runs an operation under an Idempotency-Key (contract,
 // "Idempotency"): the record is identified by actor reference, route and
-// key and carries the hash of the request.
+// key and carries the actor type and the hash of the request.
 //
-//   - A completed record with the same request hash: its response is
-//     returned again, nothing is executed.
-//   - A record with another request hash: idempotency_key_reuse.
+//   - A completed record with the same actor type and request hash: its
+//     response is returned again, nothing is executed.
+//   - A record of an actor of another type (the same reference names a
+//     different actor; no type and no type are the same) or with another
+//     request hash: idempotency_key_reuse. A live record of another actor
+//     is never replayed or taken over (an expired one is replaced like any
+//     other).
 //   - An in-progress record (the same request still running, or a request
 //     whose server stopped) younger than the lease: conflict with reason
 //     in_progress. One that is older is taken over: it is deleted and this
@@ -85,8 +89,8 @@ func idempotent[T any](ctx context.Context, s *Service, p ports.Principal, route
 		return zero, err
 	}
 	now := s.nowUs()
-	rec := ports.IdempotencyRecord{ActorRef: p.Ref, Route: route, Key: key, RequestHash: h, Status: ports.IdempotencyInProgress,
-		CreatedAtUs: now, ExpiresAtUs: now + s.cfg.IdempotencyTTL.Microseconds()}
+	rec := ports.IdempotencyRecord{ActorRef: p.Ref, ActorType: p.ActorType, Route: route, Key: key, RequestHash: h,
+		Status: ports.IdempotencyInProgress, CreatedAtUs: now, ExpiresAtUs: now + s.cfg.IdempotencyTTL.Microseconds()}
 	for attempt := 0; ; attempt++ {
 		err := s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
 			return s.d.Store.InsertIdempotency(ctx, tx, rec)
@@ -110,6 +114,8 @@ func idempotent[T any](ctx context.Context, s *Service, p ports.Principal, route
 				return zero, mapErr(err, "idempotency record")
 			}
 			continue
+		case old.ActorType != p.ActorType:
+			return zero, newError(CodeIdempotencyKeyReuse, "the Idempotency-Key was used by another actor with the same reference", nil)
 		case old.RequestHash != h:
 			return zero, newError(CodeIdempotencyKeyReuse, "the Idempotency-Key was used for a different request", nil)
 		case old.Status != ports.IdempotencyCompleted && now-old.CreatedAtUs >= s.cfg.IdempotencyLease.Microseconds():

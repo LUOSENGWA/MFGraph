@@ -176,6 +176,7 @@ func testWorkspaces(t *testing.T, s Store) {
 	want := workspace(wsA, projA, "default")
 	want.OwnerRef = "a " // trailing space is part of the actor reference
 	want.OwnerPrincipalUID = "01JD3X5Q8Z9W2V4T6R8P0N2M4K"
+	want.OwnerType = "human"
 	tx(t, s, func(tx ports.Tx) error { return s.InsertWorkspace(ctx, tx, want) })
 	got, err := s.GetWorkspace(ctx, nil, wsA)
 	if err != nil || !reflect.DeepEqual(got, want) {
@@ -191,7 +192,8 @@ func testWorkspaces(t *testing.T, s Store) {
 	wantErr(t, "same prefix key on one backend", err, ports.ErrAlreadyExists)
 	dup.StorageBackendID = "other"
 	tx(t, s, func(tx ports.Tx) error { return s.InsertWorkspace(ctx, tx, dup) })
-	if got, err := s.GetWorkspace(ctx, nil, wsB); err != nil || got.StoragePrefix != dup.StoragePrefix || got.OwnerPrincipalUID != "" {
+	if got, err := s.GetWorkspace(ctx, nil, wsB); err != nil || got.StoragePrefix != dup.StoragePrefix || got.OwnerPrincipalUID != "" ||
+		got.OwnerType != "" {
 		t.Fatalf("workspace on another backend: %+v, %v", got, err)
 	}
 	err = s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
@@ -320,7 +322,11 @@ func testSnapshots(t *testing.T, s Store) {
 	child.AuthorRef, child.AuthorPrincipalUID = "01JD3X5Q8Z9W2V4T6R8P0N2M4K", "01JD3X5Q8Z9W2V4T6R8P0N2M4K"
 	child.Message = "\u4e2d\u6587 message with trailing space "
 	child.TriggerKind = ports.TriggerRestore
+	// Actor types, and an actor acted for (a 255-byte reference).
+	child.AuthorType, child.OnBehalfOfType = "worker", "human"
+	child.OnBehalfOfRef = "@" + strings.Repeat("u", 255-len("@:example.com")) + ":example.com"
 	merge := snapshot("01JD3X5Q8Z9W2V4T6R8P0N2S03", 30, "", child.ID, root.ID)
+	merge.AuthorType, merge.OnBehalfOfRef = "agent", "manager" // acted for, without a type
 	merge.EntryCount, merge.TotalBytes = 1<<40, 1<<52
 	tx(t, s, func(tx ports.Tx) error {
 		for _, snap := range []ports.Snapshot{root, child, merge} {
@@ -449,8 +455,15 @@ func testIdempotency(t *testing.T, s Store) {
 	tx(t, s, func(tx ports.Tx) error { return s.InsertIdempotency(ctx, tx, rec) })
 	got, err := s.GetIdempotency(ctx, nil, rec.ActorRef, rec.Route, rec.Key)
 	if err != nil || got.Status != ports.IdempotencyInProgress || len(got.Response) != 0 || got.RequestHash != rec.RequestHash ||
-		got.CreatedAtUs != 100 || got.ExpiresAtUs != 200 {
+		got.CreatedAtUs != 100 || got.ExpiresAtUs != 200 || got.ActorType != "" {
 		t.Fatalf("GetIdempotency = %+v, %v", got, err)
+	}
+	// The actor type is kept.
+	typed := rec
+	typed.Key, typed.ActorType = "k-typed", "worker"
+	tx(t, s, func(tx ports.Tx) error { return s.InsertIdempotency(ctx, tx, typed) })
+	if got, err := s.GetIdempotency(ctx, nil, typed.ActorRef, typed.Route, typed.Key); err != nil || got.ActorType != "worker" {
+		t.Fatalf("typed record = %+v, %v", got, err)
 	}
 	err = s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return s.InsertIdempotency(ctx, tx, rec) })
 	wantErr(t, "duplicate idempotency record", err, ports.ErrAlreadyExists)

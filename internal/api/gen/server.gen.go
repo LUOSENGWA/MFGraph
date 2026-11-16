@@ -507,7 +507,11 @@ type RestoreRequest struct {
 	Path *FilePath `json:"path,omitempty"`
 }
 
-// Snapshot defines model for Snapshot.
+// Snapshot A snapshot: an immutable version of the workspace tree. The author is
+// `author_ref` (with `author_type`); when the author acted on behalf of
+// another actor, as a host platform can say, `on_behalf_of_ref` names
+// that actor (with `on_behalf_of_type`). The optional actor fields are
+// omitted (or `null`) when they do not apply; clients treat both alike.
 type Snapshot struct {
 	// AuthorPrincipalUid ULID of the author when it is known (in a standalone deployment the
 	// ULID whose string form is `author_ref`); `null` until a host
@@ -528,6 +532,12 @@ type Snapshot struct {
 	// Example: manager
 	AuthorRef ActorRef `json:"author_ref"`
 
+	// AuthorType Type of the author as the host platform names it (for example
+	// `human` or `worker`): actors of different types may have the same
+	// reference. Omitted in a standalone deployment, which has no actor
+	// types.
+	AuthorType *string `json:"author_type,omitempty"`
+
 	// BranchId Branch the snapshot was created on.
 	BranchId *string `json:"branch_id"`
 
@@ -539,7 +549,27 @@ type Snapshot struct {
 	// EntryCount Number of files.
 	EntryCount int64  `json:"entry_count"`
 	Message    string `json:"message"`
-	ParentIds  []ULID `json:"parent_ids"`
+
+	// OnBehalfOfPrincipalUid ULID of the actor of `on_behalf_of_ref` when it is known; omitted until a host platform provides ULIDs.
+	OnBehalfOfPrincipalUid *string `json:"on_behalf_of_principal_uid,omitempty"`
+
+	// OnBehalfOfRef Actor reference: the identity string of whoever performed an operation
+	// (the authenticated caller, or the actor it acted on behalf of). A host
+	// platform passes its own identity strings, for example a worker name, a
+	// user name such as `manager`, or an ID such as `@alice:example.com`; in
+	// a standalone deployment it is the string form of the principal's ULID.
+	// Non-empty valid UTF-8, at most 255 bytes (not characters), no control
+	// characters (U+0000-U+001F, U+007F-U+009F). Stored exactly as given and
+	// compared byte for byte: no Unicode normalization, no case folding, no
+	// check that it is a ULID (`a` and `a ` are two actors).
+	//
+	//
+	// Example: manager
+	OnBehalfOfRef *ActorRef `json:"on_behalf_of_ref,omitempty"`
+
+	// OnBehalfOfType Type of the actor of `on_behalf_of_ref` when the host platform gives one; omitted otherwise.
+	OnBehalfOfType *string `json:"on_behalf_of_type,omitempty"`
+	ParentIds      []ULID  `json:"parent_ids"`
 
 	// ProjectId ULID, 26 uppercase Crockford base32 characters.
 	//
