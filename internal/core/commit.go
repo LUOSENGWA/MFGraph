@@ -292,10 +292,16 @@ type record struct {
 	event        string
 }
 
-// record runs the transaction of a commit or a restore.
+// record runs the transaction of a commit or a restore. A snapshot is never
+// older than its parent: when the clock is behind the parent's time (a
+// clock set back, or another server's clock ahead), it gets the parent's
+// time plus one microsecond.
 func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Workspace, branch ports.Branch, head base, r record,
 	complete completer) (CommitResult, error) {
 	now := s.nowUs()
+	if head.snap.ID != "" && now <= head.snap.CreatedAtUs {
+		now = head.snap.CreatedAtUs + 1
+	}
 	parents := []string{}
 	files, bytes := head.snap.EntryCount+r.delta.Files, head.snap.TotalBytes+r.delta.Bytes
 	if head.snap.ID != "" {

@@ -749,3 +749,33 @@ func TestUploadLimitAtInt64Max(t *testing.T) {
 		t.Fatalf("content stored with the limit MaxInt64: %q", got)
 	}
 }
+
+// TestSnapshotTimesNeverGoBack: a snapshot is never older than its parent,
+// even when the clock goes back.
+func TestSnapshotTimesNeverGoBack(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	sd := e.seed(alice)
+	id := sd.ws.Workspace.ID
+	e.clock.Advance(-time.Hour)
+	second := e.commit(alice, id, sd.branch, 2, put("c.txt", e.upload(alice, id, "c")))
+	third := e.commit(alice, id, sd.branch, 3, put("d.txt", e.upload(alice, id, "d")))
+	restored, err := e.svc.Restore(ctx, alice, sd.first.SnapshotID, core.RestoreRequest{BranchID: sd.branch, ExpectedGeneration: 4}, "")
+	e.must(err)
+	for i, pair := range [][2]int64{{sd.first.CreatedAtUs, second.CreatedAtUs}, {second.CreatedAtUs, third.CreatedAtUs},
+		{third.CreatedAtUs, restored.CreatedAtUs}} {
+		if pair[1] != pair[0]+1 {
+			t.Errorf("snapshot %d: created at %d, parent at %d; want the parent's time plus 1", i+2, pair[1], pair[0])
+		}
+	}
+	snap, err := e.svc.GetSnapshot(ctx, alice, restored.SnapshotID)
+	e.must(err)
+	if snap.CreatedAtUs != restored.CreatedAtUs {
+		t.Errorf("stored time %d, returned %d", snap.CreatedAtUs, restored.CreatedAtUs)
+	}
+	// A clock that is ahead again is used as it is.
+	e.clock.Advance(2 * time.Hour)
+	fourth := e.commit(alice, id, sd.branch, 5, put("e.txt", e.upload(alice, id, "e")))
+	if fourth.CreatedAtUs != e.clock.Now().UnixMicro() {
+		t.Errorf("created at %d, clock %d", fourth.CreatedAtUs, e.clock.Now().UnixMicro())
+	}
+}
