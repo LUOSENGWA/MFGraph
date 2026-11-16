@@ -367,7 +367,8 @@ func TestCheckUnicodeVersions(t *testing.T) {
 }
 
 func TestAllowedAndRejectedCharacters(t *testing.T) {
-	allowed := []rune{0x200c, 0x200d, 0xff0f, 0xe000, 0x00a0, 0xfe00, 0xfe0e, 0xfe0f, 0xe0020, 0xe0067, 0xe007f, 0x034f}
+	allowed := []rune{0x200c, 0x200d, 0xff0f, 0xe000, 0x00a0, 0xfe00, 0xfe0e, 0xfe0f, 0xe0020, 0xe0067, 0xe007f, 0x034f,
+		0x1161, 0x3165, 0xffa1, 0x2070} // the neighbours of the fillers and of U+206A-U+206F
 	for _, r := range allowed {
 		if _, err := pathx.NormalizeSegment("a" + string(r) + "b"); err != nil {
 			t.Errorf("%U must be allowed: %v", r, err)
@@ -382,6 +383,12 @@ func TestAllowedAndRejectedCharacters(t *testing.T) {
 		0x2028: pathx.KindDisallowedChar, 0x2029: pathx.KindDisallowedChar, 0x2061: pathx.KindDisallowedChar,
 		0x2062: pathx.KindDisallowedChar, 0x2063: pathx.KindDisallowedChar, 0x2064: pathx.KindDisallowedChar,
 		0xfff9: pathx.KindDisallowedChar, 0xfffa: pathx.KindDisallowedChar, 0xfffb: pathx.KindDisallowedChar,
+		// Added after the format freeze (write time only).
+		0x115f: pathx.KindDisallowedChar, 0x1160: pathx.KindDisallowedChar, 0x3164: pathx.KindDisallowedChar,
+		0xffa0: pathx.KindDisallowedChar, 0x206a: pathx.KindDisallowedChar, 0x206b: pathx.KindDisallowedChar,
+		0x206c: pathx.KindDisallowedChar, 0x206d: pathx.KindDisallowedChar, 0x206e: pathx.KindDisallowedChar,
+		0x206f: pathx.KindDisallowedChar, 0xe0001: pathx.KindDisallowedChar,
+		0xe0002: pathx.KindUnassignedChar,
 		0x0378: pathx.KindUnassignedChar, 0x1fffd: pathx.KindUnassignedChar,
 		0xfffe: pathx.KindNoncharacter, 0xfdd0: pathx.KindNoncharacter, 0x10ffff: pathx.KindNoncharacter,
 	}

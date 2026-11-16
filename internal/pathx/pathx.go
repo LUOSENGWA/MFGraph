@@ -187,7 +187,11 @@ func isNoncharacter(r rune) bool { return 0xfdd0 <= r && r <= 0xfdef || r&0xfffe
 //     MONGOLIAN VOWEL SEPARATOR, U+200B ZERO WIDTH SPACE, U+2028 LINE
 //     SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+2060 WORD JOINER,
 //     U+2061-U+2064 invisible mathematical operators, U+FEFF ZERO WIDTH
-//     NO-BREAK SPACE, U+FFF9-U+FFFB interlinear annotation controls.
+//     NO-BREAK SPACE, U+FFF9-U+FFFB interlinear annotation controls;
+//   - added after format 1 was frozen (write-time rules may only become
+//     stricter): the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0,
+//     which display as blanks, the deprecated format characters
+//     U+206A-U+206F, and U+E0001 LANGUAGE TAG (deprecated).
 //
 // It is a fixed list, not the whole format category Cf. Deliberately allowed:
 // U+200C ZWNJ and U+200D ZWJ (emoji sequences, several scripts), the
@@ -198,17 +202,22 @@ func isDisallowed(r rune) bool {
 	switch r {
 	case 0x00ad, // SOFT HYPHEN
 		0x061c,         // ARABIC LETTER MARK
+		0x115f, 0x1160, // HANGUL CHOSEONG / JUNGSEONG FILLER
 		0x180e,         // MONGOLIAN VOWEL SEPARATOR
 		0x200b,         // ZERO WIDTH SPACE
 		0x200e, 0x200f, // LEFT-TO-RIGHT / RIGHT-TO-LEFT MARK
 		0x2028, 0x2029, // LINE / PARAGRAPH SEPARATOR
-		0x2060, // WORD JOINER
-		0xfeff: // ZERO WIDTH NO-BREAK SPACE (byte order mark)
+		0x2060,  // WORD JOINER
+		0x3164,  // HANGUL FILLER
+		0xfeff,  // ZERO WIDTH NO-BREAK SPACE (byte order mark)
+		0xffa0,  // HALFWIDTH HANGUL FILLER
+		0xe0001: // LANGUAGE TAG
 		return true
 	}
 	return 0x202a <= r && r <= 0x202e || // embeddings and overrides LRE..RLO
 		0x2061 <= r && r <= 0x2064 || // invisible mathematical operators
 		0x2066 <= r && r <= 0x2069 || // isolates LRI..PDI
+		0x206a <= r && r <= 0x206f || // deprecated format characters (symmetric swapping, shaping, digit shapes)
 		0xfff9 <= r && r <= 0xfffb // interlinear annotation controls
 }
 

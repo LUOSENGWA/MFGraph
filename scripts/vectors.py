@@ -136,11 +136,15 @@ def _decode(raw):
 # bidirectional formatting characters U+061C, U+200E, U+200F, U+202A-U+202E,
 # U+2066-U+2069, and invisible or layout-breaking characters U+00AD, U+180E,
 # U+200B, U+2028, U+2029, U+2060, U+2061-U+2064, U+FEFF, U+FFF9-U+FFFB.
+# Added after format 1 was frozen (write-time rules only become stricter):
+# the Hangul fillers U+115F, U+1160, U+3164, U+FFA0, the deprecated format
+# characters U+206A-U+206F and U+E0001 LANGUAGE TAG.
 # Allowed on purpose: ZWNJ U+200C, ZWJ U+200D, variation selectors
 # U+FE00-U+FE0F, tag characters U+E0020-U+E007F, CGJ U+034F.
 DISALLOWED = ({0x00AD, 0x061C, 0x180E, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0x2060, 0xFEFF}
               | set(range(0x202A, 0x202F)) | set(range(0x2061, 0x2065))
-              | set(range(0x2066, 0x206A)) | set(range(0xFFF9, 0xFFFC)))
+              | set(range(0x2066, 0x206A)) | set(range(0xFFF9, 0xFFFC))
+              | {0x115F, 0x1160, 0x3164, 0xFFA0, 0xE0001} | set(range(0x206A, 0x2070)))
 
 
 def is_noncharacter(o):
@@ -1127,7 +1131,9 @@ def review_pathx(lines):
               "(backslash; control_char = U+0000–U+001F, U+007F–U+009F; noncharacter = U+FDD0–U+FDEF and "
               "U+xxFFFE/U+xxFFFF (66 code points); disallowed_char = the fixed list: bidi "
               "controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 and invisible characters U+00AD, "
-              "U+180E, U+200B, U+2028, U+2029, U+2060, U+2061–U+2064, U+FEFF, U+FFF9–U+FFFB; "
+              "U+180E, U+200B, U+2028, U+2029, U+2060, U+2061–U+2064, U+FEFF, U+FFF9–U+FFFB, and since M1.0a the Hangul "
+              "fillers U+115F, U+1160, U+3164, U+FFA0, the deprecated format characters U+206A–U+206F and "
+              "U+E0001 LANGUAGE TAG; "
               "unassigned_char = general category Cn in Unicode 15.0.0) → NFC → "
               "empty / `.` / `..` segments → segment ≤ 255 B and path ≤ 4096 B (NFC bytes). First failure wins.", "",
               "### 2.1 Normalize", "", "| name | input | result |", "|---|---|---|"]
@@ -1299,7 +1305,7 @@ REVIEW_COVERAGE = """## 4. Coverage checklist
 | tree: Build → Walk restores the input | every case in `TestTreeVectors` |
 | tree: strict decoding (read-time rules), bytes in hex, invalid UTF-8, surrogate escapes, more than 1024 items | `decode_invalid`, `FuzzDecode` |
 | tree: whole-tree rules (empty subdirectory, dir_page as a directory, index to a dir, count/first, order across pages, canonical split) | `walk_valid`, `walk_invalid` |
-| path, write time: C1 controls, noncharacters, the fixed disallowed list, unassigned code points; allowed ZWJ/ZWNJ, variation selectors, tag characters, CGJ | `pathx.json` → `c1-control-*`, `noncharacter-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `soft-hyphen-u00ad`, `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`, `function-application-u2061`, `invisible-*`, `interlinear-annotation-*`, `unassigned-*`, `assigned-in-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-noncharacter*`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`, `reject-interlinear-annotation`, `allowed-zwj-zwnj-fullwidth-reserved-names`, `allowed-variation-selectors-tags-cgj` |
+| path, write time: C1 controls, noncharacters, the fixed disallowed list, unassigned code points; allowed ZWJ/ZWNJ, variation selectors, tag characters, CGJ | `pathx.json` → `c1-control-*`, `noncharacter-*`, `bidi-*`, `arabic-letter-mark-u061c`, `zero-width-space-u200b`, `word-joiner-u2060`, `byte-order-mark-ufeff`, `soft-hyphen-u00ad`, `mongolian-vowel-separator-u180e`, `line-separator-u2028`, `paragraph-separator-u2029`, `function-application-u2061`, `invisible-*`, `interlinear-annotation-*`, `*hangul*filler*`, `*-symmetric-swapping-*`, `*-arabic-form-shaping-*`, `*-digit-shapes-*`, `language-tag-ue0001`, `unassigned-*`, `assigned-in-*`, `*-allowed`, `order-*`; `tree.json` → `reject-c1-control`, `reject-noncharacter*`, `reject-bidi-override`, `reject-zero-width-space`, `reject-byte-order-mark-in-subdirectory`, `reject-unassigned-*`, `reject-soft-hyphen`, `reject-line-separator`, `reject-invisible-times`, `reject-interlinear-annotation`, `reject-hangul-filler`, `reject-language-tag`, `allowed-zwj-zwnj-fullwidth-reserved-names`, `allowed-variation-selectors-tags-cgj` |
 | read time: structural rules only (noncharacters and controls rejected; NFD, case variants, unassigned code points and the disallowed list readable) | `pathx.json` → `stored_names`; `tree.json` → `decode_valid_build_rejects`, `decode_invalid` → `name-with-c1-*`, `*noncharacter*`, `index-first-with-c1-control` |
 | lookups: read-time character rules on the input, then NFC, then segment rules and byte limits on the NFC form; NFD input over 255 bytes accepted, too long after NFC rejected; the disallowed list, unassigned code points and case not checked | `pathx.json` → `lookup` |
 | vector files cannot be rewritten by an editor | all three JSON files are ASCII (`\\u` escapes); `verify` and the Go tests reject raw non-ASCII bytes |
@@ -1397,6 +1403,25 @@ go test ./internal/contenthash ./internal/pathx ./internal/tree   # MFGRAPH_HEAV
 
 """
 
+
+REVIEW_M1_0A_CHANGES = """## M1.0a 变更 (M1.0a: a stricter write-time rule)
+
+No expected value of an existing case changed, and no root hash or node byte of a tree case.
+
+* **The fixed disallowed list gains eleven characters** (a write-time rule only, so stored
+  names that contain them stay readable): the Hangul fillers U+115F, U+1160, U+3164 and
+  U+FFA0, which display as blanks, the deprecated format characters U+206A-U+206F and
+  U+E0001 LANGUAGE TAG. Write-time rules may become stricter after the format freeze; the
+  read-time rules may not change.
+* **New cases** (added after the review of 2026-11-14): `pathx.json` `normalize`
+  `hangul-*-filler-*`, `hangul-filler-u3164`, `halfwidth-hangul-filler-uffa0`,
+  `*-symmetric-swapping-*`, `*-arabic-form-shaping-*`, `*-digit-shapes-*`,
+  `language-tag-ue0001` (`disallowed_char`), their allowed neighbours U+1161, U+3165, U+FFA1
+  and U+2070, and `unassigned-ue0002-next-to-language-tag`; `stored_names` and `lookup`:
+  the new characters are accepted at read time and by lookups; `tree.json`
+  `reject-hangul-filler`, `reject-language-tag` and three `decode_valid_build_rejects`.
+
+"""
 
 REVIEW_PATCH4_CHANGES = """## 冻结前补丁轮 4 变更 (patch round 4 before the format freeze)
 
@@ -1569,7 +1594,7 @@ def count_ucd_cases():
 
 
 def write_review():
-    lines = [review_header(), REVIEW_PATCH4_CHANGES, REVIEW_FREEZE_CHANGES, REVIEW_CHANGES, REVIEW_METHOD]
+    lines = [review_header(), REVIEW_M1_0A_CHANGES, REVIEW_PATCH4_CHANGES, REVIEW_FREEZE_CHANGES, REVIEW_CHANGES, REVIEW_METHOD]
     review_contenthash(lines)
     review_pathx(lines)
     review_tree(lines)

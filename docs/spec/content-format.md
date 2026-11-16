@@ -76,8 +76,11 @@ reports.
      characters U+00AD (soft hyphen), U+180E (Mongolian vowel separator),
      U+200B (zero width space), U+2028 and U+2029 (line and paragraph
      separators), U+2060 (word joiner), U+2061–U+2064 (invisible
-     mathematical operators), U+FEFF (zero width no-break space) and
-     U+FFF9–U+FFFB (interlinear annotation controls);
+     mathematical operators), U+FEFF (zero width no-break space),
+     U+FFF9–U+FFFB (interlinear annotation controls), and, added after
+     format 1 was frozen (see below), the Hangul fillers U+115F, U+1160,
+     U+3164 and U+FFA0, the deprecated format characters U+206A–U+206F
+     and U+E0001 (language tag);
    * a code point that is unassigned (general category Cn) in Unicode version
      V (`unassigned_char`; see 2.4). The noncharacters are Cn too; the
      previous rule reports them as `noncharacter`.
@@ -120,6 +123,14 @@ I-JSON (RFC 7493), on which RFC 8785 builds. The disallowed list is fixed:
 other format characters (category Cf) are not rejected as a class. It is a
 write-time rule only (2.5): it may be extended later, and stored names that
 contain such characters stay readable.
+
+The disallowed list was extended once after format 1 was frozen, with
+U+115F, U+1160, U+3164, U+FFA0 (Hangul fillers, which display as blanks),
+U+206A–U+206F (deprecated format characters) and U+E0001 (the deprecated
+language tag). Write-time rules may become stricter in this way without a
+new format version; names written before keep their bytes, stay readable,
+can still be found, replaced and deleted (2.6), and only new names are
+checked.
 
 No other rule applies. In particular these are **allowed**:
 
