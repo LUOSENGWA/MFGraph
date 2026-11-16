@@ -99,9 +99,15 @@ func apply(ctx context.Context, g Getter, base contenthash.Hash, changes []Chang
 // Graft returns the tree base with the entry at the stored path segs
 // replaced by e, a file or a directory of a tree in the same store (its
 // subtree is reused by hash), or removed when e is nil. It is the operation
-// of restoring one path from another snapshot: the names are stored bytes
-// and no write-time rule is applied to them. Missing directories above segs
-// are created with the names in segs; a file in their place gives a
+// of restoring one path from another snapshot: the names are stored bytes,
+// kept as they are, and the write-time rules are not applied to them, with
+// one exception. The names Graft adds to a directory of base (the last
+// segment when base has no entry of exactly that name, and the directories
+// above it that base does not have) are created names: like the names a
+// commit creates, they are checked with the case rule of the sibling rules
+// against the names of that directory (case_conflict). The entries inside
+// a grafted directory are not checked. Missing directories above segs are
+// created with the names in segs; a file in their place gives a
 // file_dir_conflict. Removing a path that does not exist gives
 // ErrPathNotFound. Delta counts the files of the replaced and the inserted
 // subtree (reading both).
@@ -145,7 +151,13 @@ func graft(ctx context.Context, g Getter, base contenthash.Hash, segs []string, 
 		} else {
 			cur = found.Hash
 		}
+		parent := md
 		md = md.child(s, cur, ok)
+		if !ok {
+			// A directory base does not have: a new name of its parent.
+			m := parent.children[s]
+			m.created, m.input = true, path
+		}
 	}
 	leaf := segs[len(segs)-1]
 	var old *Entry
@@ -161,7 +173,7 @@ func graft(ctx context.Context, g Getter, base contenthash.Hash, segs []string, 
 	if e == nil && old == nil {
 		return Result{}, fmt.Errorf("%w: %q", ErrPathNotFound, path)
 	}
-	m := &mod{existed: old != nil, input: path}
+	m := &mod{existed: old != nil, created: old == nil, input: path}
 	for _, x := range []struct {
 		e    *Entry
 		sign int64

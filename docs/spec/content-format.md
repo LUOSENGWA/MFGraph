@@ -268,6 +268,20 @@ without making stored data unreadable. The test vectors list such nodes in
     only in a later Unicode version, written by an implementation with a
     higher V) therefore never makes a later commit fail because of entries
     the commit does not create.
+* **Restoring one path.** A restore of one path finds it in the other
+  snapshot with the lookup rules and puts its entry (a file, or a directory
+  with everything below it) at the same stored path of the branch head,
+  under its stored name. A restored name that the head's directory does not
+  have byte for byte is treated as a created name, and so is every
+  directory above it that the head does not have: each is compared by fold
+  key with the names of its directory in the head (the case rule of 2.2),
+  and a conflict rejects the restore with `case_conflict` (names that
+  differ only in normalization also have the same fold key). A file in the
+  place of a directory above it gives `file_dir_conflict`. No other
+  write-time rule is applied to restored names, and the entries inside a
+  restored directory keep their stored bytes and are not checked again.
+  Example: after `README.md` was deleted and `readme.md` created, restoring
+  `README.md` from an earlier snapshot fails until `readme.md` is deleted.
 * **Lookups.** A path given to find an existing entry (listing a directory,
   downloading a file, a path given to a diff or a restore, and the path of a
   change that replaces or deletes a file) is processed in four steps:

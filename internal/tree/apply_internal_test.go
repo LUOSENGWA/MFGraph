@@ -516,6 +516,43 @@ func TestGraft(t *testing.T) {
 	if _, err := Graft(bg, g, root, []string{"nope"}, nil); !errors.Is(err, ErrPathNotFound) {
 		t.Errorf("remove a missing path: %v", err)
 	}
+
+	// The names a graft adds to a directory of base are checked against
+	// the names there with the case rule: the last segment, and the
+	// directories above it that base does not have.
+	for _, tc := range []struct {
+		segs []string
+		e    *Entry
+	}{
+		{[]string{"DOCS"}, entryAt(target, "lib")},
+		{[]string{"Docs", "c.txt"}, entryAt(target, "lib/z.txt")},
+		{[]string{"Docs", "x", "c.txt"}, entryAt(target, "lib/z.txt")},
+		{[]string{"docs", "A.txt"}, entryAt(target, "docs/a.txt")},
+		{[]string{"TOOL.sh"}, entryAt(target, "lib/z.txt")},
+	} {
+		if _, err := Graft(bg, g, root, tc.segs, tc.e); pathx.KindOf(err) != pathx.KindCaseConflict {
+			t.Errorf("graft %v: %v, want a case conflict", tc.segs, err)
+		}
+	}
+	// A name that differs only in normalization has the same fold key.
+	nfcRoot, nfcNodes, err := Build([]FileEntry{fe("caf\u00e9.txt", "nfc", ModeRegular)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for h, b := range nfcNodes {
+		g[h] = b
+	}
+	if _, err := Graft(bg, g, nfcRoot, []string{"cafe\u0301.txt"}, entryAt(target, "lib/z.txt")); pathx.KindOf(err) != pathx.KindCaseConflict {
+		t.Errorf("graft of an NFD name next to its NFC form: %v", err)
+	}
+	// The entries inside a grafted directory keep their stored bytes and
+	// are not checked: this one (written by hand) holds X and x.
+	sub := Encode(Node{Kind: KindDir, Entries: []Entry{fileEntry("X", "1", ModeRegular), fileEntry("x", "2", ModeRegular)}})
+	g[HashOf(sub)] = sub
+	res, err := Graft(bg, g, root, []string{"lib"}, &Entry{Type: TypeDir, Hash: HashOf(sub)})
+	if err != nil || res.Delta != (Stats{2, 2}) {
+		t.Fatalf("graft of a directory with names that conflict in case: %+v %v", res.Delta, err)
+	}
 }
 
 // TestLookupListDirDiffMatchWalk checks Lookup, ListDir and Diff against

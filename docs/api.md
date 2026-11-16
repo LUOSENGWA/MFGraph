@@ -135,6 +135,8 @@ Other details of the first core slice:
 
 A commit checks the names it creates against the names of the base snapshot's directory, including names that another change of the same request deletes: changing only the case of a name, or turning a file into a directory, takes two commits.
 
+A restore of one `path` treats the names it adds to the head as created names: the restored name, when the head's directory does not have it byte for byte, and every directory above it that the head does not have. They must not have the case-fold key of another name in their directory of the head (`invalid_path`, `case_conflict`): after `README.md` was deleted and `readme.md` created, restoring `README.md` fails until `readme.md` is deleted. The entries inside a restored directory are not checked.
+
 ## File paths
 
 - **Written paths** (commits) follow the write-time rules of the [content format](spec/content-format.md#2-paths) and are stored in NFC. A commit applies them only to the names it creates (the segments of a path that do not exist in the base snapshot); a change that replaces or deletes a file finds it like a lookup and keeps its stored name, and entries carried over from the base snapshot keep their stored bytes.

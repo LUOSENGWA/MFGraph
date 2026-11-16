@@ -182,8 +182,12 @@ type ClientInterface interface {
 	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-	// `invalid_path` (422; `file_dir_conflict` when a directory above
-	// `path` is a file in the head).
+	// `invalid_path` (422; `case_conflict` when the restored name, or a
+	// directory above it that the head does not have, has the case-fold
+	// key of another name of its directory in the head, for example
+	// restoring `README.md` while the head has `readme.md`;
+	// `file_dir_conflict` when a directory above `path` is a file in the
+	// head).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -206,8 +210,12 @@ type ClientInterface interface {
 	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-	// `invalid_path` (422; `file_dir_conflict` when a directory above
-	// `path` is a file in the head).
+	// `invalid_path` (422; `case_conflict` when the restored name, or a
+	// directory above it that the head does not have, has the case-fold
+	// key of another name of its directory in the head, for example
+	// restoring `README.md` while the head has `readme.md`;
+	// `file_dir_conflict` when a directory above `path` is a file in the
+	// head).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -573,8 +581,12 @@ func (c *Client) GetSnapshotFile(ctx context.Context, snapshotId SnapshotId, par
 // (403), `not_found` (404, snapshot or branch), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-// `invalid_path` (422; `file_dir_conflict` when a directory above
-// `path` is a file in the head).
+// `invalid_path` (422; `case_conflict` when the restored name, or a
+// directory above it that the head does not have, has the case-fold
+// key of another name of its directory in the head, for example
+// restoring `README.md` while the head has `readme.md`;
+// `file_dir_conflict` when a directory above `path` is a file in the
+// head).
 //
 // Takes any type of body and a specified content type.
 //
@@ -607,8 +619,12 @@ func (c *Client) RestoreSnapshotWithBody(ctx context.Context, snapshotId Snapsho
 // (403), `not_found` (404, snapshot or branch), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-// `invalid_path` (422; `file_dir_conflict` when a directory above
-// `path` is a file in the head).
+// `invalid_path` (422; `case_conflict` when the restored name, or a
+// directory above it that the head does not have, has the case-fold
+// key of another name of its directory in the head, for example
+// restoring `README.md` while the head has `readme.md`;
+// `file_dir_conflict` when a directory above `path` is a file in the
+// head).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2138,8 +2154,12 @@ type ClientWithResponsesInterface interface {
 	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-	// `invalid_path` (422; `file_dir_conflict` when a directory above
-	// `path` is a file in the head).
+	// `invalid_path` (422; `case_conflict` when the restored name, or a
+	// directory above it that the head does not have, has the case-fold
+	// key of another name of its directory in the head, for example
+	// restoring `README.md` while the head has `readme.md`;
+	// `file_dir_conflict` when a directory above `path` is a file in the
+	// head).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2162,8 +2182,12 @@ type ClientWithResponsesInterface interface {
 	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-	// `invalid_path` (422; `file_dir_conflict` when a directory above
-	// `path` is a file in the head).
+	// `invalid_path` (422; `case_conflict` when the restored name, or a
+	// directory above it that the head does not have, has the case-fold
+	// key of another name of its directory in the head, for example
+	// restoring `README.md` while the head has `readme.md`;
+	// `file_dir_conflict` when a directory above `path` is a file in the
+	// head).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3647,8 +3671,12 @@ func (c *ClientWithResponses) GetSnapshotFileWithResponse(ctx context.Context, s
 // (403), `not_found` (404, snapshot or branch), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-// `invalid_path` (422; `file_dir_conflict` when a directory above
-// `path` is a file in the head).
+// `invalid_path` (422; `case_conflict` when the restored name, or a
+// directory above it that the head does not have, has the case-fold
+// key of another name of its directory in the head, for example
+// restoring `README.md` while the head has `readme.md`;
+// `file_dir_conflict` when a directory above `path` is a file in the
+// head).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3677,8 +3705,12 @@ func (c *ClientWithResponses) RestoreSnapshotWithBodyWithResponse(ctx context.Co
 // (403), `not_found` (404, snapshot or branch), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-// `invalid_path` (422; `file_dir_conflict` when a directory above
-// `path` is a file in the head).
+// `invalid_path` (422; `case_conflict` when the restored name, or a
+// directory above it that the head does not have, has the case-fold
+// key of another name of its directory in the head, for example
+// restoring `README.md` while the head has `readme.md`;
+// `file_dir_conflict` when a directory above `path` is a file in the
+// head).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

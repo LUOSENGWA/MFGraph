@@ -59,7 +59,9 @@ info:
       described under "Looking up a path" and does not apply them: the file
       keeps its stored path. Entries carried over from the base snapshot, or
       restored from another snapshot, keep their stored bytes and are not
-      checked again.
+      checked again; but a restored name that the head's directory does not
+      have, and every directory above it that the head does not have, must
+      not have the case-fold key of another name in that directory.
     * **Looking up a path** (the `path` parameter of the tree and file
       operations, `path` of a restore, and `path` of a commit change that
       replaces or deletes a file): (1) the path as sent must be valid UTF-8,
@@ -692,8 +694,12 @@ paths:
         (403), `not_found` (404, snapshot or branch), `conflict` (409,
         generation mismatch with `details.current_generation`; or
         `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
-        `invalid_path` (422; `file_dir_conflict` when a directory above
-        `path` is a file in the head).
+        `invalid_path` (422; `case_conflict` when the restored name, or a
+        directory above it that the head does not have, has the case-fold
+        key of another name of its directory in the head, for example
+        restoring `README.md` while the head has `readme.md`;
+        `file_dir_conflict` when a directory above `path` is a file in the
+        head).
       parameters:
         - $ref: '#/components/parameters/SnapshotId'
         - $ref: '#/components/parameters/RequestId'

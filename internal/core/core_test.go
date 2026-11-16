@@ -535,6 +535,35 @@ func TestRestorePath(t *testing.T) {
 	_ = second
 }
 
+// TestRestorePathCaseConflict: a restored name the head does not have, and
+// a directory above it the head does not have, are new names of their
+// directory and must not conflict in case with the names there.
+func TestRestorePathCaseConflict(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	ws := e.workspace(alice)
+	id, br := ws.Workspace.ID, ws.MainBranchID
+	up := func(s string) string { return e.upload(alice, id, s) }
+	first := e.commit(alice, id, br, 1, put("README.md", up("upper")), put("Docs/a.txt", up("a")))
+	e.commit(alice, id, br, 2, del("README.md"), del("Docs/a.txt"), put("keep.txt", up("k")))
+	e.commit(alice, id, br, 3, put("readme.md", up("lower")), put("docs/b.txt", up("b")))
+	restore := func(path string, gen int64) (core.CommitResult, error) {
+		return e.svc.Restore(ctx, alice, first.SnapshotID, core.RestoreRequest{BranchID: br, ExpectedGeneration: gen, Path: &path}, "")
+	}
+	for _, p := range []string{"README.md", "Docs", "Docs/a.txt"} {
+		_, err := restore(p, 4)
+		wantPathKind(t, "restore "+p, err, pathx.KindCaseConflict)
+	}
+	// Once readme.md and docs/ are deleted, both can be restored.
+	e.commit(alice, id, br, 4, del("readme.md"), del("docs/b.txt"))
+	r, err := restore("README.md", 5)
+	e.must(err)
+	r, err = restore("Docs/a.txt", 6)
+	e.must(err)
+	if got := e.read(alice, r.SnapshotID, "README.md") + e.read(alice, r.SnapshotID, "Docs/a.txt"); got != "uppera" {
+		t.Fatalf("restored files: %q", got)
+	}
+}
+
 func TestListsAndPagination(t *testing.T) {
 	e := newEnv(t, core.Config{})
 	ws := e.workspace(alice)
