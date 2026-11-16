@@ -1,0 +1,9 @@
+# oapi-codegen configuration of the HTTP client used by the mfgraph CLI. The
+# models are in server.gen.go (same package). Regenerate with
+# `go generate ./internal/api/...`.
+package: gen
+output: client.gen.go
+generate:
+  client: true
+output-options:
+  skip-prune: false

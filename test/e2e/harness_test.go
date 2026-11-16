@@ -32,7 +32,7 @@ const (
 	actorB = "01JD3X5Q8Z9W2V4T6R8P0N2MB0"
 )
 
-var serverBin string
+var serverBin, cliBin string
 
 // skipReason is why the tests are skipped: the service needs a database.
 const skipReason = "MFGRAPH_E2E_DB_DSN is not set: the acceptance tests need a database (MySQL 8.0 or seekdb); " +
@@ -42,21 +42,26 @@ func TestMain(m *testing.M) {
 	if os.Getenv("MFGRAPH_E2E_DB_DSN") == "" {
 		os.Exit(m.Run()) // every test skips; nothing to build
 	}
-	if bin := os.Getenv("MFGRAPH_E2E_SERVER_BIN"); bin != "" {
-		serverBin = bin
-		os.Exit(m.Run())
-	}
 	dir, err := os.MkdirTemp("", "mfgraph-e2e-bin-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	serverBin = filepath.Join(dir, "mfgraph-server")
-	build := exec.Command("go", "build", "-o", serverBin, "github.com/LUOSENGWA/MFGraph/cmd/mfgraph-server")
-	build.Stdout, build.Stderr = os.Stdout, os.Stderr
-	if err := build.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "build mfgraph-server:", err)
-		os.Exit(1)
+	serverBin, cliBin = os.Getenv("MFGRAPH_E2E_SERVER_BIN"), os.Getenv("MFGRAPH_E2E_CLI_BIN")
+	for _, b := range []struct {
+		bin *string
+		pkg string
+	}{{&serverBin, "mfgraph-server"}, {&cliBin, "mfgraph"}} {
+		if *b.bin != "" {
+			continue
+		}
+		*b.bin = filepath.Join(dir, b.pkg)
+		build := exec.Command("go", "build", "-o", *b.bin, "github.com/LUOSENGWA/MFGraph/cmd/"+b.pkg)
+		build.Stdout, build.Stderr = os.Stdout, os.Stderr
+		if err := build.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "build "+b.pkg+":", err)
+			os.Exit(1)
+		}
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
