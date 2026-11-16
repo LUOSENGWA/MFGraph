@@ -13,28 +13,28 @@ import (
 
 // Environment variables.
 const (
-	EnvHTTPAddr          = "MFGRAPH_HTTP_ADDR"
-	EnvAPIPrefix         = "MFGRAPH_API_PREFIX"
-	EnvDBDSN             = "MFGRAPH_DB_DSN"
-	EnvMigrateOnStart    = "MFGRAPH_MIGRATE_ON_START"
-	EnvKernelMigrations  = "MFGRAPH_KERNEL_MIGRATIONS"
-	EnvStorageRoot       = "MFGRAPH_STORAGE_ROOT"
-	EnvTenantID          = "MFGRAPH_TENANT_ID"
-	EnvMaxUploadBytes    = "MFGRAPH_MAX_UPLOAD_BYTES"
-	EnvMaxCommitChanges  = "MFGRAPH_MAX_COMMIT_CHANGES"
-	EnvAuthTokens        = "MFGRAPH_AUTH_TOKENS"
-	EnvLogLevel          = "MFGRAPH_LOG_LEVEL"
-	EnvLogFormat         = "MFGRAPH_LOG_FORMAT"
-	EnvLogPseudonymKey   = "MFGRAPH_LOG_PSEUDONYM_KEY"
-	EnvShutdownTimeout   = "MFGRAPH_SHUTDOWN_TIMEOUT"
-	DefaultHTTPAddr      = "127.0.0.1:8094"
-	DefaultAPIPrefix     = "/api/v1"
-	DefaultTenantID      = "00000000000000000000000000"
-	DefaultMaxUpload     = 1 << 30
+	EnvHTTPAddr         = "MFGRAPH_HTTP_ADDR"
+	EnvAPIPrefix        = "MFGRAPH_API_PREFIX"
+	EnvDBDSN            = "MFGRAPH_DB_DSN"
+	EnvMigrateOnStart   = "MFGRAPH_MIGRATE_ON_START"
+	EnvKernelMigrations = "MFGRAPH_KERNEL_MIGRATIONS"
+	EnvStorageRoot      = "MFGRAPH_STORAGE_ROOT"
+	EnvTenantID         = "MFGRAPH_TENANT_ID"
+	EnvMaxUploadBytes   = "MFGRAPH_MAX_UPLOAD_BYTES"
+	EnvMaxCommitChanges = "MFGRAPH_MAX_COMMIT_CHANGES"
+	EnvAuthTokens       = "MFGRAPH_AUTH_TOKENS"
+	EnvLogLevel         = "MFGRAPH_LOG_LEVEL"
+	EnvLogFormat        = "MFGRAPH_LOG_FORMAT"
+	EnvLogPseudonymKey  = "MFGRAPH_LOG_PSEUDONYM_KEY"
+	EnvShutdownTimeout  = "MFGRAPH_SHUTDOWN_TIMEOUT"
+	DefaultHTTPAddr     = "127.0.0.1:8094"
+	DefaultAPIPrefix    = "/api/v1"
+	DefaultTenantID     = "00000000000000000000000000"
+	DefaultMaxUpload    = 1 << 30
 	// MaxUploadLimit is the largest value of MFGRAPH_MAX_UPLOAD_BYTES: 5 TiB,
 	// the largest object of Amazon S3 and far below the 2^53-1 bytes a file
 	// size of the content format can hold.
-	MaxUploadLimit = 5 << 40
+	MaxUploadLimit       = 5 << 40
 	DefaultMaxChanges    = 10_000
 	DefaultShutdown      = 8 * time.Second
 	unixPrefix           = "unix:"
