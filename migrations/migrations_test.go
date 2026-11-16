@@ -22,7 +22,7 @@ var wantTables = map[string][]string{
 }
 
 var wantVersions = map[string][]string{
-	"kernel": {"0000_bootstrap"},
+	"kernel": {"0000_bootstrap", "0001_project_owner"},
 	"mysql": {"0001_workspaces", "0002_workstreams_branches", "0003_snapshots", "0004_blobs",
 		"0006_uploads", "0008_usage_outbox_idempotency"},
 }
@@ -53,6 +53,7 @@ var byteColumns = map[string]string{
 // NULL for a ULID the host platform may provide later; the idempotency
 // record needs none. The value is the required nullability.
 var actorColumns = map[string]string{
+	"projects.owner_ref":             "NULL",
 	"workspaces.owner_ref":           "NOT NULL",
 	"workstreams.owner_ref":          "NOT NULL",
 	"workstreams.created_by_ref":     "NOT NULL",
@@ -74,7 +75,15 @@ var externalRefColumns = map[string]string{
 
 var (
 	createRe = regexp.MustCompile(`^CREATE TABLE IF NOT EXISTS ([a-z_]+) \(`)
-	columnRe = regexp.MustCompile(`^\s+([a-z_]+)\s+([A-Z]+(?:\([0-9]+\))?)(.*)$`)
+	// Migrations added after the first release extend existing tables with
+	// one column or one index per statement (repeatable: the runner skips
+	// a column or index that exists).
+	alterColumnRe = regexp.MustCompile(`^ALTER TABLE ([a-z_]+) ADD COLUMN ([a-z_]+ [A-Z]+(?:\([0-9]+\))?[^;]*);$`)
+	alterKeyRe    = regexp.MustCompile(`^ALTER TABLE ([a-z_]+) ADD (?:UNIQUE )?KEY ([a-z_]+) \(([a-z_, ]+)\);$`)
+	// Clauses an ALTER must not use: anything that changes or removes what
+	// exists, positions (AFTER/FIRST) and MySQL-8-only algorithm hints.
+	alterForbidden = regexp.MustCompile(`(?i)\b(DROP|MODIFY|CHANGE|RENAME|AFTER|FIRST|ALGORITHM|LOCK|DEFAULT|NOT\s+NULL)\b`)
+	columnRe       = regexp.MustCompile(`^\s+([a-z_]+)\s+([A-Z]+(?:\([0-9]+\))?)(.*)$`)
 	// Constructs outside the portable MySQL subset (no ENUM/SET/JSON types,
 	// generated columns, foreign keys, triggers, stored programs, DATETIME or
 	// TIMESTAMP, 8.0-only collations, CHECK constraints, ...).
@@ -90,7 +99,12 @@ func TestMigrationFiles(t *testing.T) {
 	seenTables := map[string]string{}
 	seenByteColumns := map[string]bool{}
 	seenActorColumns := map[string]bool{}
-	for dir, fsys := range sources {
+	// bodies collects the column definitions of every table: its CREATE
+	// TABLE and the columns later migrations add.
+	bodies := map[string]string{}
+	created := map[string]string{} // table -> version of its CREATE TABLE
+	for _, dir := range []string{"kernel", "mysql"} {
+		fsys := sources[dir]
 		ms, err := migrate.Load(fsys)
 		if err != nil {
 			t.Fatalf("%s: %v", dir, err)
@@ -113,9 +127,24 @@ func TestMigrationFiles(t *testing.T) {
 			}
 			for _, s := range stmts {
 				body := stripComments(s)
+				if am := alterColumnRe.FindStringSubmatch(body); am != nil {
+					checkAlter(t, m.Version, am[1], body, created)
+					bodies[am[1]] += "\n  " + am[2]
+					continue
+				}
+				if km := alterKeyRe.FindStringSubmatch(body); km != nil {
+					checkAlter(t, m.Version, km[1], body, created)
+					for _, col := range strings.Split(km[3], ",") {
+						if !columnDefined(bodies[km[1]], strings.TrimSpace(col)) {
+							t.Errorf("%s: key %s uses the unknown column %s.%s", m.Version, km[2], km[1], strings.TrimSpace(col))
+						}
+					}
+					continue
+				}
 				mm := createRe.FindStringSubmatch(body)
 				if mm == nil {
-					t.Errorf("%s/%s: only CREATE TABLE IF NOT EXISTS is allowed: %q", dir, m.Version, firstLine(body))
+					t.Errorf("%s/%s: only CREATE TABLE IF NOT EXISTS and ALTER TABLE ... ADD COLUMN / ADD KEY (one per statement) are allowed: %q",
+						dir, m.Version, firstLine(body))
 					continue
 				}
 				table := mm[1]
@@ -136,8 +165,8 @@ func TestMigrationFiles(t *testing.T) {
 							m.Version, table, cs[1], cs[2])
 					}
 				}
-				checkColumns(t, m.Version, table, body, seenByteColumns)
-				checkActorColumns(t, m.Version, table, body, seenActorColumns)
+				bodies[table] = body
+				created[table] = m.Version
 			}
 		}
 		if strings.Join(versions, ",") != strings.Join(wantVersions[dir], ",") {
@@ -147,6 +176,10 @@ func TestMigrationFiles(t *testing.T) {
 		if strings.Join(tables, ",") != strings.Join(wantTables[dir], ",") {
 			t.Errorf("%s tables = %v, want %v", dir, tables, wantTables[dir])
 		}
+	}
+	for table, body := range bodies {
+		checkColumns(t, created[table], table, body, seenByteColumns)
+		checkActorColumns(t, created[table], table, body, seenActorColumns)
 	}
 	for col := range byteColumns {
 		if !seenByteColumns[col] {
@@ -158,6 +191,32 @@ func TestMigrationFiles(t *testing.T) {
 			t.Errorf("actor column %s not found", col)
 		}
 	}
+}
+
+// checkAlter enforces the rules of an ALTER statement: it extends a table
+// created by an earlier migration and changes nothing that exists; a new
+// column is nullable (existing rows get NULL).
+func checkAlter(t *testing.T, version, table, body string, created map[string]string) {
+	t.Helper()
+	if _, ok := created[table]; !ok {
+		t.Errorf("%s: ALTER of table %s, which no earlier migration creates", version, table)
+	}
+	if f := alterForbidden.FindString(body); f != "" {
+		t.Errorf("%s: ALTER TABLE %s uses %q; a migration may only add nullable columns and indexes", version, table, f)
+	}
+	if f := forbidden.FindString(body); f != "" {
+		t.Errorf("%s: ALTER TABLE %s uses forbidden construct %q", version, table, f)
+	}
+	for _, cs := range charsetRe.FindAllStringSubmatch(body, -1) {
+		if v := strings.ToLower(cs[2]); v != "utf8mb4" && v != "utf8mb4_bin" {
+			t.Errorf("%s: ALTER TABLE %s uses %s %s", version, table, cs[1], cs[2])
+		}
+	}
+}
+
+func columnDefined(body, col string) bool {
+	_, ok := columns(body)[col]
+	return ok
 }
 
 type column struct{ typ, rest string }

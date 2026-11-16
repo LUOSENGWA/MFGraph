@@ -29,10 +29,10 @@ all: build test
 ci: tidy-check fmt-check vet e2e-compile build test test-heavy deps-check \
 	openapi-check generate-check vectors-verify-heavy vectors-crosscheck docs-check
 
-## ci-mysql: the CI migration job against the local Docker MySQL (requires Docker)
+## ci-mysql: the CI database job against the local Docker MySQL (requires Docker)
 ci-mysql: dev-db-up test-mysql
 
-## ci-seekdb: the CI seekdb job against the local Docker seekdb (requires Docker)
+## ci-seekdb: the CI seekdb database job against the local Docker seekdb (requires Docker)
 ci-seekdb: dev-seekdb-up test-seekdb
 
 ## tidy-check: go.mod/go.sum are tidy and verified
@@ -72,14 +72,18 @@ e2e-compile:
 test-heavy:
 	MFGRAPH_HEAVY_VECTORS=1 $(GO) test -count=1 ./internal/tree/...
 
-## test-mysql: migration tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
-test-mysql:
-	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v ./internal/migrate/... ./cmd/mfgraph-server/...
+# Packages with database tests (tests named *MySQL*): the migrations and the
+# MySQL repositories (contract tests).
+DB_TEST_PKGS = ./internal/migrate/... ./internal/store/mysql/... ./cmd/mfgraph-server/...
 
-## test-seekdb: the same migration tests against seekdb (start it with `make dev-seekdb-up`);
+## test-mysql: migration and repository tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
+test-mysql:
+	MFGRAPH_TEST_MYSQL_DSN='$(MYSQL_TEST_DSN)' $(GO) test -count=1 -run MySQL -v $(DB_TEST_PKGS)
+
+## test-seekdb: the same tests against seekdb (start it with `make dev-seekdb-up`);
 ## the tests first wait up to SEEKDB_WAIT for the server to answer queries
 test-seekdb:
-	MFGRAPH_TEST_MYSQL_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_TEST_DB_WAIT=$(SEEKDB_WAIT) $(GO) test -count=1 -run MySQL -v ./internal/migrate/... ./cmd/mfgraph-server/...
+	MFGRAPH_TEST_MYSQL_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_TEST_DB_WAIT=$(SEEKDB_WAIT) $(GO) test -count=1 -run MySQL -v $(DB_TEST_PKGS)
 
 ## generate: regenerate internal/api/gen from contracts/openapi.yaml (needs network for oapi-codegen)
 generate:

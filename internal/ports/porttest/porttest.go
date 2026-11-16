@@ -41,6 +41,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"Workspaces", testWorkspaces},
 		{"Branches", testBranches},
 		{"BranchCAS", testBranchCAS},
+		{"ConcurrentCAS", testConcurrentCAS},
 		{"Snapshots", testSnapshots},
 		{"Timeline", testTimeline},
 		{"Blobs", testBlobs},
@@ -543,4 +544,39 @@ func testUsage(t *testing.T, s Store) {
 	tx(t, s, func(tx ports.Tx) error { return s.InsertUsage(ctx, tx, wsA, 11) })
 	err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return s.InsertUsage(ctx, tx, wsA, 12) })
 	wantErr(t, "duplicate usage row", err, ports.ErrAlreadyExists)
+}
+
+// testConcurrentCAS: of several transactions that move the head of a branch
+// from the same generation, exactly one succeeds.
+func testConcurrentCAS(t *testing.T, s Store) {
+	tx(t, s, func(tx ports.Tx) error { return s.InsertBranch(ctx, tx, mainBranch(brA, wsA, projA)) })
+	const n = 8
+	results := make(chan error, n)
+	wins := make(chan string, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			head := fmt.Sprintf("01JD3X5Q8Z9W2V4T6R8P0N2S%02d", i)
+			results <- s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+				ok, err := s.UpdateBranchHead(ctx, tx, brA, wsA, 1, head, int64(10+i))
+				if ok {
+					wins <- head
+				}
+				return err
+			})
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(wins)
+	var won []string
+	for h := range wins {
+		won = append(won, h)
+	}
+	b, err := s.GetBranch(ctx, nil, brA)
+	if err != nil || len(won) != 1 || b.Generation != 2 || b.HeadSnapshotID != won[0] {
+		t.Fatalf("concurrent CAS: winners %v, branch %+v, %v", won, b, err)
+	}
 }

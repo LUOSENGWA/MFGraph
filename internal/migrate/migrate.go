@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 // Component names used in schema_migrations.
@@ -122,6 +124,16 @@ type Target interface {
 	Exec(ctx context.Context, stmt string) error
 	// RecordVersion stores a successfully applied migration.
 	RecordVersion(ctx context.Context, component, version, checksum string, appliedAtUs int64) error
+	// AlreadyExists reports whether err, returned by Exec for an ALTER
+	// TABLE ... ADD statement, says that the column or index exists.
+	AlreadyExists(err error) bool
+}
+
+// isAlterAdd reports an ALTER TABLE ... ADD statement (one column or one
+// index), which a repeated run may find already applied.
+func isAlterAdd(stmt string) bool {
+	f := strings.Fields(strings.ToUpper(firstLine(stmt)))
+	return len(f) >= 4 && f[0] == "ALTER" && f[1] == "TABLE" && f[3] == "ADD"
 }
 
 // Result lists what Run did.
@@ -137,8 +149,10 @@ type Result struct {
 //     file fails with ErrChecksumMismatch.
 //   - A pending migration is executed statement by statement (no transaction:
 //     MySQL DDL commits implicitly) and recorded only after all its statements
-//     succeeded. Statements use CREATE TABLE IF NOT EXISTS, so a run that
-//     stopped half-way can simply be repeated.
+//     succeeded. Statements are CREATE TABLE IF NOT EXISTS, or ALTER TABLE ...
+//     ADD of one column or one index, which is skipped when the column or
+//     index exists (Target.AlreadyExists), so a run that stopped half-way can
+//     simply be repeated.
 //   - Lower numbers may be applied after higher ones (gaps can be filled).
 //
 // Run assumes a single runner at a time; it takes no lock.
@@ -183,6 +197,9 @@ func Run(ctx context.Context, t Target, component string, ms []Migration, now fu
 		}
 		for i, s := range stmts {
 			if err := t.Exec(ctx, s); err != nil {
+				if isAlterAdd(s) && t.AlreadyExists(err) {
+					continue // applied by an earlier, interrupted run
+				}
 				return res, fmt.Errorf("migrate: %s/%s statement %d (%s): %w", component, m.Version, i+1, firstLine(s), err)
 			}
 		}
@@ -245,6 +262,19 @@ func (t SQLTarget) AppliedVersions(ctx context.Context, component string) (map[s
 func (t SQLTarget) Exec(ctx context.Context, stmt string) error {
 	_, err := t.DB.ExecContext(ctx, stmt)
 	return err
+}
+
+// MySQL error numbers of an ADD whose column or index exists:
+// ER_DUP_FIELDNAME and ER_DUP_KEYNAME (seekdb reports the same numbers).
+const (
+	errDupFieldName = 1060
+	errDupKeyName   = 1061
+)
+
+// AlreadyExists implements Target.
+func (t SQLTarget) AlreadyExists(err error) bool {
+	var me *mysql.MySQLError
+	return errors.As(err, &me) && (me.Number == errDupFieldName || me.Number == errDupKeyName)
 }
 
 // RecordVersion implements Target.

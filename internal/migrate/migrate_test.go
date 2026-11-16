@@ -14,10 +14,16 @@ import (
 
 // fakeTarget records executed statements and versions in memory.
 type fakeTarget struct {
-	applied map[string]map[string]string // component -> version -> checksum
-	execs   []string
-	failOn  string // fail an Exec whose statement contains this
+	applied  map[string]map[string]string // component -> version -> checksum
+	execs    []string
+	failOn   string // fail an Exec whose statement contains this
+	existsOn string // fail an Exec whose statement contains this with errExists
 }
+
+// errExists stands for "duplicate column name" / "duplicate key name".
+var errExists = errors.New("already exists")
+
+func (f *fakeTarget) AlreadyExists(err error) bool { return errors.Is(err, errExists) }
 
 func newFake() *fakeTarget { return &fakeTarget{applied: map[string]map[string]string{}} }
 
@@ -34,6 +40,9 @@ func (f *fakeTarget) AppliedVersions(_ context.Context, c string) (map[string]st
 func (f *fakeTarget) Exec(_ context.Context, stmt string) error {
 	if f.failOn != "" && strings.Contains(stmt, f.failOn) {
 		return errors.New("boom")
+	}
+	if f.existsOn != "" && strings.Contains(stmt, f.existsOn) {
+		return errExists
 	}
 	f.execs = append(f.execs, stmt)
 	return nil
@@ -215,5 +224,24 @@ func TestRunAll(t *testing.T) {
 	}
 	if _, err := migrate.RunAll(context.Background(), f, []migrate.Plan{{Component: "x", Source: src(map[string]string{"bad.sql": ""})}}, fixedNow); !errors.Is(err, migrate.ErrInvalidSource) {
 		t.Fatalf("bad source: %v", err)
+	}
+}
+
+// TestRepeatedAlterAdd: an ALTER TABLE ... ADD whose column or index exists
+// (an earlier run stopped after it) is skipped; any other statement that
+// fails stops the run, even with the same error.
+func TestRepeatedAlterAdd(t *testing.T) {
+	ms := load(t, map[string]string{"0001_add.sql": "ALTER TABLE t ADD COLUMN a INT NULL;\nALTER TABLE t ADD KEY k (a);\n"})
+	f := newFake()
+	f.existsOn = "ADD COLUMN a"
+	res, err := migrate.Run(context.Background(), f, "c", ms, fixedNow)
+	if err != nil || !reflect.DeepEqual(res.Applied, []string{"0001_add"}) || len(f.execs) != 1 || !strings.Contains(f.execs[0], "ADD KEY") {
+		t.Fatalf("repeated ALTER: %+v %v %q", res, err, f.execs)
+	}
+	ms = load(t, map[string]string{"0001_create.sql": "CREATE TABLE IF NOT EXISTS t (a INT);\n"})
+	f = newFake()
+	f.existsOn = "CREATE TABLE"
+	if _, err := migrate.Run(context.Background(), f, "c", ms, fixedNow); !errors.Is(err, errExists) {
+		t.Fatalf("a failing CREATE must stop the run: %v", err)
 	}
 }
