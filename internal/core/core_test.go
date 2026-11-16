@@ -853,3 +853,109 @@ func TestSnapshotTimesNeverGoBack(t *testing.T) {
 		t.Errorf("created at %d, clock %d", fourth.CreatedAtUs, e.clock.Now().UnixMicro())
 	}
 }
+
+// TestUploadCommitInterleaving: a commit that references content while it
+// is being uploaded either finds it, and makes it live, or fails with
+// blob_missing (not_uploaded); content that a commit made live stays live
+// when it is uploaded again.
+func TestUploadCommitInterleaving(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	ws := e.workspace(alice)
+	id, br := ws.Workspace.ID, ws.MainBranchID
+	gen, raced := int64(1), 0
+	for i := 0; i < 50; i++ {
+		content, path := fmt.Sprintf("content %d", i), fmt.Sprintf("f%02d", i)
+		h := contenthash.SumBytes([]byte(content))
+		var wg sync.WaitGroup
+		var upErr, commitErr error
+		var res core.CommitResult
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _, upErr = e.svc.PutObject(ctx, alice, core.PutObjectRequest{WorkspaceID: id, Body: strings.NewReader(content), ContentLength: -1})
+		}()
+		go func() {
+			defer wg.Done()
+			res, commitErr = e.svc.Commit(ctx, alice, id, core.CommitRequest{BranchID: br, ExpectedGeneration: gen, Message: "m",
+				Changes: []core.Change{put(path, h.String())}}, "")
+		}()
+		wg.Wait()
+		e.must(upErr)
+		if commitErr != nil {
+			raced++
+			wantCode(t, "commit during the upload", commitErr, core.CodeBlobMissing, "reason", core.ReasonNotUploaded)
+			res = e.commit(alice, id, br, gen, put(path, h.String()))
+		}
+		gen = res.Generation
+		if got := e.read(alice, res.SnapshotID, path); got != content {
+			t.Fatalf("%s: %q", path, got)
+		}
+		if b, err := e.store.GetBlob(ctx, nil, id, h); err != nil || b.Status != ports.BlobLive {
+			t.Fatalf("%s: blob %+v %v, want live", path, b, err)
+		}
+		b, created, err := e.svc.PutObject(ctx, alice, core.PutObjectRequest{WorkspaceID: id, Body: strings.NewReader(content), ContentLength: -1})
+		if err != nil || created || b.Status != ports.BlobLive {
+			t.Fatalf("%s: upload of live content: %+v %v %v", path, b, created, err)
+		}
+	}
+	t.Logf("%d of 50 commits ran before their upload was recorded", raced)
+}
+
+// TestRestoreAndCommitRace: a restore and a commit with the same expected
+// generation: one moves the branch, the other gets a generation conflict.
+func TestRestoreAndCommitRace(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	sd := e.seed(alice)
+	id, br := sd.ws.Workspace.ID, sd.branch
+	h := e.upload(alice, id, "racing")
+	gen, restores := int64(2), 0
+	for i := 0; i < 30; i++ {
+		head, err := e.store.GetBranch(ctx, nil, br)
+		e.must(err)
+		if snap, _ := e.svc.GetSnapshot(ctx, alice, head.HeadSnapshotID); snap.RootTreeHash.String() == sd.first.RootTreeHash {
+			gen = e.commit(alice, id, br, gen, put(fmt.Sprintf("pad%02d", i), h)).Generation // the restore must change the head
+		}
+		// Even rounds race; in odd rounds the restore starts once the
+		// commit has returned (the restore is faster and would always win).
+		var wg sync.WaitGroup
+		var rErr, cErr error
+		var rRes, cRes core.CommitResult
+		committed := make(chan struct{})
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if i%2 == 1 {
+				<-committed
+			}
+			rRes, rErr = e.svc.Restore(ctx, alice, sd.first.SnapshotID, core.RestoreRequest{BranchID: br, ExpectedGeneration: gen}, "")
+		}()
+		go func() {
+			defer wg.Done()
+			defer close(committed)
+			cRes, cErr = e.svc.Commit(ctx, alice, id, core.CommitRequest{BranchID: br, ExpectedGeneration: gen, Message: "m",
+				Changes: []core.Change{put(fmt.Sprintf("race%02d", i), h)}}, "")
+		}()
+		wg.Wait()
+		var winner core.CommitResult
+		switch {
+		case rErr == nil && cErr != nil:
+			winner, restores = rRes, restores+1
+			wantCode(t, "the commit that lost", cErr, core.CodeConflict, "current_generation", gen+1)
+		case cErr == nil && rErr != nil:
+			winner = cRes
+			wantCode(t, "the restore that lost", rErr, core.CodeConflict, "current_generation", gen+1)
+		default:
+			t.Fatalf("round %d: restore %v, commit %v; want exactly one to succeed", i, rErr, cErr)
+		}
+		head, err = e.store.GetBranch(ctx, nil, br)
+		e.must(err)
+		if head.Generation != gen+1 || head.HeadSnapshotID != winner.SnapshotID {
+			t.Fatalf("round %d: branch %+v, want generation %d at %s", i, head, gen+1, winner.SnapshotID)
+		}
+		gen = head.Generation
+	}
+	if restores > 15 {
+		t.Fatalf("the restore won %d rounds, but the commit wins every odd round", restores)
+	}
+	t.Logf("the restore won %d of the 15 racing rounds", restores)
+}

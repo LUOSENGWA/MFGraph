@@ -24,6 +24,7 @@ MFGRAPH_E2E_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/' make test-e2e   # any DSN
 | `TestRestoreCreatesNewSnapshot` | restore the first snapshot → a new snapshot whose tree equals the first one |
 | `TestDataSurvivesRestart` | all of the above is still there after a server restart |
 | `TestConcurrentCommitsOneWins` | two commits with the same `expected_generation` → one 201, one 409 |
+| `TestRestoreAndCommitRace` | a restore and a commit with the same `expected_generation` → one 201, one 409; the branch moves once |
 | `TestIdempotentCommitRetry` | retry with the same `Idempotency-Key` → same snapshot; different body → 409 `idempotency_key_reuse` |
 | `TestInvalidPathRejected` | commit an invalid path → 422 `invalid_path` |
 | `TestCrossWorkspaceIsNotFound` | the token of workspace A reading a snapshot of workspace B → 404 |
