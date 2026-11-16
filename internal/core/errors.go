@@ -32,6 +32,11 @@ const (
 	ReasonNotADirectory    = "not_a_directory"
 	ReasonNotAFile         = "not_a_file"
 	ReasonTooManyChanges   = "too_many_changes"
+	// ReasonLockTimeout and ReasonDeadlock (db_unavailable): concurrent
+	// requests held the rows this one needed; nothing was changed and the
+	// request can be repeated as it is.
+	ReasonLockTimeout = "lock_timeout"
+	ReasonDeadlock    = "deadlock"
 )
 
 // Error is a failure with a stable code and machine-readable details.

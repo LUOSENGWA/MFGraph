@@ -37,6 +37,10 @@ info:
       HTTP status. Each operation lists the codes it can return; any
       operation may also return `internal` (500), `not_implemented` (501),
       `rate_limited` (429) and `db_unavailable` / `storage_unavailable` (503).
+      `db_unavailable` with `details.reason` = `lock_timeout` or `deadlock`
+      means that concurrent requests held the rows this one needed: nothing
+      was changed, the response carries `Retry-After: 1`, and the request
+      can be repeated as it is (with the same `Idempotency-Key`).
     * **Request bodies.** Every POST takes a JSON body and must send
       `Content-Type: application/json`, with no parameter but
       `charset=utf-8`; anything else gives `415` with code
@@ -909,7 +913,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     ServiceUnavailable:
-      description: '`db_unavailable` or `storage_unavailable`; retry later.'
+      description: '`db_unavailable` or `storage_unavailable`; retry later (`Retry-After: 1` with `details.reason` `lock_timeout` or `deadlock`).'
       content:
         application/json:
           schema:

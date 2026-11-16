@@ -161,6 +161,12 @@ func mapErr(err error, what string) error {
 		return nil
 	case errors.Is(err, ports.ErrNotFound):
 		return &Error{Code: CodeNotFound, Message: what + " not found", Err: err}
+	case errors.Is(err, ports.ErrDeadlock):
+		return &Error{Code: CodeDBUnavailable, Message: "the database rolled this request back to end a deadlock; repeat it",
+			Details: map[string]any{"reason": ReasonDeadlock}, Err: err}
+	case errors.Is(err, ports.ErrLockTimeout):
+		return &Error{Code: CodeDBUnavailable, Message: "the database did not grant a lock in time; repeat the request",
+			Details: map[string]any{"reason": ReasonLockTimeout}, Err: err}
 	case errors.Is(err, ports.ErrDBUnavailable):
 		return &Error{Code: CodeDBUnavailable, Message: "the database is not available", Err: err}
 	case errors.Is(err, ports.ErrStorageUnavailable):

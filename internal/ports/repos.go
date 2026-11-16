@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
 )
@@ -14,6 +15,15 @@ var (
 	// ErrDBUnavailable: the database cannot be reached. The API answers 503
 	// db_unavailable.
 	ErrDBUnavailable = errors.New("database unavailable")
+	// ErrLockTimeout: a statement waited too long for a lock that a
+	// concurrent transaction holds (MySQL and seekdb error 1205; seekdb
+	// also ends a deadlock this way). WithTx rolls the transaction back, so
+	// the request can be repeated as it is. It wraps ErrDBUnavailable.
+	ErrLockTimeout = fmt.Errorf("%w: lock wait timeout", ErrDBUnavailable)
+	// ErrDeadlock: the database rolled the transaction back to end a
+	// deadlock (MySQL error 1213); the request can be repeated as it is. It
+	// wraps ErrDBUnavailable.
+	ErrDeadlock = fmt.Errorf("%w: deadlock", ErrDBUnavailable)
 )
 
 // Row states used by the first core slice.

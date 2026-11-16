@@ -134,7 +134,7 @@ Other details of the first core slice:
 | `blob_missing` (410) | `hashes`, and `reason`: `not_uploaded` (never uploaded to this workspace) or `missing_in_storage` (uploaded, but the object is gone) |
 | `file_too_large` (413) | `max_bytes` |
 | `request_too_large` (413) | `max_bytes` (the body of a request other than an upload) |
-| `db_unavailable` / `storage_unavailable` (503) | `reason`: `not_configured` when the dependency is not configured; `/readyz` adds `check` |
+| `db_unavailable` / `storage_unavailable` (503) | `reason`: `not_configured` when the dependency is not configured; `/readyz` adds `check`. `db_unavailable` with `reason` `lock_timeout` (MySQL and seekdb error 1205) or `deadlock` (MySQL error 1213; seekdb reports deadlocks as lock wait timeouts) carries `Retry-After: 1`: concurrent requests held the rows this one needed, nothing was changed, and the request can be repeated as it is |
 
 An `Idempotency-Key` is kept for 24 hours. While the first request with it runs, a repeat gets `409 conflict` with `reason` `in_progress`. The first request holds the key for `MFGRAPH_IDEMPOTENCY_LEASE` (60 s): a repeat after that takes the key over and runs, and the first request, if it still runs, fails with `409 conflict` without making its change. A change is therefore made at most once, even when a server stops in the middle of a request.
 

@@ -114,6 +114,12 @@ func toAPIError(err error) (*Error, bool) {
 		return &Error{Code: CodeNotFound, Message: "not found", cause: err}, true
 	case errors.Is(err, ports.ErrForbidden):
 		return &Error{Code: CodeForbidden, Message: "forbidden", cause: err}, true
+	case errors.Is(err, ports.ErrDeadlock):
+		return &Error{Code: CodeDBUnavailable, Message: "the database rolled this request back to end a deadlock; repeat it",
+			Details: map[string]any{"reason": core.ReasonDeadlock}, cause: err}, true
+	case errors.Is(err, ports.ErrLockTimeout):
+		return &Error{Code: CodeDBUnavailable, Message: "the database did not grant a lock in time; repeat the request",
+			Details: map[string]any{"reason": core.ReasonLockTimeout}, cause: err}, true
 	case errors.Is(err, ports.ErrDBUnavailable):
 		return &Error{Code: CodeDBUnavailable, Message: "the database is not available", cause: err}, true
 	case errors.Is(err, ports.ErrStorageUnavailable):
@@ -147,10 +153,23 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="mfgraph"`)
 	}
+	if retryable(ae) {
+		w.Header().Set("Retry-After", "1")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// retryable reports the errors after which the same request can be
+// repeated at once: a lock wait timeout or a deadlock in the database.
+func retryable(ae *Error) bool {
+	if ae.Code != CodeDBUnavailable {
+		return false
+	}
+	r := ae.Details["reason"]
+	return r == core.ReasonLockTimeout || r == core.ReasonDeadlock
 }
 
 type loggerKey struct{}

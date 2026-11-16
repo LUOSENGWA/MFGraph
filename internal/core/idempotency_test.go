@@ -172,3 +172,34 @@ func TestIdempotencySameKeyConcurrently(t *testing.T) {
 		t.Fatalf("%d snapshot IDs returned, %d snapshots on the branch; want 1 and 1", len(ids), len(timeline))
 	}
 }
+
+// flakyStore fails the first project insertion with a lock wait timeout.
+type flakyStore struct {
+	*memory.Store
+	failed atomic.Bool
+}
+
+func (s *flakyStore) InsertProject(ctx context.Context, tx ports.Tx, p ports.Project) error {
+	if s.failed.CompareAndSwap(false, true) {
+		return fmt.Errorf("mysql: %w", ports.ErrLockTimeout)
+	}
+	return s.Store.InsertProject(ctx, tx, p)
+}
+
+// TestLockTimeoutIsRetryable: a lock wait timeout is db_unavailable with
+// reason lock_timeout, and the same request, with the same key, can be
+// repeated at once.
+func TestLockTimeoutIsRetryable(t *testing.T) {
+	fs := &flakyStore{}
+	e := newEnvStore(t, core.Config{}, func(m *memory.Store) ports.Store {
+		fs.Store = m
+		return fs
+	})
+	req := core.CreateProjectRequest{Name: "retry"}
+	_, err := e.svc.CreateProject(ctx, alice, req, "k")
+	wantCode(t, "lock wait timeout", err, core.CodeDBUnavailable, "reason", core.ReasonLockTimeout)
+	p, err := e.svc.CreateProject(ctx, alice, req, "k")
+	if err != nil || p.Name != "retry" {
+		t.Fatalf("repeat with the same key: %+v %v", p, err)
+	}
+}

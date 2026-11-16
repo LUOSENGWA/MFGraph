@@ -134,7 +134,7 @@ X-Correlation-Id: <optional>
 | `blob_missing`（410） | `hashes`，以及 `reason`：`not_uploaded`（从未上传到这个工作区）或 `missing_in_storage`（上传过，但对象已丢失） |
 | `file_too_large`（413） | `max_bytes` |
 | `request_too_large`（413） | `max_bytes`（上传以外的请求的请求体） |
-| `db_unavailable` / `storage_unavailable`（503） | 依赖未配置时 `reason` 为 `not_configured`；`/readyz` 另带 `check` |
+| `db_unavailable` / `storage_unavailable`（503） | 依赖未配置时 `reason` 为 `not_configured`；`/readyz` 另带 `check`。`db_unavailable` 的 `reason` 为 `lock_timeout`（MySQL 与 seekdb 的 1205 错误）或 `deadlock`（MySQL 的 1213 错误；seekdb 把死锁报告为锁等待超时）时带 `Retry-After: 1`：并发请求占着这次请求需要的行，没有做任何改动，原样重试即可 |
 
 `Idempotency-Key` 保留 24 小时。使用它的第一个请求还在执行时，重复请求得到 `409 conflict`，`reason` 为 `in_progress`。第一个请求持有这个 key 的时间是 `MFGRAPH_IDEMPOTENCY_LEASE`（60 秒）：超过之后，重复请求会接管这个 key 并执行；第一个请求如果还在执行，会以 `409 conflict` 失败，不做任何改动。因此即使服务在请求中途停止，同一改动也最多执行一次。
 

@@ -94,7 +94,11 @@ func (s *Store) writer(tx ports.Tx) (querier, error) {
 	return t.tx, nil
 }
 
-const errDupEntry = 1062 // ER_DUP_ENTRY
+const (
+	errDupEntry        = 1062 // ER_DUP_ENTRY
+	errLockWaitTimeout = 1205 // ER_LOCK_WAIT_TIMEOUT (MySQL; seekdb also for deadlocks)
+	errDeadlock        = 1213 // ER_LOCK_DEADLOCK (MySQL)
+)
 
 // wrap maps driver errors to the errors of package ports: no rows to
 // ErrNotFound, a duplicate key to ErrAlreadyExists, and connection failures
@@ -109,6 +113,10 @@ func wrap(err error) error {
 		return fmt.Errorf("%w: %v", ports.ErrNotFound, err)
 	case errors.As(err, &me) && me.Number == errDupEntry:
 		return fmt.Errorf("%w: %v", ports.ErrAlreadyExists, err)
+	case errors.As(err, &me) && me.Number == errLockWaitTimeout:
+		return fmt.Errorf("%w: %v", ports.ErrLockTimeout, err)
+	case errors.As(err, &me) && me.Number == errDeadlock:
+		return fmt.Errorf("%w: %v", ports.ErrDeadlock, err)
 	case errors.Is(err, driver.ErrBadConn), errors.Is(err, gomysql.ErrInvalidConn), errors.Is(err, sql.ErrConnDone),
 		errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, syscall.ECONNRESET), errors.As(err, &ne):
 		return fmt.Errorf("%w: %v", ports.ErrDBUnavailable, err)
