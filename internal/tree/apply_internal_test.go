@@ -440,7 +440,7 @@ func mergedWith(a, b map[contenthash.Hash][]byte) MapGetter {
 // bytes and are found by them; the write-time rules apply only to the names
 // a change creates.
 func TestApplyStoredNames(t *testing.T) {
-	zw := fileEntry("a\u200bb", "zw", ModeRegular)               // disallowed today
+	zw := fileEntry("a\u200bb", "zw", ModeRegular)          // disallowed today
 	future := fileEntry("x\U0001F6D8", "17.0", ModeRegular) // assigned only after V
 	decomposed := fileEntry("e\u0301.md", "nfd", ModeRegular)
 	root, g := storedTree(zw, future, decomposed)
@@ -797,7 +797,7 @@ func TestApplyMultiLevelIndex(t *testing.T) {
 		{del("f001"), 18 + 5 + 2 + 1},
 		{del("f069"), 4},                   // the last page loses an entry
 		{put("f0335", "inserted"), 0},      // a new name: the whole directory
-		{put("f\u00e9", "non-ASCII"), 0},        // a new name after every other
+		{put("f\u00e9", "non-ASCII"), 0},   // a new name after every other
 		{put("e", "before every name"), 0}, // a new name before every other
 	} {
 		g := &countingGetter{m: nodes}
