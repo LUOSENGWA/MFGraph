@@ -180,10 +180,6 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 			logger.Error("refusing to start", "err", err.Error())
 			return 2
 		}
-		if cfg.Module() {
-			logger.Error("refusing to start", "err", "module mode is not available in this build")
-			return 2
-		}
 	}
 	if cmd == "migrate" {
 		if err := migrateOnly(ctx, cfg, logger); err != nil {
@@ -325,6 +321,18 @@ func pseudonymizer(cfg config.Config, logger *slog.Logger) (*actorref.Pseudonymi
 	return actorref.NewPseudonymizer(key)
 }
 
+// authenticator returns the static bearer tokens of standalone mode or the
+// identity headers of module mode.
+func authenticator(cfg config.Config, logger *slog.Logger) (ports.Authenticator, error) {
+	if cfg.Module() {
+		return api.NewTrustedHeaders(cfg.TrustedHeaderPrefix, cfg.InternalTokenHeader, cfg.InternalToken)
+	}
+	if len(cfg.AuthTokens) == 0 {
+		logger.Warn("no " + config.EnvAuthTokens + " configured: every authenticated endpoint answers 401")
+	}
+	return api.NewStaticTokens(cfg.AuthTokens)
+}
+
 // serve runs the HTTP server on ln until ctx is canceled, then shuts down
 // gracefully within cfg.ShutdownTimeout.
 func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog.Logger) error {
@@ -357,9 +365,14 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		if err != nil {
 			return err
 		}
+		var policy ports.Authorizer = authz.ProjectOwner{}
+		if cfg.Module() {
+			policy = authz.ProjectScope{}
+		}
 		svc, err = core.New(core.Config{TenantID: cfg.TenantID, MaxUploadBytes: cfg.MaxUploadBytes,
-			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease}, core.Deps{Store: store, Objects: objects, Trees: trees,
-			Authz: authz.ProjectOwner{}, Clock: ports.ClockFunc(time.Now), IDs: ids.NewGenerator(), Logger: logger})
+			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()},
+			core.Deps{Store: store, Objects: objects, Trees: trees, Authz: policy, Clock: ports.ClockFunc(time.Now),
+				IDs: ids.NewGenerator(), Logger: logger})
 		if err != nil {
 			return err
 		}
@@ -367,30 +380,31 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	} else {
 		logger.Warn("no " + config.EnvDBDSN + " configured: /readyz and every business endpoint answer 503 db_unavailable")
 	}
-	authn, err := api.NewStaticTokens(cfg.AuthTokens)
+	authn, err := authenticator(cfg, logger)
 	if err != nil {
 		return err
-	}
-	if len(cfg.AuthTokens) == 0 {
-		logger.Warn("no " + config.EnvAuthTokens + " configured: every authenticated endpoint answers 401")
 	}
 	pseudo, err := pseudonymizer(cfg, logger)
 	if err != nil {
 		return err
 	}
+	opts := api.Options{
+		Authenticator: authn,
+		IDGen:         ids.NewGenerator(),
+		Readiness:     []api.ReadinessCheck{dbCheck, storageCheck},
+		Logger:        logger,
+		Service:       svc,
+		APIPrefix:     cfg.APIPrefix,
+		Version:       version,
+		Pseudonym:     pseudo.Pseudonym,
+		// The upload limit is MaxUploadBytes (core).
+		MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
+	}
+	if cfg.Module() {
+		opts.TrustedHeaderPrefix, opts.NoProjects = cfg.TrustedHeaderPrefix, true
+	}
 	srv := &http.Server{
-		Handler: api.NewHandler(api.Options{
-			Authenticator: authn,
-			IDGen:         ids.NewGenerator(),
-			Readiness:     []api.ReadinessCheck{dbCheck, storageCheck},
-			Logger:        logger,
-			Service:       svc,
-			APIPrefix:     cfg.APIPrefix,
-			Version:       version,
-			Pseudonym:     pseudo.Pseudonym,
-			// The upload limit is MaxUploadBytes (core).
-			MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
-		}),
+		Handler:           api.NewHandler(opts),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,

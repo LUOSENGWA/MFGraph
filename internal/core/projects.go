@@ -13,9 +13,16 @@ type CreateProjectRequest struct {
 	Name string `json:"name"`
 }
 
+// errNoProjects answers the project operations when the host platform owns
+// the projects: the same not_found as for an unknown endpoint.
+func errNoProjects() *Error { return newError(CodeNotFound, "no such endpoint", nil) }
+
 // CreateProject creates a project owned by the caller (standalone
 // deployments: the creator is its only owner) in the configured tenant.
 func (s *Service) CreateProject(ctx context.Context, p ports.Principal, req CreateProjectRequest, idemKey string) (ports.Project, error) {
+	if s.cfg.HostOwnsProjects {
+		return ports.Project{}, errNoProjects()
+	}
 	if err := checkLabel("name", req.Name, true); err != nil {
 		return ports.Project{}, err
 	}
@@ -39,6 +46,9 @@ func (s *Service) CreateProject(ctx context.Context, p ports.Principal, req Crea
 
 // GetProject returns a project the caller can see.
 func (s *Service) GetProject(ctx context.Context, p ports.Principal, id string) (ports.Project, error) {
+	if s.cfg.HostOwnsProjects {
+		return ports.Project{}, errNoProjects()
+	}
 	if err := checkID("project_id", id); err != nil {
 		return ports.Project{}, err
 	}
@@ -85,9 +95,15 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 	if err := checkLabel("display_name", req.DisplayName, false); err != nil {
 		return WorkspaceView{}, err
 	}
-	proj, err := s.d.Store.GetProject(ctx, nil, req.ProjectID)
-	if err != nil {
-		return WorkspaceView{}, mapErr(err, "project")
+	// When the host owns the projects, the project is the one of the
+	// request as given: the authorizer admits only the request's project,
+	// whose existence is the host's business.
+	proj := ports.Project{ID: req.ProjectID, TenantID: s.cfg.TenantID}
+	if !s.cfg.HostOwnsProjects {
+		var err error
+		if proj, err = s.d.Store.GetProject(ctx, nil, req.ProjectID); err != nil {
+			return WorkspaceView{}, mapErr(err, "project")
+		}
 	}
 	if err := s.checkProject(ctx, p, ports.ActionWorkspaceCreate, proj); err != nil {
 		return WorkspaceView{}, err

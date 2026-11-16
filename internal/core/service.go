@@ -48,6 +48,13 @@ type Config struct {
 	// idempotency record: a request with the same key that comes later
 	// takes the record over and runs (default 60s).
 	IdempotencyLease time.Duration
+	// HostOwnsProjects is set in module mode: the host platform owns the
+	// projects and their access control, and the projects table does not
+	// exist. The core then never reads or writes projects: CreateProject
+	// and GetProject answer not_found as for an unknown endpoint, and a
+	// workspace is created in the project of the request as given (the
+	// authorizer checks it; its existence is the host's business).
+	HostOwnsProjects bool
 }
 
 // Deps are the ports the use cases run on.
@@ -183,15 +190,18 @@ func mapErr(err error, what string) error {
 
 // access resolves a workspace and its project and checks action. A
 // workspace that does not exist and one the caller may not see both give
-// not_found.
+// not_found. In standalone mode the project is read for its owner; when the
+// host owns the projects (HostOwnsProjects) it is not read at all.
 func (s *Service) access(ctx context.Context, p ports.Principal, workspaceID string, action ports.Action) (ports.Workspace, ports.Project, error) {
 	ws, err := s.d.Store.GetWorkspace(ctx, nil, workspaceID)
 	if err != nil {
 		return ports.Workspace{}, ports.Project{}, mapErr(err, "workspace")
 	}
-	proj, err := s.d.Store.GetProject(ctx, nil, ws.ProjectID)
-	if err != nil {
-		return ports.Workspace{}, ports.Project{}, mapErr(err, "workspace")
+	proj := ports.Project{ID: ws.ProjectID, TenantID: ws.TenantID}
+	if !s.cfg.HostOwnsProjects {
+		if proj, err = s.d.Store.GetProject(ctx, nil, ws.ProjectID); err != nil {
+			return ports.Workspace{}, ports.Project{}, mapErr(err, "workspace")
+		}
 	}
 	res := ports.Resource{Type: ports.ResourceWorkspace, ID: ws.ID, TenantID: ws.TenantID, ProjectID: ws.ProjectID,
 		WorkspaceID: ws.ID, OwnerRef: proj.OwnerRef}

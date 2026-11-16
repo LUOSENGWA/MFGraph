@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
@@ -49,6 +50,10 @@ type Options struct {
 	// mode ("" in standalone mode): the request ID is taken from
 	// <prefix>Request-Id first, and <prefix>Trace-Id is logged as trace_id.
 	TrustedHeaderPrefix string
+	// NoProjects removes the project endpoints (module mode: the host
+	// platform owns the projects): /projects and /projects/{project_id}
+	// answer 404 as unknown paths, whatever the method and the body.
+	NoProjects bool
 }
 
 // publicPaths are served without authentication.
@@ -88,6 +93,9 @@ func NewHandler(o Options) http.Handler {
 		WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
 	})
 	var handler http.Handler = mux
+	if o.NoProjects {
+		handler = withoutProjects(handler)
+	}
 	handler = Prefix(o.APIPrefix, publicPaths)(handler)
 	handler = Authenticate(o.Authenticator, publicPaths)(handler)
 	handler = Recover(o.Logger)(handler)
@@ -98,6 +106,18 @@ func NewHandler(o Options) http.Handler {
 	handler = AccessLog(o.Logger, o.Pseudonym, traceHeader)(handler)
 	handler = RequestID(o.IDGen, requestIDHeader)(handler)
 	return handler
+}
+
+// withoutProjects answers the project endpoints with the 404 of an unknown
+// path (Options.NoProjects).
+func withoutProjects(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p := r.URL.Path; p == apiBase+"/projects" || strings.HasPrefix(p, apiBase+"/projects/") {
+			WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // contentLength passes the request's Content-Length to the upload handler,
