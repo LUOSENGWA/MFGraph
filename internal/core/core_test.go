@@ -564,6 +564,38 @@ func TestRestorePathCaseConflict(t *testing.T) {
 	}
 }
 
+// TestLabels: project names and workspace display names are free text of
+// at most 255 bytes without control characters, noncharacters, bidi
+// controls or invisible characters; a project name is not only white space.
+func TestLabels(t *testing.T) {
+	e := newEnv(t, core.Config{})
+	for _, name := range []string{"demo", "Plan 2027", "\u6587\u4ef6", strings.Repeat("a", 255), strings.Repeat("\u6587", 85),
+		" padded ", "\U0001F469\u200d\U0001F4BB"} {
+		if p, err := e.svc.CreateProject(ctx, alice, core.CreateProjectRequest{Name: name}, ""); err != nil || p.Name != name {
+			t.Errorf("name %q: %q %v", name, p.Name, err)
+		}
+	}
+	for what, name := range map[string]string{
+		"empty": "", "white space": " \t\u3000", "256 bytes": strings.Repeat("a", 256),
+		"86 CJK characters (258 bytes)": strings.Repeat("\u6587", 86), "a line feed": "a\nb", "DEL": "a\x7fb",
+		"a C1 control": "a\u0085b", "a bidi override": "abc\u202edef", "a zero width space": "a\u200bb",
+		"a noncharacter": "a\ufdd0", "invalid UTF-8": "a\xffb", "a Hangul filler": "\u3164",
+	} {
+		_, err := e.svc.CreateProject(ctx, alice, core.CreateProjectRequest{Name: name}, "")
+		wantCode(t, "name with "+what, err, core.CodeInvalidRequest)
+	}
+	proj, err := e.svc.CreateProject(ctx, alice, core.CreateProjectRequest{Name: "p"}, "")
+	e.must(err)
+	for _, dn := range []string{"", "Main workspace"} {
+		_, err := e.svc.CreateWorkspace(ctx, alice, core.CreateWorkspaceRequest{ProjectID: proj.ID, DisplayName: dn}, "")
+		e.must(err)
+	}
+	for what, dn := range map[string]string{"256 bytes": strings.Repeat("b", 256), "a bidi override": "\u202e", "a carriage return": "a\rb"} {
+		_, err := e.svc.CreateWorkspace(ctx, alice, core.CreateWorkspaceRequest{ProjectID: proj.ID, DisplayName: dn}, "")
+		wantCode(t, "display name with "+what, err, core.CodeInvalidRequest)
+	}
+}
+
 func TestListsAndPagination(t *testing.T) {
 	e := newEnv(t, core.Config{})
 	ws := e.workspace(alice)

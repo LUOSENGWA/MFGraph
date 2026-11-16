@@ -221,6 +221,13 @@ func isDisallowed(r rune) bool {
 		0xfff9 <= r && r <= 0xfffb // interlinear annotation controls
 }
 
+// IsLabelChar reports whether r may appear in a label: the name of a
+// project or the display name of a workspace. Labels are free text, but
+// they must not hide or reorder what they show: control characters (C0,
+// DEL, C1), noncharacters and the fixed disallowed list of the write-time
+// rules (bidi controls and invisible characters) are refused.
+func IsLabelChar(r rune) bool { return !isControl(r) && !isNoncharacter(r) && !isDisallowed(r) }
+
 // isUnassigned reports code points of general category Cn in UnicodeVersion.
 // The noncharacters are Cn too, but checkChars reports them as
 // KindNoncharacter first.

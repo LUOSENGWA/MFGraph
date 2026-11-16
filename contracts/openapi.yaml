@@ -1062,6 +1062,13 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+          description: |
+            Free text, stored as given: valid UTF-8 of at most 255 bytes (the
+            byte limit is the stricter one), not empty and not only white
+            space, without control characters (U+0000-U+001F,
+            U+007F-U+009F), noncharacters or characters of the fixed
+            disallowed list of the path rules (bidi controls and invisible
+            characters). Otherwise `invalid_request` (400).
     Workspace:
       type: object
       required: [workspace_id, project_id, tenant_id, workspace_type, display_name, status, main_branch_id, created_at, updated_at]
@@ -1095,6 +1102,9 @@ components:
         display_name:
           type: string
           maxLength: 255
+          description: |
+            Optional free text, stored as given, with the character rules
+            and the 255-byte limit of a project name; it may be empty.
     Branch:
       type: object
       required: [branch_id, workspace_id, branch_name, ref_name, branch_type, head_snapshot_id, generation, status, created_at, updated_at]

@@ -16,10 +16,7 @@ type CreateProjectRequest struct {
 // CreateProject creates a project owned by the caller (standalone
 // deployments: the creator is its only owner) in the configured tenant.
 func (s *Service) CreateProject(ctx context.Context, p ports.Principal, req CreateProjectRequest, idemKey string) (ports.Project, error) {
-	if req.Name == "" {
-		return ports.Project{}, invalid("name must not be empty")
-	}
-	if err := checkLength("name", req.Name, 255); err != nil {
+	if err := checkLabel("name", req.Name, true); err != nil {
 		return ports.Project{}, err
 	}
 	res := ports.Resource{Type: ports.ResourceTenant, ID: s.cfg.TenantID, TenantID: s.cfg.TenantID}
@@ -85,7 +82,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 	if err := checkID("project_id", req.ProjectID); err != nil {
 		return WorkspaceView{}, err
 	}
-	if err := checkLength("display_name", req.DisplayName, 255); err != nil {
+	if err := checkLabel("display_name", req.DisplayName, false); err != nil {
 		return WorkspaceView{}, err
 	}
 	proj, err := s.d.Store.GetProject(ctx, nil, req.ProjectID)

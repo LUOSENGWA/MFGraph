@@ -322,11 +322,19 @@ type CommitResult struct {
 
 // CreateProjectRequest defines model for CreateProjectRequest.
 type CreateProjectRequest struct {
+	// Name Free text, stored as given: valid UTF-8 of at most 255 bytes (the
+	// byte limit is the stricter one), not empty and not only white
+	// space, without control characters (U+0000-U+001F,
+	// U+007F-U+009F), noncharacters or characters of the fixed
+	// disallowed list of the path rules (bidi controls and invisible
+	// characters). Otherwise `invalid_request` (400).
 	Name string `json:"name"`
 }
 
 // CreateWorkspaceRequest defines model for CreateWorkspaceRequest.
 type CreateWorkspaceRequest struct {
+	// DisplayName Optional free text, stored as given, with the character rules
+	// and the 255-byte limit of a project name; it may be empty.
 	DisplayName *string `json:"display_name,omitempty"`
 
 	// ProjectId ULID, 26 uppercase Crockford base32 characters.

@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"github.com/LUOSENGWA/MFGraph/internal/tree"
 )
@@ -116,6 +117,31 @@ func checkLength(name, s string, max int) error {
 	}
 	if n := utf8.RuneCountInString(s); n > max {
 		return invalid(fmt.Sprintf("%s has %d characters, at most %d are allowed", name, n, max))
+	}
+	return nil
+}
+
+// maxLabelBytes bounds a label (the name of a project, the display name of
+// a workspace).
+const maxLabelBytes = 255
+
+// checkLabel checks a label: valid UTF-8 of at most 255 bytes, without
+// the characters pathx.IsLabelChar refuses; a required label must not be
+// empty or only white space. The label is stored as given.
+func checkLabel(field, s string, required bool) error {
+	if !utf8.ValidString(s) {
+		return invalid(field + " is not valid UTF-8")
+	}
+	if len(s) > maxLabelBytes {
+		return invalid(fmt.Sprintf("%s has %d bytes, at most %d are allowed", field, len(s), maxLabelBytes))
+	}
+	if required && strings.TrimSpace(s) == "" {
+		return invalid(field + " must not be empty or only white space")
+	}
+	for _, r := range s {
+		if !pathx.IsLabelChar(r) {
+			return invalid(fmt.Sprintf("%s must not contain U+%04X (control characters, noncharacters, bidi controls and invisible characters are not allowed)", field, r))
+		}
 	}
 	return nil
 }

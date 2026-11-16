@@ -366,6 +366,19 @@ func TestCheckUnicodeVersions(t *testing.T) {
 	}
 }
 
+func TestIsLabelChar(t *testing.T) {
+	for _, r := range []rune{'a', ' ', '-', 0x00e9, 0x6587, 0x1f680, 0x200d, 0x3000, 0xe000} {
+		if !pathx.IsLabelChar(r) {
+			t.Errorf("U+%04X refused", r)
+		}
+	}
+	for _, r := range []rune{0, '\t', '\n', 0x7f, 0x85, 0x9f, 0xfdd0, 0xfffe, 0x10ffff, 0x202e, 0x200b, 0xfeff, 0x3164, 0xe0001} {
+		if pathx.IsLabelChar(r) {
+			t.Errorf("U+%04X accepted", r)
+		}
+	}
+}
+
 func TestAllowedAndRejectedCharacters(t *testing.T) {
 	allowed := []rune{0x200c, 0x200d, 0xff0f, 0xe000, 0x00a0, 0xfe00, 0xfe0e, 0xfe0f, 0xe0020, 0xe0067, 0xe007f, 0x034f,
 		0x1161, 0x3165, 0xffa1, 0x2070} // the neighbours of the fillers and of U+206A-U+206F
