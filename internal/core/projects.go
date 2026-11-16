@@ -83,8 +83,9 @@ type WorkspaceView struct {
 }
 
 // CreateWorkspace creates a project-level workspace and, in the same
-// transaction, its main branch (ref main, generation 1, no head) and its
-// usage row. The storage prefix is the default prefix
+// transaction, its main branch (ref main, generation 1, no head), its
+// usage row and the events mfgraph.workspace_created and
+// mfgraph.branch_created. The storage prefix is the default prefix
 // tenants/<tenant>/projects/<project>/workspaces/<workspace>: default
 // prefixes have a fixed number of segments, so they are never nested, and
 // the database rejects two that differ only in case.
@@ -123,6 +124,14 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 			RefName: ports.MainRefName, Type: ports.BranchTypeMain, Generation: 1, Status: ports.StatusActive,
 			CreatedByRef: p.Ref, CreatedByPrincipalUID: p.PrincipalUID, CreatedAtUs: now, UpdatedAtUs: now}
 		view := WorkspaceView{Workspace: ws, MainBranchID: main.ID}
+		evs, err := s.events(p, proj.ID, now,
+			eventSpec{kind: ports.EventWorkspaceCreated, workspaceID: id, key: id, version: 1,
+				data: workspaceCreatedData{WorkspaceID: id, MainBranchID: main.ID, StorageBackendID: ws.StorageBackendID}},
+			eventSpec{kind: ports.EventBranchCreated, workspaceID: id, key: main.ID, version: main.Generation,
+				data: branchCreatedData{WorkspaceID: id, BranchID: main.ID, RefName: main.RefName, Generation: main.Generation}})
+		if err != nil {
+			return WorkspaceView{}, err
+		}
 		err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
 			if err := s.d.Store.InsertWorkspace(ctx, tx, ws); err != nil {
 				return err
@@ -131,6 +140,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 				return err
 			}
 			if err := s.d.Store.InsertUsage(ctx, tx, id, now); err != nil {
+				return err
+			}
+			if err := s.appendEvents(ctx, tx, evs); err != nil {
 				return err
 			}
 			return completeIf(ctx, complete, tx, view)

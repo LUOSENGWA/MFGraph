@@ -17,22 +17,38 @@ type ClockFunc func() time.Time
 // Now calls f.
 func (f ClockFunc) Now() time.Time { return f() }
 
-// Event types written to the outbox by the first core slice.
+// Event kinds (docs/events.md), the same in both deployment forms. The
+// first core slice emits the first five; EventSnapshotCreated is
+// registered for explicit snapshots (checkpoints, snapshots before a
+// restore), which the first core slice does not have.
 const (
-	EventSnapshotCreated  = "snapshot.created"
-	EventSnapshotRestored = "snapshot.restored"
-	EventBranchUpdated    = "branch.updated"
+	EventWorkspaceCreated = "mfgraph.workspace_created"
+	EventBranchCreated    = "mfgraph.branch_created"
+	EventCommitCreated    = "mfgraph.commit_created"
+	EventBranchUpdated    = "mfgraph.branch_updated"
+	EventSnapshotRestored = "mfgraph.snapshot_restored"
+	EventSnapshotCreated  = "mfgraph.snapshot_created"
+)
+
+// EventKinds lists every registered event kind; EmittedEventKinds those the
+// first core slice emits.
+var (
+	EventKinds = []string{EventWorkspaceCreated, EventBranchCreated, EventCommitCreated, EventSnapshotRestored,
+		EventBranchUpdated, EventSnapshotCreated}
+	EmittedEventKinds = []string{EventWorkspaceCreated, EventBranchCreated, EventCommitCreated, EventSnapshotRestored,
+		EventBranchUpdated}
 )
 
 // Event is one outbox row (table outbox_events). It is written with status
-// pending; the first core slice does not publish events.
+// pending in the transaction of the change; module mode forwards it to the
+// host platform's outbox afterwards (package outbox).
 type Event struct {
-	ID          string // event_id, a ULID
-	Type        string
+	ID          string // event_id of the row, a ULID (the envelope has its own event_id)
+	Type        string // the event kind
 	WorkspaceID string
-	AggregateID string // e.g. the snapshot_id
-	Payload     []byte // JSON (encoding/json of a fixed struct)
-	CreatedAtUs int64  // epoch microseconds
+	AggregateID string // the business key: snapshot, branch or workspace ID
+	Payload     []byte // the envelope (JSON)
+	CreatedAtUs int64  // epoch microseconds; the outbox is ordered by (CreatedAtUs, ID)
 }
 
 // Tx is an open unit of work created by a Transactor. It is passed to every

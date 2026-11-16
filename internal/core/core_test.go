@@ -276,12 +276,16 @@ func TestUploadCommitBrowseDiffRestore(t *testing.T) {
 	var types []string
 	for _, ev := range events {
 		types = append(types, ev.Type)
-		var payload map[string]any
-		if err := json.Unmarshal(ev.Payload, &payload); err != nil || payload["schema_version"] != float64(1) || payload["workspace_id"] != ws {
+		var payload struct {
+			V    int            `json:"v"`
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil || payload.V != 1 || payload.Data["workspace_id"] != ws {
 			t.Fatalf("event payload %s: %v", ev.Payload, err)
 		}
 	}
-	if strings.Join(types, ",") != "snapshot.created,branch.updated,snapshot.created,branch.updated,snapshot.restored,branch.updated" {
+	if strings.Join(types, ",") != "mfgraph.workspace_created,mfgraph.branch_created,mfgraph.commit_created,mfgraph.branch_updated,"+
+		"mfgraph.commit_created,mfgraph.branch_updated,mfgraph.snapshot_restored,mfgraph.branch_updated" {
 		t.Fatalf("events: %v", types)
 	}
 	if !e.store.HasUsage(ws) {
@@ -837,8 +841,8 @@ func TestSnapshotTimesNeverGoBack(t *testing.T) {
 	e.must(err)
 	for i, pair := range [][2]int64{{sd.first.CreatedAtUs, second.CreatedAtUs}, {second.CreatedAtUs, third.CreatedAtUs},
 		{third.CreatedAtUs, restored.CreatedAtUs}} {
-		if pair[1] != pair[0]+1 {
-			t.Errorf("snapshot %d: created at %d, parent at %d; want the parent's time plus 1", i+2, pair[1], pair[0])
+		if pair[1] != pair[0]+2 {
+			t.Errorf("snapshot %d: created at %d, parent at %d; want the parent's time plus 2", i+2, pair[1], pair[0])
 		}
 	}
 	snap, err := e.svc.GetSnapshot(ctx, alice, restored.SnapshotID)
