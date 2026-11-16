@@ -29,6 +29,15 @@ const otherToken = "test-token-other-bbbbbbbbbbbb"
 // ports, below prefix.
 func newServiceServer(t *testing.T, prefix string, cfg core.Config) *httptest.Server {
 	t.Helper()
+	srv := httptest.NewServer(newServiceHandler(t, prefix, cfg, nil))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newServiceHandler returns the handler of newServiceServer; opts, unless
+// nil, changes its options.
+func newServiceHandler(t *testing.T, prefix string, cfg core.Config, opts func(*api.Options)) http.Handler {
+	t.Helper()
 	store := memory.NewStore()
 	objs := memory.NewBlobStore()
 	trees, err := treestore.New(objs, func(ctx context.Context, ws string) (string, error) {
@@ -49,10 +58,12 @@ func newServiceServer(t *testing.T, prefix string, cfg core.Config) *httptest.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(api.NewHandler(api.Options{Authenticator: authn, IDGen: ids.NewGenerator(), Service: svc,
-		APIPrefix: prefix, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}))
-	t.Cleanup(srv.Close)
-	return srv
+	o := api.Options{Authenticator: authn, IDGen: ids.NewGenerator(), Service: svc, APIPrefix: prefix,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if opts != nil {
+		opts(&o)
+	}
+	return api.NewHandler(o)
 }
 
 type caller struct {

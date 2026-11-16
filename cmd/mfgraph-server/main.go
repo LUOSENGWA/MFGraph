@@ -297,6 +297,8 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 			APIPrefix:     cfg.APIPrefix,
 			Version:       version,
 			Pseudonym:     pseudo.Pseudonym,
+			// The upload limit is MaxUploadBytes (core).
+			MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,

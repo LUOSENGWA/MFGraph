@@ -31,6 +31,16 @@ info:
       HTTP status. Each operation lists the codes it can return; any
       operation may also return `internal` (500), `not_implemented` (501),
       `rate_limited` (429) and `db_unavailable` / `storage_unavailable` (503).
+    * **Request bodies.** Every POST takes a JSON body and must send
+      `Content-Type: application/json`, with no parameter but
+      `charset=utf-8`; anything else gives `415` with code
+      `invalid_request` and `details.reason` = `unsupported_content_type`.
+      The body must be one JSON value, with nothing but white space after
+      it (`400 invalid_request` otherwise). The body of every request except
+      an upload is limited by the server (16 MiB by default): a larger body
+      gives `413 request_too_large` with `details.max_bytes`, and the server
+      stops reading it at the limit and closes the connection. Uploads have
+      their own limit (`file_too_large`).
     * **Pagination.** List endpoints take an opaque `cursor` and `limit`
       (default 50, maximum 500) and return `{"items": [...], "next_cursor": ...}`;
       `next_cursor` is `null` on the last page.
@@ -160,8 +170,9 @@ paths:
         endpoint is not exposed. The project is created in the tenant of the
         caller.
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `idempotency_key_reuse` (409).
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `idempotency_key_reuse` (409),
+        `request_too_large` (413).
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -186,6 +197,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
   /api/v1/projects/{project_id}:
@@ -220,8 +235,9 @@ paths:
         (`ref_name` `main`, generation 1, no head). The storage prefix is
         chosen by the server and never changes.
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+        (409), `request_too_large` (413).
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -248,6 +264,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
   /api/v1/workspaces/{workspace_id}:
@@ -400,8 +420,9 @@ paths:
         * Changes that leave the tree as it is are refused
           (`invalid_request` with `details.reason` = `no_changes`).
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `not_found` (404, workspace or branch), `conflict` (409:
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `not_found` (404, workspace or branch),
+        `request_too_large` (413), `conflict` (409:
         `expected_generation` is not the current generation, with
         `details.current_generation`; or deleting a path that is not a file,
         with `details.reason` = `path_not_found`; or a request with the same
@@ -443,6 +464,10 @@ paths:
           $ref: '#/components/responses/Gone'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
   /api/v1/workspaces/{workspace_id}/timeline:
@@ -690,8 +715,9 @@ paths:
         `{snapshot_id}` nor in the head) is refused with `invalid_request`
         and `details.reason` = `no_changes`.
 
-        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-        (403), `not_found` (404, snapshot or branch), `conflict` (409,
+        Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+        `forbidden` (403), `not_found` (404, snapshot or branch),
+        `request_too_large` (413), `conflict` (409,
         generation mismatch with `details.current_generation`; or
         `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
         `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -729,6 +755,10 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         default:
           $ref: '#/components/responses/Error'
 components:
@@ -854,6 +884,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    RequestTooLarge:
+      description: '`request_too_large`: the request body exceeds the server limit (`details.max_bytes`).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMediaType:
+      description: '`invalid_request` with `details.reason` = `unsupported_content_type`: the body is not sent as `application/json`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     UnprocessableEntity:
       description: '`invalid_path`, with `details.kind` (`PathErrorKind`) naming the violated rule.'
       content:
@@ -926,9 +968,9 @@ components:
             Stable machine-readable code: invalid_request, unauthenticated,
             forbidden, not_found, conflict, idempotency_key_reuse,
             upload_expired, blob_missing, precondition_failed,
-            quota_exceeded, file_too_large, invalid_path, unsupported_format,
-            rate_limited, internal, not_implemented, storage_unavailable,
-            db_unavailable.
+            quota_exceeded, file_too_large, request_too_large, invalid_path,
+            unsupported_format, rate_limited, internal, not_implemented,
+            storage_unavailable, db_unavailable.
           example: not_implemented
         message:
           type: string

@@ -97,8 +97,9 @@ type ClientInterface interface {
 	// endpoint is not exposed. The project is created in the tenant of the
 	// caller.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `idempotency_key_reuse` (409),
+	// `request_too_large` (413).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -112,8 +113,9 @@ type ClientInterface interface {
 	// endpoint is not exposed. The project is created in the tenant of the
 	// caller.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `idempotency_key_reuse` (409),
+	// `request_too_large` (413).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -178,8 +180,9 @@ type ClientInterface interface {
 	// `{snapshot_id}` nor in the head) is refused with `invalid_request`
 	// and `details.reason` = `no_changes`.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, snapshot or branch),
+	// `request_too_large` (413), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 	// `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -206,8 +209,9 @@ type ClientInterface interface {
 	// `{snapshot_id}` nor in the head) is refused with `invalid_request`
 	// and `details.reason` = `no_changes`.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, snapshot or branch),
+	// `request_too_large` (413), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 	// `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -242,8 +246,9 @@ type ClientInterface interface {
 	// (`ref_name` `main`, generation 1, no head). The storage prefix is
 	// chosen by the server and never changes.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+	// (409), `request_too_large` (413).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -256,8 +261,9 @@ type ClientInterface interface {
 	// (`ref_name` `main`, generation 1, no head). The storage prefix is
 	// chosen by the server and never changes.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+	// (409), `request_too_large` (413).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -311,8 +317,9 @@ type ClientInterface interface {
 	// * Changes that leave the tree as it is are refused
 	//   (`invalid_request` with `details.reason` = `no_changes`).
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, workspace or branch), `conflict` (409:
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, workspace or branch),
+	// `request_too_large` (413), `conflict` (409:
 	// `expected_generation` is not the current generation, with
 	// `details.current_generation`; or deleting a path that is not a file,
 	// with `details.reason` = `path_not_found`; or a request with the same
@@ -359,8 +366,9 @@ type ClientInterface interface {
 	// * Changes that leave the tree as it is are refused
 	//   (`invalid_request` with `details.reason` = `no_changes`).
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, workspace or branch), `conflict` (409:
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, workspace or branch),
+	// `request_too_large` (413), `conflict` (409:
 	// `expected_generation` is not the current generation, with
 	// `details.current_generation`; or deleting a path that is not a file,
 	// with `details.reason` = `path_not_found`; or a request with the same
@@ -436,8 +444,9 @@ type ClientInterface interface {
 // endpoint is not exposed. The project is created in the tenant of the
 // caller.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `idempotency_key_reuse` (409),
+// `request_too_large` (413).
 //
 // Takes any type of body and a specified content type.
 //
@@ -461,8 +470,9 @@ func (c *Client) CreateProjectWithBody(ctx context.Context, params *CreateProjec
 // endpoint is not exposed. The project is created in the tenant of the
 // caller.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `idempotency_key_reuse` (409),
+// `request_too_large` (413).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -577,8 +587,9 @@ func (c *Client) GetSnapshotFile(ctx context.Context, snapshotId SnapshotId, par
 // `{snapshot_id}` nor in the head) is refused with `invalid_request`
 // and `details.reason` = `no_changes`.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, snapshot or branch),
+// `request_too_large` (413), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 // `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -615,8 +626,9 @@ func (c *Client) RestoreSnapshotWithBody(ctx context.Context, snapshotId Snapsho
 // `{snapshot_id}` nor in the head) is refused with `invalid_request`
 // and `details.reason` = `no_changes`.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, snapshot or branch),
+// `request_too_large` (413), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 // `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -671,8 +683,9 @@ func (c *Client) ListSnapshotTree(ctx context.Context, snapshotId SnapshotId, pa
 // (`ref_name` `main`, generation 1, no head). The storage prefix is
 // chosen by the server and never changes.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+// (409), `request_too_large` (413).
 //
 // Takes any type of body and a specified content type.
 //
@@ -695,8 +708,9 @@ func (c *Client) CreateWorkspaceWithBody(ctx context.Context, params *CreateWork
 // (`ref_name` `main`, generation 1, no head). The storage prefix is
 // chosen by the server and never changes.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+// (409), `request_too_large` (413).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -780,8 +794,9 @@ func (c *Client) ListBranches(ctx context.Context, workspaceId WorkspaceId, para
 //   - Changes that leave the tree as it is are refused
 //     (`invalid_request` with `details.reason` = `no_changes`).
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, workspace or branch), `conflict` (409:
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, workspace or branch),
+// `request_too_large` (413), `conflict` (409:
 // `expected_generation` is not the current generation, with
 // `details.current_generation`; or deleting a path that is not a file,
 // with `details.reason` = `path_not_found`; or a request with the same
@@ -838,8 +853,9 @@ func (c *Client) CreateCommitWithBody(ctx context.Context, workspaceId Workspace
 //   - Changes that leave the tree as it is are refused
 //     (`invalid_request` with `details.reason` = `no_changes`).
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, workspace or branch), `conflict` (409:
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, workspace or branch),
+// `request_too_large` (413), `conflict` (409:
 // `expected_generation` is not the current generation, with
 // `details.current_generation`; or deleting a path that is not a file,
 // with `details.reason` = `path_not_found`; or a request with the same
@@ -2061,8 +2077,9 @@ type ClientWithResponsesInterface interface {
 	// endpoint is not exposed. The project is created in the tenant of the
 	// caller.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `idempotency_key_reuse` (409),
+	// `request_too_large` (413).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2076,8 +2093,9 @@ type ClientWithResponsesInterface interface {
 	// endpoint is not exposed. The project is created in the tenant of the
 	// caller.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `idempotency_key_reuse` (409),
+	// `request_too_large` (413).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2150,8 +2168,9 @@ type ClientWithResponsesInterface interface {
 	// `{snapshot_id}` nor in the head) is refused with `invalid_request`
 	// and `details.reason` = `no_changes`.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, snapshot or branch),
+	// `request_too_large` (413), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 	// `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -2178,8 +2197,9 @@ type ClientWithResponsesInterface interface {
 	// `{snapshot_id}` nor in the head) is refused with `invalid_request`
 	// and `details.reason` = `no_changes`.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, snapshot or branch),
+	// `request_too_large` (413), `conflict` (409,
 	// generation mismatch with `details.current_generation`; or
 	// `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 	// `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -2216,8 +2236,9 @@ type ClientWithResponsesInterface interface {
 	// (`ref_name` `main`, generation 1, no head). The storage prefix is
 	// chosen by the server and never changes.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+	// (409), `request_too_large` (413).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2230,8 +2251,9 @@ type ClientWithResponsesInterface interface {
 	// (`ref_name` `main`, generation 1, no head). The storage prefix is
 	// chosen by the server and never changes.
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+	// (409), `request_too_large` (413).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -2289,8 +2311,9 @@ type ClientWithResponsesInterface interface {
 	// * Changes that leave the tree as it is are refused
 	//   (`invalid_request` with `details.reason` = `no_changes`).
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, workspace or branch), `conflict` (409:
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, workspace or branch),
+	// `request_too_large` (413), `conflict` (409:
 	// `expected_generation` is not the current generation, with
 	// `details.current_generation`; or deleting a path that is not a file,
 	// with `details.reason` = `path_not_found`; or a request with the same
@@ -2337,8 +2360,9 @@ type ClientWithResponsesInterface interface {
 	// * Changes that leave the tree as it is are refused
 	//   (`invalid_request` with `details.reason` = `no_changes`).
 	//
-	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-	// (403), `not_found` (404, workspace or branch), `conflict` (409:
+	// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+	// `forbidden` (403), `not_found` (404, workspace or branch),
+	// `request_too_large` (413), `conflict` (409:
 	// `expected_generation` is not the current generation, with
 	// `details.current_generation`; or deleting a path that is not a file,
 	// with `details.reason` = `path_not_found`; or a request with the same
@@ -2426,6 +2450,10 @@ type CreateProjectResponse struct {
 	JSON403 *Forbidden
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Conflict
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *RequestTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnsupportedMediaType
 	// JSONDefault the response for an HTTP default `application/json` response
 	JSONDefault *Error
 }
@@ -2453,6 +2481,16 @@ func (r CreateProjectResponse) GetJSON403() *Forbidden {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r CreateProjectResponse) GetJSON409() *Conflict {
 	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r CreateProjectResponse) GetJSON413() *RequestTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CreateProjectResponse) GetJSON415() *UnsupportedMediaType {
+	return r.JSON415
 }
 
 // GetJSONDefault returns the response for an HTTP default `application/json` response
@@ -2811,6 +2849,10 @@ type RestoreSnapshotResponse struct {
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Conflict
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *RequestTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnsupportedMediaType
 	// JSON422 the response for an HTTP 422 `application/json` response
 	JSON422 *UnprocessableEntity
 	// JSONDefault the response for an HTTP default `application/json` response
@@ -2845,6 +2887,16 @@ func (r RestoreSnapshotResponse) GetJSON404() *NotFound {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r RestoreSnapshotResponse) GetJSON409() *Conflict {
 	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r RestoreSnapshotResponse) GetJSON413() *RequestTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r RestoreSnapshotResponse) GetJSON415() *UnsupportedMediaType {
+	return r.JSON415
 }
 
 // GetJSON422 returns the response for an HTTP 422 `application/json` response
@@ -2977,6 +3029,10 @@ type CreateWorkspaceResponse struct {
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Conflict
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *RequestTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnsupportedMediaType
 	// JSONDefault the response for an HTTP default `application/json` response
 	JSONDefault *Error
 }
@@ -3009,6 +3065,16 @@ func (r CreateWorkspaceResponse) GetJSON404() *NotFound {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r CreateWorkspaceResponse) GetJSON409() *Conflict {
 	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r CreateWorkspaceResponse) GetJSON413() *RequestTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CreateWorkspaceResponse) GetJSON415() *UnsupportedMediaType {
+	return r.JSON415
 }
 
 // GetJSONDefault returns the response for an HTTP default `application/json` response
@@ -3193,6 +3259,10 @@ type CreateCommitResponse struct {
 	JSON409 *Conflict
 	// JSON410 the response for an HTTP 410 `application/json` response
 	JSON410 *Gone
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *RequestTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnsupportedMediaType
 	// JSON422 the response for an HTTP 422 `application/json` response
 	JSON422 *UnprocessableEntity
 	// JSONDefault the response for an HTTP default `application/json` response
@@ -3232,6 +3302,16 @@ func (r CreateCommitResponse) GetJSON409() *Conflict {
 // GetJSON410 returns the response for an HTTP 410 `application/json` response
 func (r CreateCommitResponse) GetJSON410() *Gone {
 	return r.JSON410
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r CreateCommitResponse) GetJSON413() *RequestTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CreateCommitResponse) GetJSON415() *UnsupportedMediaType {
+	return r.JSON415
 }
 
 // GetJSON422 returns the response for an HTTP 422 `application/json` response
@@ -3542,8 +3622,9 @@ func (r GetReadyzResponse) ContentType() string {
 // endpoint is not exposed. The project is created in the tenant of the
 // caller.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `idempotency_key_reuse` (409),
+// `request_too_large` (413).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3563,8 +3644,9 @@ func (c *ClientWithResponses) CreateProjectWithBodyWithResponse(ctx context.Cont
 // endpoint is not exposed. The project is created in the tenant of the
 // caller.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `idempotency_key_reuse` (409),
+// `request_too_large` (413).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3667,8 +3749,9 @@ func (c *ClientWithResponses) GetSnapshotFileWithResponse(ctx context.Context, s
 // `{snapshot_id}` nor in the head) is refused with `invalid_request`
 // and `details.reason` = `no_changes`.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, snapshot or branch),
+// `request_too_large` (413), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 // `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -3701,8 +3784,9 @@ func (c *ClientWithResponses) RestoreSnapshotWithBodyWithResponse(ctx context.Co
 // `{snapshot_id}` nor in the head) is refused with `invalid_request`
 // and `details.reason` = `no_changes`.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, snapshot or branch), `conflict` (409,
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, snapshot or branch),
+// `request_too_large` (413), `conflict` (409,
 // generation mismatch with `details.current_generation`; or
 // `details.reason` = `in_progress`), `idempotency_key_reuse` (409),
 // `invalid_path` (422; `case_conflict` when the restored name, or a
@@ -3751,8 +3835,9 @@ func (c *ClientWithResponses) ListSnapshotTreeWithResponse(ctx context.Context, 
 // (`ref_name` `main`, generation 1, no head). The storage prefix is
 // chosen by the server and never changes.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+// (409), `request_too_large` (413).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3771,8 +3856,9 @@ func (c *ClientWithResponses) CreateWorkspaceWithBodyWithResponse(ctx context.Co
 // (`ref_name` `main`, generation 1, no head). The storage prefix is
 // chosen by the server and never changes.
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, project), `idempotency_key_reuse` (409).
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, project), `idempotency_key_reuse`
+// (409), `request_too_large` (413).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3848,8 +3934,9 @@ func (c *ClientWithResponses) ListBranchesWithResponse(ctx context.Context, work
 //   - Changes that leave the tree as it is are refused
 //     (`invalid_request` with `details.reason` = `no_changes`).
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, workspace or branch), `conflict` (409:
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, workspace or branch),
+// `request_too_large` (413), `conflict` (409:
 // `expected_generation` is not the current generation, with
 // `details.current_generation`; or deleting a path that is not a file,
 // with `details.reason` = `path_not_found`; or a request with the same
@@ -3902,8 +3989,9 @@ func (c *ClientWithResponses) CreateCommitWithBodyWithResponse(ctx context.Conte
 //   - Changes that leave the tree as it is are refused
 //     (`invalid_request` with `details.reason` = `no_changes`).
 //
-// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
-// (403), `not_found` (404, workspace or branch), `conflict` (409:
+// Errors: `invalid_request` (400, 415), `unauthenticated` (401),
+// `forbidden` (403), `not_found` (404, workspace or branch),
+// `request_too_large` (413), `conflict` (409:
 // `expected_generation` is not the current generation, with
 // `details.current_generation`; or deleting a path that is not a file,
 // with `details.reason` = `path_not_found`; or a request with the same
@@ -4055,6 +4143,20 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
@@ -4407,6 +4509,20 @@ func ParseRestoreSnapshotResponse(rsp *http.Response) (*RestoreSnapshotResponse,
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4542,6 +4658,20 @@ func ParseCreateWorkspaceResponse(rsp *http.Response) (*CreateWorkspaceResponse,
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
@@ -4718,6 +4848,20 @@ func ParseCreateCommitResponse(rsp *http.Response) (*CreateCommitResponse, error
 			return nil, err
 		}
 		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest UnprocessableEntity

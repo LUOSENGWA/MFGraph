@@ -42,6 +42,9 @@ type Options struct {
 	// Pseudonym maps actor references to their pseudonyms in the logs; nil
 	// uses an actorref.Pseudonymizer with a random key.
 	Pseudonym func(string) string
+	// MaxJSONBodyBytes bounds the body of every request but an upload
+	// (0 = DefaultMaxJSONBodyBytes, 16 MiB).
+	MaxJSONBodyBytes int64
 }
 
 // publicPaths are served without authentication.
@@ -49,7 +52,8 @@ var publicPaths = map[string]bool{"/healthz": true, "/readyz": true}
 
 // NewHandler returns the HTTP handler: generated routes on a ServeMux, a
 // JSON 404 for everything else, and the middleware chain request ID ->
-// access log -> panic recovery -> authentication -> API prefix.
+// access log -> panic recovery -> authentication -> API prefix; every
+// route but the upload checks its request body first (requestBody).
 func NewHandler(o Options) http.Handler {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -69,7 +73,8 @@ func NewHandler(o Options) http.Handler {
 	})
 	mux := http.NewServeMux()
 	gen.HandlerWithOptions(strict, gen.StdHTTPServerOptions{
-		BaseRouter: mux,
+		BaseRouter:  mux,
+		Middlewares: []gen.MiddlewareFunc{requestBody(o.MaxJSONBodyBytes)},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			WriteError(w, r, NewError(CodeInvalidRequest, err.Error(), nil))
 		},

@@ -21,6 +21,7 @@ const (
 	EnvStorageRoot      = "MFGRAPH_STORAGE_ROOT"
 	EnvTenantID         = "MFGRAPH_TENANT_ID"
 	EnvMaxUploadBytes   = "MFGRAPH_MAX_UPLOAD_BYTES"
+	EnvMaxJSONBodyBytes = "MFGRAPH_MAX_JSON_BODY_BYTES"
 	EnvMaxCommitChanges = "MFGRAPH_MAX_COMMIT_CHANGES"
 	EnvAuthTokens       = "MFGRAPH_AUTH_TOKENS"
 	EnvLogLevel         = "MFGRAPH_LOG_LEVEL"
@@ -34,7 +35,13 @@ const (
 	// MaxUploadLimit is the largest value of MFGRAPH_MAX_UPLOAD_BYTES: 5 TiB,
 	// the largest object of Amazon S3 and far below the 2^53-1 bytes a file
 	// size of the content format can hold.
-	MaxUploadLimit       = 5 << 40
+	MaxUploadLimit = 5 << 40
+	// DefaultMaxJSONBody is the default of MFGRAPH_MAX_JSON_BODY_BYTES
+	// (16 MiB); MinJSONBodyLimit and MaxJSONBodyLimit bound it (1 KiB to
+	// 1 GiB).
+	DefaultMaxJSONBody   = 16 << 20
+	MinJSONBodyLimit     = 1 << 10
+	MaxJSONBodyLimit     = 1 << 30
 	DefaultMaxChanges    = 10_000
 	DefaultShutdown      = 8 * time.Second
 	unixPrefix           = "unix:"
@@ -67,6 +74,10 @@ type Config struct {
 	TenantID string
 	// MaxUploadBytes bounds one upload (default 1 GiB; 1 byte to 5 TiB).
 	MaxUploadBytes int64
+	// MaxJSONBodyBytes bounds the body of every request but an upload
+	// (default 16 MiB; 1 KiB to 1 GiB). It also bounds the size of a
+	// commit request.
+	MaxJSONBodyBytes int64
 	// MaxCommitChanges bounds the changes of one commit (default 10000).
 	MaxCommitChanges int
 	// MigrateOnStart applies pending migrations before serving (default false).
@@ -125,6 +136,7 @@ func Load(getenv func(string) string) (Config, error) {
 		KernelMigrations: true,
 		TenantID:         DefaultTenantID,
 		MaxUploadBytes:   DefaultMaxUpload,
+		MaxJSONBodyBytes: DefaultMaxJSONBody,
 		MaxCommitChanges: DefaultMaxChanges,
 		AuthTokens:       map[string]string{},
 		LogLevel:         slog.LevelInfo,
@@ -154,6 +166,11 @@ func Load(getenv func(string) string) (Config, error) {
 	var err error
 	if c.MaxUploadBytes, err = parsePositive(getenv, EnvMaxUploadBytes, DefaultMaxUpload); err != nil || c.MaxUploadBytes > MaxUploadLimit {
 		return Config{}, fmt.Errorf("config: %s must be an integer between 1 and %d (5 TiB)", EnvMaxUploadBytes, int64(MaxUploadLimit))
+	}
+	c.MaxJSONBodyBytes, err = parsePositive(getenv, EnvMaxJSONBodyBytes, DefaultMaxJSONBody)
+	if err != nil || c.MaxJSONBodyBytes < MinJSONBodyLimit || c.MaxJSONBodyBytes > MaxJSONBodyLimit {
+		return Config{}, fmt.Errorf("config: %s must be an integer between %d (1 KiB) and %d (1 GiB)", EnvMaxJSONBodyBytes,
+			MinJSONBodyLimit, MaxJSONBodyLimit)
 	}
 	maxChanges, err := parsePositive(getenv, EnvMaxCommitChanges, DefaultMaxChanges)
 	if err != nil || maxChanges > 1_000_000 {
@@ -286,6 +303,7 @@ func (c Config) Summary() []any {
 		"storage_root", c.StorageRoot,
 		"tenant_id", c.TenantID,
 		"max_upload_bytes", c.MaxUploadBytes,
+		"max_json_body_bytes", c.MaxJSONBodyBytes,
 		"max_commit_changes", c.MaxCommitChanges,
 		"auth_tokens", len(c.AuthTokens),
 		"log_level", c.LogLevel.String(),

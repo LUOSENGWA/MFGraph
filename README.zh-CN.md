@@ -123,7 +123,7 @@ make generate     # 由契约重新生成 internal/api/gen（需要网络）
 make run          # 用开发 token 和开发用 MySQL 在 127.0.0.1:8094 启动 mfgraph-server
 ```
 
-服务端用 `MFGRAPH_*` 环境变量配置（完整表格见[部署](docs/zh-CN/deployment.md)）：`MFGRAPH_HTTP_ADDR`（`host:port` 或 `unix:<path>`）、`MFGRAPH_API_PREFIX`、`MFGRAPH_DB_DSN`（服务必须连数据库）、`MFGRAPH_MIGRATE_ON_START`、`MFGRAPH_KERNEL_MIGRATIONS`、`MFGRAPH_STORAGE_ROOT`、`MFGRAPH_TENANT_ID`、`MFGRAPH_MAX_UPLOAD_BYTES`、`MFGRAPH_MAX_COMMIT_CHANGES`、`MFGRAPH_AUTH_TOKENS`（`token=ACTOR_REF,...`，例如 `token=alice` 或 `token=<ULID>`；见[身份引用](docs/zh-CN/api.md#身份引用actor-reference)）、`MFGRAPH_LOG_LEVEL`、`MFGRAPH_LOG_FORMAT`、`MFGRAPH_LOG_PSEUDONYM_KEY`、`MFGRAPH_SHUTDOWN_TIMEOUT`。`mfgraph-server migrate` 执行待执行的迁移后退出。
+服务端用 `MFGRAPH_*` 环境变量配置（完整表格见[部署](docs/zh-CN/deployment.md)）：`MFGRAPH_HTTP_ADDR`（`host:port` 或 `unix:<path>`）、`MFGRAPH_API_PREFIX`、`MFGRAPH_DB_DSN`（服务必须连数据库）、`MFGRAPH_MIGRATE_ON_START`、`MFGRAPH_KERNEL_MIGRATIONS`、`MFGRAPH_STORAGE_ROOT`、`MFGRAPH_TENANT_ID`、`MFGRAPH_MAX_UPLOAD_BYTES`、`MFGRAPH_MAX_JSON_BODY_BYTES`、`MFGRAPH_MAX_COMMIT_CHANGES`、`MFGRAPH_AUTH_TOKENS`（`token=ACTOR_REF,...`，例如 `token=alice` 或 `token=<ULID>`；见[身份引用](docs/zh-CN/api.md#身份引用actor-reference)）、`MFGRAPH_LOG_LEVEL`、`MFGRAPH_LOG_FORMAT`、`MFGRAPH_LOG_PSEUDONYM_KEY`、`MFGRAPH_SHUTDOWN_TIMEOUT`。`mfgraph-server migrate` 执行待执行的迁移后退出。
 
 开发用的 MySQL 8.0 和 seekdb 通过 Docker 运行（`deploy/docker-compose.dev.yml`，只绑定 `127.0.0.1`，一次性本地口令；见[部署](docs/zh-CN/deployment.md#数据库)）：
 

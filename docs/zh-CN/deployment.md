@@ -24,7 +24,8 @@
 | `MFGRAPH_KERNEL_MIGRATIONS` | `true` | 是否包括 kernel 表（`projects`、`principals`）；只用于独立部署 |
 | `MFGRAPH_STORAGE_ROOT` | — | POSIX BlobStore 的根目录；配置了数据库时必须配置，否则拒绝启动 |
 | `MFGRAPH_TENANT_ID` | `00000000000000000000000000` | 独立部署的租户（ULID） |
-| `MFGRAPH_MAX_UPLOAD_BYTES` | `1073741824`（1 GiB） | 单次上传上限 |
+| `MFGRAPH_MAX_UPLOAD_BYTES` | `1073741824`（1 GiB） | 单次上传上限（1 字节到 5 TiB） |
+| `MFGRAPH_MAX_JSON_BODY_BYTES` | `16777216`（16 MiB） | 其他请求的请求体上限（1 KiB 到 1 GiB）；超过时返回 `413 request_too_large`，超出上限的部分不会被读取。提交请求的大小也受它限制 |
 | `MFGRAPH_MAX_COMMIT_CHANGES` | `10000` | 单次提交的改动条数上限 |
 | `MFGRAPH_AUTH_TOKENS` | — | 静态 bearer token：`token=ACTOR_REF[,token=ACTOR_REF...]`（token 至少 16 个字符） |
 | `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog 设置（给人看用 `text`） |

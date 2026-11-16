@@ -27,6 +27,7 @@ const (
 	CodePreconditionFailed  = "precondition_failed"
 	CodeQuotaExceeded       = "quota_exceeded"
 	CodeFileTooLarge        = "file_too_large"
+	CodeRequestTooLarge     = "request_too_large"
 	CodeInvalidPath         = "invalid_path"
 	CodeUnsupportedFormat   = "unsupported_format"
 	CodeRateLimited         = "rate_limited"
@@ -49,6 +50,7 @@ var codeStatus = map[string]int{
 	CodePreconditionFailed:  http.StatusPreconditionFailed,
 	CodeQuotaExceeded:       http.StatusRequestEntityTooLarge,
 	CodeFileTooLarge:        http.StatusRequestEntityTooLarge,
+	CodeRequestTooLarge:     http.StatusRequestEntityTooLarge,
 	CodeInvalidPath:         http.StatusUnprocessableEntity,
 	CodeUnsupportedFormat:   http.StatusUnprocessableEntity,
 	CodeRateLimited:         http.StatusTooManyRequests,

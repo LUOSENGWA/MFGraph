@@ -29,7 +29,8 @@ POST   /api/v1/snapshots/{snapshot_id}/restore
 - **必须连数据库。** 没有数据库（未设置 `MFGRAPH_DB_DSN` 或连不上）时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；没有"无数据库模式"。
 - **路径前缀。** 业务接口的默认前缀是 `/api/v1`；`MFGRAPH_API_PREFIX` 可以改到别处（例如 `/files/v1`，这时 `/files/v1/projects` 就是契约里的 `POST /api/v1/projects`），`/healthz` 和 `/readyz` 始终在根路径。其他路径一律返回 JSON 格式的 404。
 - **谁能做什么（独立部署）。** 任何已认证的调用者都可以创建项目；创建者是这个项目及其下所有工作区的唯一拥有者，其他人访问一律 `404 not_found`。角色以后再做；嵌入宿主平台时由宿主平台的访问控制判定。
-- **限制。** 单次上传最多 `MFGRAPH_MAX_UPLOAD_BYTES`（1 GiB；超过返回 `413 file_too_large`，带 `details.max_bytes`，读取请求体之前先按 `Content-Length` 检查）；一次提交最多 `MFGRAPH_MAX_COMMIT_CHANGES` 条改动（10000）；列表每页最多 500 条（默认 50）。读取接口的文件路径放在 `path` 查询参数里（编码前最多 4096 字节；百分号编码后的中文路径可达约 12 KB，超过部分代理的上限）。
+- **限制。** 单次上传最多 `MFGRAPH_MAX_UPLOAD_BYTES`（1 GiB；超过返回 `413 file_too_large`，带 `details.max_bytes`，读取请求体之前先按 `Content-Length` 检查）；其他请求的请求体最多 `MFGRAPH_MAX_JSON_BODY_BYTES`（16 MiB；超过返回 `413 request_too_large`，带 `details.max_bytes`，先按 `Content-Length` 检查，超出上限的部分不会被读取）；一次提交最多 `MFGRAPH_MAX_COMMIT_CHANGES` 条改动（10000）；列表每页最多 500 条（默认 50）。读取接口的文件路径放在 `path` 查询参数里（编码前最多 4096 字节；百分号编码后的中文路径可达约 12 KB，超过部分代理的上限）。
+- **JSON 请求体。** 所有 POST 都要发送 `Content-Type: application/json`（参数只允许 `charset=utf-8`；否则返回 `415`，错误码 `invalid_request`，`details.reason` 为 `unsupported_content_type`），请求体必须是单个 JSON 值：值后面除空白外还有内容时返回 `400 invalid_request`。
 - **命令行。** `mfgraph` 是这些接口的薄客户端：`project create`、`workspace create`、`upload`、`commit`、`log`、`ls`、`cat`、`diff`、`restore`（`mfgraph help`）。它读取 `MFGRAPH_URL`（`http://host:port` 或 `unix:<socket>`）、`MFGRAPH_TOKEN` 和 `MFGRAPH_API_PREFIX`，服务端返回的错误原样输出。
 
 ## Workspace / 项目树
@@ -131,6 +132,7 @@ X-Correlation-Id: <optional>
 | `conflict`（409） | `current_generation`（`expected_generation` 已过期），或 `reason`：`path_not_found`（删除的路径不是文件）、`in_progress`（相同 `Idempotency-Key` 的请求还在执行） |
 | `blob_missing`（410） | `hashes`，以及 `reason`：`not_uploaded`（从未上传到这个工作区）或 `missing_in_storage`（上传过，但对象已丢失） |
 | `file_too_large`（413） | `max_bytes` |
+| `request_too_large`（413） | `max_bytes`（上传以外的请求的请求体） |
 | `db_unavailable` / `storage_unavailable`（503） | 依赖未配置时 `reason` 为 `not_configured`；`/readyz` 另带 `check` |
 
 提交新建的名字要和基准快照里该目录已有的名字做冲突检查，包括同一请求中另一条改动要删除的名字：只改名字的大小写，或者把文件改成目录，需要两次提交。

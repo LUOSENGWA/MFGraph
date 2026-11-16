@@ -24,7 +24,8 @@ The server is configured with environment variables:
 | `MFGRAPH_KERNEL_MIGRATIONS` | `true` | include the kernel tables (`projects`, `principals`); standalone deployments only |
 | `MFGRAPH_STORAGE_ROOT` | — | root directory of the POSIX blob store; required with a database (the server refuses to start without it) |
 | `MFGRAPH_TENANT_ID` | `00000000000000000000000000` | tenant of a standalone deployment (a ULID) |
-| `MFGRAPH_MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | largest upload |
+| `MFGRAPH_MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | largest upload (1 byte to 5 TiB) |
+| `MFGRAPH_MAX_JSON_BODY_BYTES` | `16777216` (16 MiB) | largest body of any other request (1 KiB to 1 GiB); larger bodies get `413 request_too_large` and are not read beyond the limit. It also bounds a commit request |
 | `MFGRAPH_MAX_COMMIT_CHANGES` | `10000` | most changes per commit |
 | `MFGRAPH_AUTH_TOKENS` | — | static bearer tokens: `token=ACTOR_REF[,token=ACTOR_REF...]` (tokens of at least 16 characters) |
 | `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog settings (`text` for humans) |
