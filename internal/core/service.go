@@ -22,6 +22,7 @@ const (
 	DefaultMaxUploadBytes   = 1 << 30
 	DefaultMaxCommitChanges = 10_000
 	DefaultIdempotencyTTL   = 24 * time.Hour
+	DefaultIdempotencyLease = 60 * time.Second
 	DefaultLimit            = 50
 	MaxLimit                = 500
 	// MaxIdempotencyKey bounds an Idempotency-Key (contract: 1-128 visible
@@ -42,6 +43,10 @@ type Config struct {
 	MaxCommitChanges int
 	// IdempotencyTTL is how long an idempotency record is kept.
 	IdempotencyTTL time.Duration
+	// IdempotencyLease is how long a request holds its in-progress
+	// idempotency record: a request with the same key that comes later
+	// takes the record over and runs (default 60s).
+	IdempotencyLease time.Duration
 }
 
 // Deps are the ports the use cases run on.
@@ -78,6 +83,9 @@ func New(cfg Config, d Deps) (*Service, error) {
 	}
 	if cfg.IdempotencyTTL <= 0 {
 		cfg.IdempotencyTTL = DefaultIdempotencyTTL
+	}
+	if cfg.IdempotencyLease <= 0 {
+		cfg.IdempotencyLease = DefaultIdempotencyLease
 	}
 	if d.Store == nil || d.Objects == nil || d.Trees == nil || d.Authz == nil || d.Clock == nil || d.IDs == nil {
 		return nil, errors.New("core: missing dependency")

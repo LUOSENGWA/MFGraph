@@ -24,6 +24,12 @@ info:
       request with the same actor (actor reference), key and route returns
       the stored response of the first request. The same key with a different request
       body gives `409 idempotency_key_reuse`. Keys are kept for 24 hours.
+      While the first request runs, a repeat gets `409 conflict` with
+      `details.reason` = `in_progress`. A request holds its key for a lease
+      (60 seconds by default): a repeat after the lease runs the request
+      again, and the first request, if it still runs, then fails with
+      `409 conflict` without making its change, so the change is made at
+      most once.
     * **Errors.** Every error has the same flat body:
       `{"code": "...", "message": "...", "request_id": "...", "details": {...}}`
       (`request_id` and `details` are optional). `code` is stable and machine

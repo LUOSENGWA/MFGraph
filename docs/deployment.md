@@ -31,6 +31,7 @@ The server is configured with environment variables:
 | `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog settings (`text` for humans) |
 | `MFGRAPH_LOG_PSEUDONYM_KEY` | random per start | key of the actor pseudonyms in the logs (at least 16 bytes; see [security](security.md)) |
 | `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | graceful shutdown after SIGTERM or SIGINT |
+| `MFGRAPH_IDEMPOTENCY_LEASE` | `60s` | how long a request holds its `Idempotency-Key` (1s to 24h); a repeat after that runs again, and the first request, if it still runs, fails with `409 conflict` without making its change. Keep it above the longest request |
 
 - **A database is required.** Without `MFGRAPH_DB_DSN` the server starts, but `/readyz` answers 503 and every business endpoint `503 db_unavailable`; an unreachable database gives the same. Apply the migrations with `mfgraph-server migrate` (or `MFGRAPH_MIGRATE_ON_START=true`); it needs only `MFGRAPH_DB_DSN`.
 - **Readiness.** `/readyz` checks the database (required) and the storage root, and reports `unicode_version` (the Unicode version V of the path rules) and `version` (the build).

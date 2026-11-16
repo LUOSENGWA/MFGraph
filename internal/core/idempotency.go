@@ -57,12 +57,18 @@ type completer func(ctx context.Context, tx ports.Tx, response any) error
 //     returned again, nothing is executed.
 //   - A record with another request hash: idempotency_key_reuse.
 //   - An in-progress record (the same request still running, or a request
-//     whose server stopped): conflict with reason in_progress.
+//     whose server stopped) younger than the lease: conflict with reason
+//     in_progress. One that is older is taken over: it is deleted and this
+//     request inserts its own record and runs. The request that held the
+//     old record, if it still runs, can then no longer complete it, so its
+//     business change is rolled back and it fails with conflict: the
+//     change is made at most once.
 //   - Otherwise an in-progress record is inserted (in its own
 //     transaction), and run is executed. run must call complete with its
 //     response in the transaction of its business change, which turns the
 //     record into a completed one; if run fails, the record is deleted.
-//     Expired records are replaced.
+//     Expired records are replaced (deleting them in bulk is left to
+//     garbage collection).
 //
 // Without a key, run is executed with a nil completer.
 func idempotent[T any](ctx context.Context, s *Service, p ports.Principal, route, key string, request any,
@@ -106,6 +112,16 @@ func idempotent[T any](ctx context.Context, s *Service, p ports.Principal, route
 			continue
 		case old.RequestHash != h:
 			return zero, newError(CodeIdempotencyKeyReuse, "the Idempotency-Key was used for a different request", nil)
+		case old.Status != ports.IdempotencyCompleted && now-old.CreatedAtUs >= s.cfg.IdempotencyLease.Microseconds():
+			// The lease is over: take the record over. Deleting it is
+			// conditional on its creation time and status, so a record that
+			// was completed meanwhile is kept (and replayed next round).
+			if err := s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+				return s.d.Store.DeleteIdempotency(ctx, tx, p.Ref, route, key, old.CreatedAtUs, ports.IdempotencyInProgress)
+			}); err != nil {
+				return zero, mapErr(err, "idempotency record")
+			}
+			continue
 		case old.Status != ports.IdempotencyCompleted:
 			return zero, newError(CodeConflict, "a request with this Idempotency-Key is in progress",
 				map[string]any{"reason": ReasonInProgress})
@@ -123,7 +139,8 @@ func idempotent[T any](ctx context.Context, s *Service, p ports.Principal, route
 		}
 		if err := s.d.Store.CompleteIdempotency(ctx, tx, p.Ref, route, key, rec.CreatedAtUs, b); err != nil {
 			if errors.Is(err, ports.ErrNotFound) {
-				return newError(CodeConflict, "the idempotency record of this request was replaced", nil)
+				return newError(CodeConflict, "the idempotency record of this request was taken over by a later request "+
+					"with the same Idempotency-Key (the lease expired); this request made no change", nil)
 			}
 			return mapErr(err, "idempotency record")
 		}

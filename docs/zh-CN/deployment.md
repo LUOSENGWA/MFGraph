@@ -31,6 +31,7 @@
 | `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog 设置（给人看用 `text`） |
 | `MFGRAPH_LOG_PSEUDONYM_KEY` | 每次启动随机生成 | 日志中 actor 假名的密钥（至少 16 字节；见[安全](security.md)） |
 | `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | 收到 SIGTERM 或 SIGINT 后的优雅退出时间 |
+| `MFGRAPH_IDEMPOTENCY_LEASE` | `60s` | 一个请求持有其 `Idempotency-Key` 的时间（1s 到 24h）；超过后重复请求会重新执行，第一个请求如果还在执行，会以 `409 conflict` 失败且不做任何改动。应大于最长请求的耗时 |
 
 - **必须连数据库。** 没有 `MFGRAPH_DB_DSN` 时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；数据库连不上时也一样。用 `mfgraph-server migrate`（或 `MFGRAPH_MIGRATE_ON_START=true`）执行迁移；迁移只需要 `MFGRAPH_DB_DSN`。
 - **就绪检查。** `/readyz` 检查数据库（必需）和存储根目录，并报告 `unicode_version`（路径规则所用的 Unicode 版本 V）和 `version`（服务版本）。

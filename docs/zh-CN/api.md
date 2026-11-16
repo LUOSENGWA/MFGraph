@@ -136,6 +136,8 @@ X-Correlation-Id: <optional>
 | `request_too_large`（413） | `max_bytes`（上传以外的请求的请求体） |
 | `db_unavailable` / `storage_unavailable`（503） | 依赖未配置时 `reason` 为 `not_configured`；`/readyz` 另带 `check` |
 
+`Idempotency-Key` 保留 24 小时。使用它的第一个请求还在执行时，重复请求得到 `409 conflict`，`reason` 为 `in_progress`。第一个请求持有这个 key 的时间是 `MFGRAPH_IDEMPOTENCY_LEASE`（60 秒）：超过之后，重复请求会接管这个 key 并执行；第一个请求如果还在执行，会以 `409 conflict` 失败，不做任何改动。因此即使服务在请求中途停止，同一改动也最多执行一次。
+
 提交新建的名字要和基准快照里该目录已有的名字做冲突检查，包括同一请求中另一条改动要删除的名字：只改名字的大小写，或者把文件改成目录，需要两次提交。
 
 按 `path` 恢复时，恢复给 head 增加的名字视为新建的名字：head 的对应目录里没有按字节完全相同的名字时的恢复名字，以及它上面 head 中不存在的每个目录。它们不能与 head 中所在目录的其他名字有相同的大小写折叠键（`invalid_path`，`case_conflict`）：`README.md` 被删除、之后又新建了 `readme.md`，那么在删除 `readme.md` 之前，恢复 `README.md` 会失败。恢复出的目录里面的条目不检查。

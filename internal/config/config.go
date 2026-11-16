@@ -28,6 +28,7 @@ const (
 	EnvLogFormat        = "MFGRAPH_LOG_FORMAT"
 	EnvLogPseudonymKey  = "MFGRAPH_LOG_PSEUDONYM_KEY"
 	EnvShutdownTimeout  = "MFGRAPH_SHUTDOWN_TIMEOUT"
+	EnvIdempotencyLease = "MFGRAPH_IDEMPOTENCY_LEASE"
 	DefaultHTTPAddr     = "127.0.0.1:8094"
 	DefaultAPIPrefix    = "/api/v1"
 	DefaultTenantID     = "00000000000000000000000000"
@@ -39,14 +40,20 @@ const (
 	// DefaultMaxJSONBody is the default of MFGRAPH_MAX_JSON_BODY_BYTES
 	// (16 MiB); MinJSONBodyLimit and MaxJSONBodyLimit bound it (1 KiB to
 	// 1 GiB).
-	DefaultMaxJSONBody   = 16 << 20
-	MinJSONBodyLimit     = 1 << 10
-	MaxJSONBodyLimit     = 1 << 30
-	DefaultMaxChanges    = 10_000
-	DefaultShutdown      = 8 * time.Second
-	unixPrefix           = "unix:"
-	maxAPIPrefixBytes    = 128
-	minPseudonymKeyBytes = 16
+	DefaultMaxJSONBody = 16 << 20
+	MinJSONBodyLimit   = 1 << 10
+	MaxJSONBodyLimit   = 1 << 30
+	DefaultMaxChanges  = 10_000
+	DefaultShutdown    = 8 * time.Second
+	// DefaultIdempotencyLease is the default of MFGRAPH_IDEMPOTENCY_LEASE;
+	// MinIdempotencyLease and MaxIdempotencyLease bound it (the upper bound
+	// is the 24 hours an idempotency record is kept).
+	DefaultIdempotencyLease = 60 * time.Second
+	MinIdempotencyLease     = time.Second
+	MaxIdempotencyLease     = 24 * time.Hour
+	unixPrefix              = "unix:"
+	maxAPIPrefixBytes       = 128
+	minPseudonymKeyBytes    = 16
 )
 
 // MinTokenLength is the minimum length of a static bearer token.
@@ -108,6 +115,11 @@ type Config struct {
 	// ShutdownTimeout bounds graceful shutdown (default 8s, below the 10 s
 	// after which a supervisor typically kills a process it sent SIGTERM).
 	ShutdownTimeout time.Duration
+	// IdempotencyLease is how long a request holds the in-progress record
+	// of its Idempotency-Key; afterwards a request with the same key takes
+	// it over (default 60s; 1s to 24h). Requests that run longer than the
+	// lease can fail with conflict when the client retries meanwhile.
+	IdempotencyLease time.Duration
 }
 
 // CheckServe reports settings that the server needs in addition to what
@@ -142,6 +154,7 @@ func Load(getenv func(string) string) (Config, error) {
 		LogLevel:         slog.LevelInfo,
 		LogFormat:        "json",
 		ShutdownTimeout:  DefaultShutdown,
+		IdempotencyLease: DefaultIdempotencyLease,
 	}
 	if v := getenv(EnvHTTPAddr); v != "" {
 		c.HTTPAddr = v
@@ -210,6 +223,13 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("config: %s must be a positive duration such as 8s", EnvShutdownTimeout)
 		}
 		c.ShutdownTimeout = d
+	}
+	if v := getenv(EnvIdempotencyLease); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < MinIdempotencyLease || d > MaxIdempotencyLease {
+			return Config{}, fmt.Errorf("config: %s must be a duration between 1s and 24h, such as 60s", EnvIdempotencyLease)
+		}
+		c.IdempotencyLease = d
 	}
 	return c, nil
 }
@@ -309,5 +329,6 @@ func (c Config) Summary() []any {
 		"log_level", c.LogLevel.String(),
 		"log_pseudonym_key_configured", c.LogPseudonymKey != "",
 		"shutdown_timeout", c.ShutdownTimeout.String(),
+		"idempotency_lease", c.IdempotencyLease.String(),
 	}
 }

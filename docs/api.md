@@ -136,6 +136,8 @@ Other details of the first core slice:
 | `request_too_large` (413) | `max_bytes` (the body of a request other than an upload) |
 | `db_unavailable` / `storage_unavailable` (503) | `reason`: `not_configured` when the dependency is not configured; `/readyz` adds `check` |
 
+An `Idempotency-Key` is kept for 24 hours. While the first request with it runs, a repeat gets `409 conflict` with `reason` `in_progress`. The first request holds the key for `MFGRAPH_IDEMPOTENCY_LEASE` (60 s): a repeat after that takes the key over and runs, and the first request, if it still runs, fails with `409 conflict` without making its change. A change is therefore made at most once, even when a server stops in the middle of a request.
+
 A commit checks the names it creates against the names of the base snapshot's directory, including names that another change of the same request deletes: changing only the case of a name, or turning a file into a directory, takes two commits.
 
 A restore of one `path` treats the names it adds to the head as created names: the restored name, when the head's directory does not have it byte for byte, and every directory above it that the head does not have. They must not have the case-fold key of another name in their directory of the head (`invalid_path`, `case_conflict`): after `README.md` was deleted and `readme.md` created, restoring `README.md` fails until `readme.md` is deleted. The entries inside a restored directory are not checked.

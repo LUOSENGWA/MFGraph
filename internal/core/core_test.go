@@ -41,7 +41,18 @@ type env struct {
 
 func newEnv(t *testing.T, cfg core.Config) *env {
 	t.Helper()
+	return newEnvStore(t, cfg, nil)
+}
+
+// newEnvStore is newEnv with the store the service uses wrapped by wrap
+// (unless nil); env.store stays the in-memory store.
+func newEnvStore(t *testing.T, cfg core.Config, wrap func(*memory.Store) ports.Store) *env {
+	t.Helper()
 	store := memory.NewStore()
+	var svcStore ports.Store = store
+	if wrap != nil {
+		svcStore = wrap(store)
+	}
 	objs := memory.NewBlobStore()
 	trees, err := treestore.New(objs, treestore.CachedPrefixes(func(ctx context.Context, ws string) (string, error) {
 		w, err := store.GetWorkspace(ctx, nil, ws)
@@ -52,7 +63,7 @@ func newEnv(t *testing.T, cfg core.Config) *env {
 	}
 	clock := memory.NewClock(time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC))
 	cfg.TenantID = tenant
-	svc, err := core.New(cfg, core.Deps{Store: store, Objects: objs, Trees: trees, Authz: authz.ProjectOwner{}, Clock: clock,
+	svc, err := core.New(cfg, core.Deps{Store: svcStore, Objects: objs, Trees: trees, Authz: authz.ProjectOwner{}, Clock: clock,
 		IDs: memory.NewIDGen(clock)})
 	if err != nil {
 		t.Fatal(err)

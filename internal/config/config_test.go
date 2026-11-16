@@ -148,6 +148,24 @@ func TestCheckServe(t *testing.T) {
 	}
 }
 
+func TestIdempotencyLease(t *testing.T) {
+	c, err := config.Load(env(nil))
+	if err != nil || c.IdempotencyLease != time.Minute {
+		t.Fatalf("default: %v %v", c.IdempotencyLease, err)
+	}
+	for v, want := range map[string]time.Duration{"1s": time.Second, "90s": 90 * time.Second, "24h": 24 * time.Hour} {
+		c, err := config.Load(env(map[string]string{config.EnvIdempotencyLease: v}))
+		if err != nil || c.IdempotencyLease != want {
+			t.Errorf("%s: %v %v", v, c.IdempotencyLease, err)
+		}
+	}
+	for _, v := range []string{"0s", "999ms", "25h", "-1m", "60"} {
+		if _, err := config.Load(env(map[string]string{config.EnvIdempotencyLease: v})); err == nil {
+			t.Errorf("%s: accepted", v)
+		}
+	}
+}
+
 func TestJSONBodyLimitRange(t *testing.T) {
 	c, err := config.Load(env(nil))
 	if err != nil || c.MaxJSONBodyBytes != 16<<20 {
