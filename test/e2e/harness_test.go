@@ -38,8 +38,16 @@ var serverBin, cliBin string
 const skipReason = "MFGRAPH_E2E_DB_DSN is not set: the acceptance tests need a database (MySQL 8.0 or seekdb); " +
 	"see test/e2e/README.md"
 
+// requireDB reports MFGRAPH_E2E_REQUIRE_DB=1: CI sets it, so that a job
+// whose database settings got lost fails instead of skipping every test.
+func requireDB() bool { return os.Getenv("MFGRAPH_E2E_REQUIRE_DB") == "1" }
+
 func TestMain(m *testing.M) {
 	if os.Getenv("MFGRAPH_E2E_DB_DSN") == "" {
+		if requireDB() {
+			fmt.Fprintln(os.Stderr, "MFGRAPH_E2E_REQUIRE_DB=1, but "+skipReason)
+			os.Exit(1)
+		}
 		os.Exit(m.Run()) // every test skips; nothing to build
 	}
 	dir, err := os.MkdirTemp("", "mfgraph-e2e-bin-")
@@ -80,6 +88,9 @@ func newEnv(t *testing.T) env {
 	t.Helper()
 	dsn := os.Getenv("MFGRAPH_E2E_DB_DSN")
 	if dsn == "" {
+		if requireDB() {
+			t.Fatal("MFGRAPH_E2E_REQUIRE_DB=1, but " + skipReason)
+		}
 		t.Skip(skipReason)
 	}
 	e := env{

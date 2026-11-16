@@ -147,6 +147,7 @@ jobs:
       - run: make test-e2e
         env:
           MFGRAPH_E2E_DB_DSN: root:mfgraph@tcp(127.0.0.1:3306)/
+          MFGRAPH_E2E_REQUIRE_DB: "1"
 
   e2e-seekdb:
     name: acceptance tests on seekdb
@@ -187,6 +188,7 @@ jobs:
         env:
           MFGRAPH_E2E_DB_DSN: root@tcp(127.0.0.1:2881)/
           MFGRAPH_E2E_DB_WAIT: 600s
+          MFGRAPH_E2E_REQUIRE_DB: "1"
 
   docs:
     name: links and sensitive-data scan

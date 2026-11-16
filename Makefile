@@ -61,16 +61,16 @@ test:
 
 ## test-e2e: black-box acceptance tests against the real server binary (build tag e2e).
 ## They need a database: set MFGRAPH_E2E_DB_DSN (see test-e2e-mysql / test-e2e-seekdb);
-## without it every test is skipped with the reason.
+## without it every test is skipped with the reason, or fails with MFGRAPH_E2E_REQUIRE_DB=1 (CI).
 test-e2e:
 	$(GO) test -tags e2e -count=1 -v ./test/e2e/...
 
 ## test-e2e-mysql / test-e2e-seekdb: the acceptance tests on the dev MySQL 8.0 / seekdb
 test-e2e-mysql:
-	MFGRAPH_E2E_DB_DSN='$(MYSQL_TEST_DSN)' $(GO) test -tags e2e -count=1 -v ./test/e2e/...
+	MFGRAPH_E2E_DB_DSN='$(MYSQL_TEST_DSN)' MFGRAPH_E2E_REQUIRE_DB=1 $(GO) test -tags e2e -count=1 -v ./test/e2e/...
 
 test-e2e-seekdb:
-	MFGRAPH_E2E_DB_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_E2E_DB_WAIT=$(SEEKDB_WAIT) $(GO) test -tags e2e -count=1 -v ./test/e2e/...
+	MFGRAPH_E2E_DB_DSN='$(SEEKDB_TEST_DSN)' MFGRAPH_E2E_DB_WAIT=$(SEEKDB_WAIT) MFGRAPH_E2E_REQUIRE_DB=1 $(GO) test -tags e2e -count=1 -v ./test/e2e/...
 
 ## e2e-compile: make sure the e2e tests compile (used by CI)
 e2e-compile:

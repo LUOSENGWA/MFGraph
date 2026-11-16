@@ -6,7 +6,10 @@ talks to it over HTTP only, and stops it with SIGTERM.
 
 The service needs a database, so the tests need one too: they run against
 MySQL 8.0 or seekdb and are skipped, with that reason, when
-`MFGRAPH_E2E_DB_DSN` is not set. CI runs them on both servers.
+`MFGRAPH_E2E_DB_DSN` is not set. CI runs them on both servers with
+`MFGRAPH_E2E_REQUIRE_DB=1`, which makes a missing DSN fail the run instead
+of skipping every test (`make test-e2e-mysql` and `make test-e2e-seekdb` set
+it too).
 
 ```bash
 make dev-db-up && make test-e2e-mysql        # MySQL 8.0: root:mfgraph@tcp(127.0.0.1:3306)/
