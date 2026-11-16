@@ -2462,8 +2462,10 @@ type GetSnapshotFileResponseObject interface {
 }
 
 type GetSnapshotFile200ResponseHeaders struct {
-	AcceptRanges *string
-	ETag         *string
+	AcceptRanges        *string
+	ContentDisposition  *string
+	ETag                *string
+	XContentTypeOptions *string
 }
 
 type GetSnapshotFile200ApplicationoctetStreamResponse struct {
@@ -2481,8 +2483,14 @@ func (response GetSnapshotFile200ApplicationoctetStreamResponse) VisitGetSnapsho
 	if response.Headers.AcceptRanges != nil {
 		w.Header().Set("Accept-Ranges", fmt.Sprint(*response.Headers.AcceptRanges))
 	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
 	if response.Headers.ETag != nil {
 		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
+	if response.Headers.XContentTypeOptions != nil {
+		w.Header().Set("X-Content-Type-Options", fmt.Sprint(*response.Headers.XContentTypeOptions))
 	}
 	w.WriteHeader(200)
 
@@ -2494,9 +2502,11 @@ func (response GetSnapshotFile200ApplicationoctetStreamResponse) VisitGetSnapsho
 }
 
 type GetSnapshotFile206ResponseHeaders struct {
-	AcceptRanges *string
-	ContentRange *string
-	ETag         *string
+	AcceptRanges        *string
+	ContentDisposition  *string
+	ContentRange        *string
+	ETag                *string
+	XContentTypeOptions *string
 }
 
 type GetSnapshotFile206ApplicationoctetStreamResponse struct {
@@ -2514,11 +2524,17 @@ func (response GetSnapshotFile206ApplicationoctetStreamResponse) VisitGetSnapsho
 	if response.Headers.AcceptRanges != nil {
 		w.Header().Set("Accept-Ranges", fmt.Sprint(*response.Headers.AcceptRanges))
 	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
 	if response.Headers.ContentRange != nil {
 		w.Header().Set("Content-Range", fmt.Sprint(*response.Headers.ContentRange))
 	}
 	if response.Headers.ETag != nil {
 		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
+	if response.Headers.XContentTypeOptions != nil {
+		w.Header().Set("X-Content-Type-Options", fmt.Sprint(*response.Headers.XContentTypeOptions))
 	}
 	w.WriteHeader(206)
 

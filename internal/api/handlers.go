@@ -299,7 +299,7 @@ func (h *handlers) GetSnapshotFile(ctx context.Context, req gen.GetSnapshotFileR
 	if err != nil {
 		return nil, err
 	}
-	etag, ranges := f.ETag(), "bytes"
+	etag, ranges, nosniff, disposition := f.ETag(), "bytes", "nosniff", contentDisposition(f.Path)
 	if inm := req.Params.IfNoneMatch; inm != nil && etagMatches(*inm, etag) {
 		return gen.GetSnapshotFile304Response{Headers: gen.GetSnapshotFile304ResponseHeaders{ETag: &etag}}, nil
 	}
@@ -318,7 +318,8 @@ func (h *handlers) GetSnapshotFile(ctx context.Context, req gen.GetSnapshotFileR
 			}
 			cr := fmt.Sprintf("bytes %d-%d/%d", start, end, size)
 			return gen.GetSnapshotFile206ApplicationoctetStreamResponse{Body: body, ContentLength: end - start + 1,
-				Headers: gen.GetSnapshotFile206ResponseHeaders{ETag: &etag, AcceptRanges: &ranges, ContentRange: &cr}}, nil
+				Headers: gen.GetSnapshotFile206ResponseHeaders{ETag: &etag, AcceptRanges: &ranges, ContentRange: &cr,
+					ContentDisposition: &disposition, XContentTypeOptions: &nosniff}}, nil
 		}
 	}
 	body, err := f.Open(ctx, 0, -1)
@@ -326,7 +327,38 @@ func (h *handlers) GetSnapshotFile(ctx context.Context, req gen.GetSnapshotFileR
 		return nil, err
 	}
 	return gen.GetSnapshotFile200ApplicationoctetStreamResponse{Body: body, ContentLength: size,
-		Headers: gen.GetSnapshotFile200ResponseHeaders{ETag: &etag, AcceptRanges: &ranges}}, nil
+		Headers: gen.GetSnapshotFile200ResponseHeaders{ETag: &etag, AcceptRanges: &ranges,
+			ContentDisposition: &disposition, XContentTypeOptions: &nosniff}}, nil
+}
+
+// contentDisposition is the Content-Disposition of a download (RFC 6266):
+// attachment, with the name of the file (the last segment of its stored
+// path) in UTF-8 as filename* (RFC 8187 percent-encoding) and an ASCII
+// fallback as filename, in which every other character, '"', '\' and '%'
+// is replaced by '_'.
+func contentDisposition(path string) string {
+	name := path[strings.LastIndexByte(path, '/')+1:]
+	var fallback, ext strings.Builder
+	for _, r := range name {
+		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' || r == '%' {
+			fallback.WriteByte('_')
+		} else {
+			fallback.WriteRune(r)
+		}
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; isAttrChar(c) {
+			ext.WriteByte(c)
+		} else {
+			fmt.Fprintf(&ext, "%%%02X", c)
+		}
+	}
+	return `attachment; filename="` + fallback.String() + `"; filename*=UTF-8''` + ext.String()
+}
+
+// isAttrChar reports the characters RFC 8187 leaves unencoded (attr-char).
+func isAttrChar(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("!#$&+-.^_`|~", c) >= 0
 }
 
 // etagMatches implements the weak comparison of If-None-Match: "*" or a

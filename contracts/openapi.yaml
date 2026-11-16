@@ -589,12 +589,15 @@ paths:
       operationId: getSnapshotFile
       summary: Download a file of a snapshot
       description: |
-        Returns the file content. A single `Range: bytes=...` range is
-        supported (206); a header with several ranges, or one the server does
-        not understand, is ignored (200 with the whole file). `ETag` is the
-        quoted content hash and `If-None-Match` with it gives 304. The stored
-        object is checked before the response starts: one that is missing,
-        or whose size differs from the file's, gives `blob_missing`.
+        Returns the file content as `application/octet-stream`, with
+        `Content-Disposition: attachment` and the file name, and
+        `X-Content-Type-Options: nosniff`. A single `Range: bytes=...` range
+        is supported (206); a header with several ranges, or one the server
+        does not understand, is ignored (200 with the whole file). `ETag` is
+        the quoted content hash and `If-None-Match` with it gives 304. The
+        stored object is checked before the response starts: one that is
+        missing, or whose size differs from the file's, gives
+        `blob_missing`.
 
         Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
         `path` names a directory), `unauthenticated` (401), `not_found` (404,
@@ -625,6 +628,10 @@ paths:
               $ref: '#/components/headers/ETag'
             Accept-Ranges:
               $ref: '#/components/headers/AcceptRanges'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
           content:
             application/octet-stream:
               schema:
@@ -637,6 +644,10 @@ paths:
               $ref: '#/components/headers/ETag'
             Accept-Ranges:
               $ref: '#/components/headers/AcceptRanges'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
             Content-Range:
               description: '`bytes <first>-<last>/<size>`'
               schema:
@@ -791,6 +802,20 @@ components:
       schema:
         type: string
         enum: [bytes]
+    ContentDisposition:
+      description: |
+        `attachment` with the name of the file (the last segment of its
+        stored path): `filename*` is the name in UTF-8, percent-encoded
+        (RFC 6266, RFC 8187), and `filename` an ASCII fallback in which every
+        other character, `"`, `\` and `%` is replaced by `_`.
+      schema:
+        type: string
+        example: attachment; filename="__.txt"; filename*=UTF-8''%E6%96%87%E4%BB%B6.txt
+    ContentTypeOptions:
+      description: '`nosniff`: clients must not guess another type than `application/octet-stream`.'
+      schema:
+        type: string
+        enum: [nosniff]
   parameters:
     RequestId:
       name: X-Request-Id

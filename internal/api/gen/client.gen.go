@@ -154,12 +154,15 @@ type ClientInterface interface {
 
 	// GetSnapshotFile Download a file of a snapshot
 	//
-	// Returns the file content. A single `Range: bytes=...` range is
-	// supported (206); a header with several ranges, or one the server does
-	// not understand, is ignored (200 with the whole file). `ETag` is the
-	// quoted content hash and `If-None-Match` with it gives 304. The stored
-	// object is checked before the response starts: one that is missing,
-	// or whose size differs from the file's, gives `blob_missing`.
+	// Returns the file content as `application/octet-stream`, with
+	// `Content-Disposition: attachment` and the file name, and
+	// `X-Content-Type-Options: nosniff`. A single `Range: bytes=...` range
+	// is supported (206); a header with several ranges, or one the server
+	// does not understand, is ignored (200 with the whole file). `ETag` is
+	// the quoted content hash and `If-None-Match` with it gives 304. The
+	// stored object is checked before the response starts: one that is
+	// missing, or whose size differs from the file's, gives
+	// `blob_missing`.
 	//
 	// Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 	// `path` names a directory), `unauthenticated` (401), `not_found` (404,
@@ -554,12 +557,15 @@ func (c *Client) GetSnapshotDiff(ctx context.Context, snapshotId SnapshotId, par
 
 // GetSnapshotFile Download a file of a snapshot
 //
-// Returns the file content. A single `Range: bytes=...` range is
-// supported (206); a header with several ranges, or one the server does
-// not understand, is ignored (200 with the whole file). `ETag` is the
-// quoted content hash and `If-None-Match` with it gives 304. The stored
-// object is checked before the response starts: one that is missing,
-// or whose size differs from the file's, gives `blob_missing`.
+// Returns the file content as `application/octet-stream`, with
+// `Content-Disposition: attachment` and the file name, and
+// `X-Content-Type-Options: nosniff`. A single `Range: bytes=...` range
+// is supported (206); a header with several ranges, or one the server
+// does not understand, is ignored (200 with the whole file). `ETag` is
+// the quoted content hash and `If-None-Match` with it gives 304. The
+// stored object is checked before the response starts: one that is
+// missing, or whose size differs from the file's, gives
+// `blob_missing`.
 //
 // Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 // `path` names a directory), `unauthenticated` (401), `not_found` (404,
@@ -2146,12 +2152,15 @@ type ClientWithResponsesInterface interface {
 
 	// GetSnapshotFileWithResponse Download a file of a snapshot
 	//
-	// Returns the file content. A single `Range: bytes=...` range is
-	// supported (206); a header with several ranges, or one the server does
-	// not understand, is ignored (200 with the whole file). `ETag` is the
-	// quoted content hash and `If-None-Match` with it gives 304. The stored
-	// object is checked before the response starts: one that is missing,
-	// or whose size differs from the file's, gives `blob_missing`.
+	// Returns the file content as `application/octet-stream`, with
+	// `Content-Disposition: attachment` and the file name, and
+	// `X-Content-Type-Options: nosniff`. A single `Range: bytes=...` range
+	// is supported (206); a header with several ranges, or one the server
+	// does not understand, is ignored (200 with the whole file). `ETag` is
+	// the quoted content hash and `If-None-Match` with it gives 304. The
+	// stored object is checked before the response starts: one that is
+	// missing, or whose size differs from the file's, gives
+	// `blob_missing`.
 	//
 	// Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 	// `path` names a directory), `unauthenticated` (401), `not_found` (404,
@@ -2731,15 +2740,19 @@ func (r GetSnapshotDiffResponse) ContentType() string {
 
 // GetSnapshotFileResponse200Headers the declared response headers of an HTTP 200 response for GetSnapshotFile
 type GetSnapshotFileResponse200Headers struct {
-	AcceptRanges *string
-	ETag         *string
+	AcceptRanges        *string
+	ContentDisposition  *string
+	ETag                *string
+	XContentTypeOptions *string
 }
 
 // GetSnapshotFileResponse206Headers the declared response headers of an HTTP 206 response for GetSnapshotFile
 type GetSnapshotFileResponse206Headers struct {
-	AcceptRanges *string
-	ContentRange *string
-	ETag         *string
+	AcceptRanges        *string
+	ContentDisposition  *string
+	ContentRange        *string
+	ETag                *string
+	XContentTypeOptions *string
 }
 
 // GetSnapshotFileResponse304Headers the declared response headers of an HTTP 304 response for GetSnapshotFile
@@ -3724,12 +3737,15 @@ func (c *ClientWithResponses) GetSnapshotDiffWithResponse(ctx context.Context, s
 
 // GetSnapshotFileWithResponse Download a file of a snapshot
 //
-// Returns the file content. A single `Range: bytes=...` range is
-// supported (206); a header with several ranges, or one the server does
-// not understand, is ignored (200 with the whole file). `ETag` is the
-// quoted content hash and `If-None-Match` with it gives 304. The stored
-// object is checked before the response starts: one that is missing,
-// or whose size differs from the file's, gives `blob_missing`.
+// Returns the file content as `application/octet-stream`, with
+// `Content-Disposition: attachment` and the file name, and
+// `X-Content-Type-Options: nosniff`. A single `Range: bytes=...` range
+// is supported (206); a header with several ranges, or one the server
+// does not understand, is ignored (200 with the whole file). `ETag` is
+// the quoted content hash and `If-None-Match` with it gives 304. The
+// stored object is checked before the response starts: one that is
+// missing, or whose size differs from the file's, gives
+// `blob_missing`.
 //
 // Errors: `invalid_request` (400; `details.reason` = `not_a_file` when
 // `path` names a directory), `unauthenticated` (401), `not_found` (404,
@@ -4408,12 +4424,26 @@ func ParseGetSnapshotFileResponse(rsp *http.Response) (*GetSnapshotFileResponse,
 			}
 			headers.AcceptRanges = &value
 		}
+		if values := rsp.Header.Values("Content-Disposition"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Disposition", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentDisposition = &value
+		}
 		if values := rsp.Header.Values("ETag"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			}
 			headers.ETag = &value
+		}
+		if values := rsp.Header.Values("X-Content-Type-Options"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Content-Type-Options", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XContentTypeOptions = &value
 		}
 		response.Headers200 = &headers
 	case rsp.StatusCode == 206:
@@ -4424,6 +4454,13 @@ func ParseGetSnapshotFileResponse(rsp *http.Response) (*GetSnapshotFileResponse,
 				return nil, err
 			}
 			headers.AcceptRanges = &value
+		}
+		if values := rsp.Header.Values("Content-Disposition"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Disposition", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentDisposition = &value
 		}
 		if values := rsp.Header.Values("Content-Range"); len(values) > 0 {
 			var value string
@@ -4438,6 +4475,13 @@ func ParseGetSnapshotFileResponse(rsp *http.Response) (*GetSnapshotFileResponse,
 				return nil, err
 			}
 			headers.ETag = &value
+		}
+		if values := rsp.Header.Values("X-Content-Type-Options"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Content-Type-Options", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XContentTypeOptions = &value
 		}
 		response.Headers206 = &headers
 	case rsp.StatusCode == 304:
