@@ -68,6 +68,7 @@ workstreams/<workstream_id>/<branch_name>
 迁移脚本在 [`migrations/`](../../migrations)，由 `mfgraph-server migrate`（或 `MFGRAPH_MIGRATE_ON_START=true`）执行。第一个核心切片定义：
 
 - `kernel/0000_bootstrap.sql` —— 独立部署时的内核表（`projects`、最小的 `principals`）；宿主平台自带这些表，不执行此文件
+- `kernel/0001_project_owner.sql` —— `projects.owner_ref`（`VARBINARY(255) NULL`，创建者的身份引用；独立部署时创建者就是项目拥有者）、`owner_principal_uid` 和索引；没有拥有者的项目对任何人都不可见
 - `mysql/0001_workspaces.sql`
 - `mysql/0002_workstreams_branches.sql`
 - `mysql/0003_snapshots.sql` —— `snapshots`、`snapshot_parents`
@@ -75,6 +76,8 @@ workstreams/<workstream_id>/<branch_name>
 - `mysql/0006_uploads.sql`
 - `mysql/0008_usage_outbox_idempotency.sql`
 
-编号 0005 和 0007 预留。后续切片以新文件增加锁、packs/chunks、可选路径索引（`snapshot_entries`）、派生工件、project commit、fencing 和 GC 状态。已执行的文件不可修改：执行器在 `schema_migrations(component, version, checksum, applied_at_us)` 中记录每个文件的 SHA-256，发现变化即拒绝继续。
+编号 0005 和 0007 预留。后续切片以新文件增加锁、packs/chunks、可选路径索引（`snapshot_entries`）、派生工件、project commit、fencing 和 GC 状态。已执行的文件不可修改：执行器在 `schema_migrations(component, version, checksum, applied_at_us)` 中记录每个文件的 SHA-256，发现变化即拒绝继续。后来的迁移也可以用 `ALTER TABLE ... ADD COLUMN`（可为 NULL）或 `ADD KEY` 扩展已有的表，每条语句只加一列或一个索引；列或索引已经存在的语句会被跳过，因此中断的执行可以重跑。
+
+仓储实现（`internal/store/mysql`）只使用 MySQL 8.0 与 seekdb 都支持的写法：不用 CTE、窗口函数、JSON 函数、`SKIP LOCKED`/`NOWAIT`、`RETURNING` 和生成列；分页用键集条件而不是 `OFFSET`；VARBINARY 列按字节传入和读取。提交在插入快照和 outbox 事件的同一个事务里用 `UPDATE branches SET head_snapshot_id = ?, generation = generation + 1 ... WHERE branch_id = ? AND workspace_id = ? AND generation = ?` 移动分支 head。
 
 使用 expand/contract；不要把破坏性 DDL 与代码切换放在同一个 release。

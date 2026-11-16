@@ -11,6 +11,40 @@
 | HA | 多个 `mfgraph-server` + MySQL HA + S3 | 企业 |
 | dev | compose + MySQL + MinIO/POSIX | 本地/CI |
 
+## 运行 mfgraph-server（M1.0a）
+
+服务端用环境变量配置：
+
+| 变量 | 默认值 | 含义 |
+|---|---|---|
+| `MFGRAPH_HTTP_ADDR` | `127.0.0.1:8094` | `host:port`，或 `unix:<path>` 表示 Unix domain socket（见下文） |
+| `MFGRAPH_API_PREFIX` | `/api/v1` | 业务接口的路径前缀；`/healthz` 和 `/readyz` 始终在根路径 |
+| `MFGRAPH_DB_DSN` | — | MySQL DSN（go-sql-driver），例如 `mfgraph:<password>@tcp(127.0.0.1:3306)/mfgraph`；服务**必须**连数据库 |
+| `MFGRAPH_MIGRATE_ON_START` | `false` | 开始服务前执行未执行的迁移 |
+| `MFGRAPH_KERNEL_MIGRATIONS` | `true` | 是否包括 kernel 表（`projects`、`principals`）；只用于独立部署 |
+| `MFGRAPH_STORAGE_ROOT` | — | POSIX BlobStore 的根目录；配置了数据库时必须配置，否则拒绝启动 |
+| `MFGRAPH_TENANT_ID` | `00000000000000000000000000` | 独立部署的租户（ULID） |
+| `MFGRAPH_MAX_UPLOAD_BYTES` | `1073741824`（1 GiB） | 单次上传上限 |
+| `MFGRAPH_MAX_COMMIT_CHANGES` | `10000` | 单次提交的改动条数上限 |
+| `MFGRAPH_AUTH_TOKENS` | — | 静态 bearer token：`token=ACTOR_REF[,token=ACTOR_REF...]`（token 至少 16 个字符） |
+| `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog 设置（给人看用 `text`） |
+| `MFGRAPH_LOG_PSEUDONYM_KEY` | 每次启动随机生成 | 日志中 actor 假名的密钥（至少 16 字节；见[安全](security.md)） |
+| `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | 收到 SIGTERM 或 SIGINT 后的优雅退出时间 |
+
+- **必须连数据库。** 没有 `MFGRAPH_DB_DSN` 时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；数据库连不上时也一样。用 `mfgraph-server migrate`（或 `MFGRAPH_MIGRATE_ON_START=true`）执行迁移；迁移只需要 `MFGRAPH_DB_DSN`。
+- **就绪检查。** `/readyz` 检查数据库（必需）和存储根目录，并报告 `unicode_version`（路径规则所用的 Unicode 版本 V）和 `version`（服务版本）。
+- **Unix domain socket。** `MFGRAPH_HTTP_ADDR=unix:/run/mfgraph/api.sock` 监听一个只有服务进程的用户能使用的 socket（权限 0600，创建时 umask 为 0177）。启动时如果这个路径上残留着已停止的服务留下的 socket，就删掉；如果是普通文件、目录或仍在应答的服务的 socket，就拒绝启动。退出时删除 socket。
+- **路径前缀。** 设置 `MFGRAPH_API_PREFIX=/files/v1` 后，契约中的 `/api/v1/...` 接口改由 `/files/v1/...` 提供（`/api/v1/...` 返回 404），反向代理可以把模块路径原样转发过来。前缀以 `/` 开头，不以 `/` 结尾，最长 128 字节，每段只用 `A–Z a–z 0–9 . _ ~ -`。
+- **存储。** POSIX BlobStore 把每个对象存成文件 `<MFGRAPH_STORAGE_ROOT>/<存储前缀>/<key>`（见[存储](storage.md)）。根目录必须存在且可写；临时文件（`.tmp-*.part`）建在对象旁边，最后 rename 到位。
+- **退出。** 收到 SIGTERM 后，服务停止接受新连接，并最多等待 `MFGRAPH_SHUTDOWN_TIMEOUT`（8 秒，低于守护进程常用的 10 秒强杀时限）让进行中的请求完成。
+
+```bash
+make dev-db-up
+export MFGRAPH_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/mfgraph'
+./bin/mfgraph-server migrate
+MFGRAPH_STORAGE_ROOT=/var/lib/mfgraph MFGRAPH_AUTH_TOKENS='<token>=alice' ./bin/mfgraph-server
+```
+
 ## 数据库
 
 支持的 SQL 方言是 **MySQL**。CI 每次都在两种服务器上执行迁移：**MySQL 8.0** 和 **seekdb**（兼容 MySQL 5.7 子集的单机数据库，宿主平台单机部署时使用）。两者建出的表结构完全相同。为了落在两者的公共子集内，ID 和 hash 列使用 `utf8mb4_bin`，而不是 seekdb 不支持的 `ascii` 字符集；迁移 lint 会检查这一点。
@@ -29,6 +63,8 @@ make ci-seekdb    # 启动 seekdb 并在其上跑同样的测试
 路径规则依赖 Unicode 数据表，[内容格式](../spec/zh-CN/content-format.md#24-unicode-版本-v)规定了它们的版本 V。`mfgraph-server serve` 或 `migrate` 在处理任何数据之前，先把编译进程序的数据表与 V 比较：Go 标准库的数据表（决定码位是否已分配）必须正好是 V，`golang.org/x/text` 的数据表（NFC、大小写折叠）必须不低于 V。不满足就在日志里写明实际版本和要求的 V，并以非 0 状态退出。没有任何跳过检查的开关；升级 V 必须同时修改代码和规范。`mfgraph debug` 只打印警告。
 
 ## 最小 compose（概念示例）
+
+S3 相关的配置项属于以后的切片；M1.0a 使用 POSIX 存储（`MFGRAPH_STORAGE_ROOT`）。
 
 ```yaml
 services:
@@ -96,7 +132,7 @@ N-1 API 兼容；优先旧二进制 + 新 schema，而不是回滚恢复。
 
 | 端口 | 用途 |
 |---|---|
-| 8094 | mfgraph API |
+| 8094 | mfgraph API（`MFGRAPH_HTTP_ADDR` 默认 127.0.0.1:8094） |
 | 3306/2881 | MySQL/OceanBase |
 | 9000/9001 | S3/RustFS |
 | 443 | TLS ingress |

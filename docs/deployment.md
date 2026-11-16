@@ -11,6 +11,40 @@
 | HA | multiple `mfgraph-server` + MySQL HA + S3 | enterprise |
 | dev | compose + MySQL + MinIO/POSIX | local/CI |
 
+## Running mfgraph-server (M1.0a)
+
+The server is configured with environment variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MFGRAPH_HTTP_ADDR` | `127.0.0.1:8094` | `host:port`, or `unix:<path>` for a Unix domain socket (below) |
+| `MFGRAPH_API_PREFIX` | `/api/v1` | path prefix of the business endpoints; `/healthz` and `/readyz` stay at the root |
+| `MFGRAPH_DB_DSN` | — | MySQL DSN (go-sql-driver), for example `mfgraph:<password>@tcp(127.0.0.1:3306)/mfgraph`; **required** for the service to work |
+| `MFGRAPH_MIGRATE_ON_START` | `false` | apply pending migrations before serving |
+| `MFGRAPH_KERNEL_MIGRATIONS` | `true` | include the kernel tables (`projects`, `principals`); standalone deployments only |
+| `MFGRAPH_STORAGE_ROOT` | — | root directory of the POSIX blob store; required with a database (the server refuses to start without it) |
+| `MFGRAPH_TENANT_ID` | `00000000000000000000000000` | tenant of a standalone deployment (a ULID) |
+| `MFGRAPH_MAX_UPLOAD_BYTES` | `1073741824` (1 GiB) | largest upload |
+| `MFGRAPH_MAX_COMMIT_CHANGES` | `10000` | most changes per commit |
+| `MFGRAPH_AUTH_TOKENS` | — | static bearer tokens: `token=ACTOR_REF[,token=ACTOR_REF...]` (tokens of at least 16 characters) |
+| `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog settings (`text` for humans) |
+| `MFGRAPH_LOG_PSEUDONYM_KEY` | random per start | key of the actor pseudonyms in the logs (at least 16 bytes; see [security](security.md)) |
+| `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | graceful shutdown after SIGTERM or SIGINT |
+
+- **A database is required.** Without `MFGRAPH_DB_DSN` the server starts, but `/readyz` answers 503 and every business endpoint `503 db_unavailable`; an unreachable database gives the same. Apply the migrations with `mfgraph-server migrate` (or `MFGRAPH_MIGRATE_ON_START=true`); it needs only `MFGRAPH_DB_DSN`.
+- **Readiness.** `/readyz` checks the database (required) and the storage root, and reports `unicode_version` (the Unicode version V of the path rules) and `version` (the build).
+- **Unix domain socket.** `MFGRAPH_HTTP_ADDR=unix:/run/mfgraph/api.sock` listens on a socket that only the server's user can use (mode 0600, created with umask 0177). A socket left behind by a stopped server is removed at start; a regular file, a directory, or the socket of a server that still answers stops the start. The socket is removed on shutdown.
+- **API prefix.** With `MFGRAPH_API_PREFIX=/files/v1` the contract's `/api/v1/...` endpoints are served at `/files/v1/...` (and `/api/v1/...` answers 404); a reverse proxy can forward a module path unchanged. The prefix starts with `/`, has no trailing `/`, at most 128 bytes, and its segments use `A–Z a–z 0–9 . _ ~ -`.
+- **Storage.** The POSIX blob store keeps every object in a file `<MFGRAPH_STORAGE_ROOT>/<storage prefix>/<key>` (see [storage](storage.md)). The root must exist and be writable; temporary files (`.tmp-*.part`) are created next to the objects and renamed into place.
+- **Shutdown.** After SIGTERM the server stops accepting connections and waits up to `MFGRAPH_SHUTDOWN_TIMEOUT` (8 s, below the 10 s after which supervisors commonly kill a process) for running requests.
+
+```bash
+make dev-db-up
+export MFGRAPH_DB_DSN='root:mfgraph@tcp(127.0.0.1:3306)/mfgraph'
+./bin/mfgraph-server migrate
+MFGRAPH_STORAGE_ROOT=/var/lib/mfgraph MFGRAPH_AUTH_TOKENS='<token>=alice' ./bin/mfgraph-server
+```
+
 ## Database
 
 The supported SQL dialect is **MySQL**. CI applies the migrations on two servers in every run: **MySQL 8.0** and **seekdb** (a single-node database compatible with a subset of MySQL 5.7, which host platforms use for single-machine deployments). Both build the same schema. To stay inside the common subset, ID and hash columns use `utf8mb4_bin` rather than the `ascii` character set, which seekdb does not provide; the migration lint enforces this.
@@ -29,6 +63,8 @@ make ci-seekdb    # start seekdb and run the same tests on it
 The path rules depend on Unicode tables, and the [content format](spec/content-format.md#24-unicode-version-v) fixes their version V. Before `mfgraph-server serve` or `migrate` touches any data, the server compares the tables compiled into the binary with V: the Go standard library's tables (which decide whether a code point is assigned) must be exactly V, and those of `golang.org/x/text` (NFC, case folding) V or later. Otherwise it logs the actual versions and the required V and exits with a non-zero status. There is no switch to skip the check; raising V means changing the code and the specification together. `mfgraph debug` only prints a warning.
 
 ## Minimal compose (conceptual)
+
+The S3 settings belong to a later slice; M1.0a stores objects on a POSIX file system (`MFGRAPH_STORAGE_ROOT`).
 
 ```yaml
 services:
@@ -96,7 +132,7 @@ N-1 API compatibility; prefer old binary + new schema over restore.
 
 | Port | Use |
 |---|---|
-| 8094 | mfgraph API |
+| 8094 | mfgraph API (default `MFGRAPH_HTTP_ADDR` 127.0.0.1:8094) |
 | 3306/2881 | MySQL/OceanBase |
 | 9000/9001 | S3/RustFS |
 | 443 | TLS ingress |
