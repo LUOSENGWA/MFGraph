@@ -213,3 +213,46 @@ func mapList(m map[string]FileEntry) []FileEntry {
 	}
 	return out
 }
+
+// TestApplyFrozenPagingBoundaries: with the frozen limits, directories of
+// 1023, 1024, 1025, 2048 and 2049 entries (one page, the largest single
+// node, two pages, two full pages, three pages), changed at the head and
+// the tail of the directory and of its pages.
+func TestApplyFrozenPagingBoundaries(t *testing.T) {
+	for _, n := range []int{1023, 1024, 1025, 2048, 2049} {
+		var files []FileEntry
+		names := make([]string, n)
+		for i := 0; i < n; i++ {
+			names[i] = fmt.Sprintf("d/f%05d", i)
+			files = append(files, fe(names[i], names[i], ModeRegular))
+		}
+		files = append(files, fe("top.txt", "top", ModeRegular))
+		cases := [][]Change{
+			{put("d/e", "a new first entry")},
+			{put("d/g", "a new last entry")},
+			{del(names[0])},
+			{del(names[n-1])},
+			{put(names[0], "replaced")},
+			{put(names[n-1], "replaced")},
+			{del(names[0]), put("d/g", "a new last entry")},
+			{put("d/e", "first"), put("d/g", "last")},
+			{del(names[0]), del(names[n-1])},
+			{put(names[n/2], "replaced"), del(names[n/2+1])},
+		}
+		for _, i := range []int{1023, 1024, 2047, 2048} {
+			if i >= n {
+				continue
+			}
+			// The last entry of a page and the first of the next.
+			cases = append(cases,
+				[]Change{del(names[i])},
+				[]Change{put(names[i], "replaced")},
+				[]Change{put(names[i]+"a", "inserted after it")},
+				[]Change{del(names[i-1]), del(names[i])},
+			)
+		}
+		for _, cs := range cases {
+			checkApply(t, files, frozenLimits, cs...)
+		}
+	}
+}
