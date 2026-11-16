@@ -641,17 +641,25 @@ func (a *applier) leafRefs(top Node, hint string) ([]PageRef, error) {
 }
 
 // rewritePaged rewrites a paged directory that stays paged and gains no new
-// names: the pages before the first changed name are reused without
-// reading them; from that page on, the entries are packed again with the
-// greedy rule of the specification until all changes are applied and a new
-// page starts where an old one started, from where the old pages are
-// reused again. The result equals layout over all entries.
+// names. Greedy packing closes a page because of its own entries and the
+// entry that follows it, so the pages before the page of the first changed
+// name (page start) are reused without reading them, except page start-1
+// when the change removes or replaces the first entry of page start and
+// page start-1 was closed by size: the entry that follows it then differs
+// and may fit. From the first page that is not reused, the entries are
+// packed again with the greedy rule of the specification until all changes
+// are applied and a new page starts where an old one started, from where
+// the old pages are reused again. The result equals layout over all
+// entries.
 func (a *applier) rewritePaged(md *modDir, top Node, ups []update) (contenthash.Hash, error) {
 	refs, err := a.leafRefs(top, ups[0].name)
 	if err != nil {
 		return contenthash.Hash{}, err
 	}
 	start := refFor(refs, ups[0].name)
+	if start > 0 && ups[0].name == refs[start].First && refs[start-1].Count < int64(a.lim.maxItems) {
+		start--
+	}
 	p := &pager{lim: a.lim, put: a.put}
 	p.refs = append(p.refs, refs[:start]...)
 	u := 0
@@ -659,9 +667,11 @@ func (a *applier) rewritePaged(md *modDir, top Node, ups []update) (contenthash.
 	for ; j < len(refs); j++ {
 		// Once every update is applied, the old pages are reused from the
 		// first one that starts a new page: its entries and all that follow
-		// are unchanged, so greedy packs them as before. A next entry starts
-		// a new page when the current page is empty or full by count
-		// (decided without reading it), or when it does not fit by size.
+		// are unchanged, so greedy packs them as before. The next entry
+		// starts a new page when the current page is full by count, or empty
+		// (nothing was packed again: the page before is reused and was full
+		// by count, or there is none), both decided without reading it, or
+		// when it does not fit by size.
 		if u == len(ups) && (len(p.cur) == 0 || len(p.cur) == a.lim.maxItems) {
 			break
 		}
