@@ -45,6 +45,10 @@ type Options struct {
 	// MaxJSONBodyBytes bounds the body of every request but an upload
 	// (0 = DefaultMaxJSONBodyBytes, 16 MiB).
 	MaxJSONBodyBytes int64
+	// TrustedHeaderPrefix is the prefix of the identity headers in module
+	// mode ("" in standalone mode): the request ID is taken from
+	// <prefix>Request-Id first, and <prefix>Trace-Id is logged as trace_id.
+	TrustedHeaderPrefix string
 }
 
 // publicPaths are served without authentication.
@@ -87,8 +91,12 @@ func NewHandler(o Options) http.Handler {
 	handler = Prefix(o.APIPrefix, publicPaths)(handler)
 	handler = Authenticate(o.Authenticator, publicPaths)(handler)
 	handler = Recover(o.Logger)(handler)
-	handler = AccessLog(o.Logger, o.Pseudonym)(handler)
-	handler = RequestID(o.IDGen)(handler)
+	var requestIDHeader, traceHeader string
+	if o.TrustedHeaderPrefix != "" {
+		requestIDHeader, traceHeader = o.TrustedHeaderPrefix+ClaimRequestID, o.TrustedHeaderPrefix+ClaimTraceID
+	}
+	handler = AccessLog(o.Logger, o.Pseudonym, traceHeader)(handler)
+	handler = RequestID(o.IDGen, requestIDHeader)(handler)
 	return handler
 }
 

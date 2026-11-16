@@ -34,6 +34,23 @@ type Principal struct {
 	// Empty otherwise; it fills the optional *_principal_uid columns.
 	PrincipalUID string
 	TenantID     string // empty when the authenticator does not know it
+	// ActorType is the kind of actor the host platform names for Ref
+	// ([a-z0-9_-]{1,16}, for example "human" or "worker"); empty in a
+	// standalone deployment. Actors of different types may have the same
+	// Ref, so records that keep an actor keep its type too.
+	ActorType string
+	// OnBehalfOfRef and OnBehalfOfType name the actor this request acts
+	// for, when the host platform says so (an actor reference and an
+	// optional type); empty otherwise.
+	OnBehalfOfRef  string
+	OnBehalfOfType string
+	// ProjectScope is the project the host platform admitted this request
+	// to (module mode): only resources of this project are visible. Empty
+	// in a standalone deployment.
+	ProjectScope string
+	// Team is the team the host platform names for the request; it is
+	// recorded only and never used to decide anything.
+	Team string
 }
 
 // Authenticator turns request credentials into a Principal. It returns

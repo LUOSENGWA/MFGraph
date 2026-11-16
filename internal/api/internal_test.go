@@ -22,7 +22,7 @@ func (s *seqIDs) NewID() string { s.n++; return fmt.Sprintf("01JD3X5Q8Z9W2V4T6R8
 
 func TestRecoverWritesInternalEnvelope(t *testing.T) {
 	l := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := RequestID(&seqIDs{})(Recover(l)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })))
+	h := RequestID(&seqIDs{}, "")(Recover(l)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
 	var body map[string]any
