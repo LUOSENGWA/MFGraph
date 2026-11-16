@@ -51,14 +51,16 @@ func (s *BlobStore) PutIfAbsent(ctx context.Context, key string, r io.Reader, si
 	if exists && int64(len(old.data)) == size {
 		return false, nil
 	}
-	// Read at most size+1 bytes to detect oversized input without buffering
-	// an unbounded stream.
-	data, err := io.ReadAll(io.LimitReader(r, size+1))
+	// Read at most size bytes, then probe for one more, to detect oversized
+	// input without buffering an unbounded stream.
+	var buf bytes.Buffer
+	n, over, err := ports.ReadLimited(r, &buf, size)
 	if err != nil {
 		return false, err
 	}
-	if int64(len(data)) != size {
-		return false, fmt.Errorf("%w: got at least %d bytes, want %d", ports.ErrSizeMismatch, len(data), size)
+	data := buf.Bytes()
+	if n != size || over {
+		return false, fmt.Errorf("%w: got %d bytes (more: %v), want %d", ports.ErrSizeMismatch, n, over, size)
 	}
 	if got := contenthash.SumBytes(data); got != h {
 		return false, fmt.Errorf("%w: got %s, want %s", ports.ErrHashMismatch, got, h)
@@ -73,19 +75,22 @@ func (s *BlobStore) PutIfAbsent(ctx context.Context, key string, r io.Reader, si
 }
 
 // PutStream implements ports.BlobStore. The in-memory store buffers the
-// bytes (at most maxSize+1 of them); tmpDir is not used.
+// bytes (at most maxSize of them, plus a probe for one more); tmpDir is not
+// used.
 func (s *BlobStore) PutStream(ctx context.Context, _ string, r io.Reader, maxSize int64, expected contenthash.Hash,
 	keyOf func(contenthash.Hash) string) (ports.ObjectInfo, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ObjectInfo{}, false, err
 	}
-	data, err := io.ReadAll(io.LimitReader(r, maxSize+1))
+	var buf bytes.Buffer
+	_, over, err := ports.ReadLimited(r, &buf, maxSize)
 	if err != nil {
 		return ports.ObjectInfo{}, false, err
 	}
-	if int64(len(data)) > maxSize {
+	if over {
 		return ports.ObjectInfo{}, false, fmt.Errorf("%w: more than %d bytes", ports.ErrTooLarge, maxSize)
 	}
+	data := buf.Bytes()
 	h := contenthash.SumBytes(data)
 	if !expected.IsZero() && h != expected {
 		return ports.ObjectInfo{}, false, fmt.Errorf("%w: got %s, want %s", ports.ErrHashMismatch, h, expected)

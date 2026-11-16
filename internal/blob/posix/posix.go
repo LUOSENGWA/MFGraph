@@ -223,14 +223,14 @@ func (s *Store) PutIfAbsent(ctx context.Context, key string, r io.Reader, size i
 		return false, err
 	}
 	hasher := contenthash.NewHasher()
-	n, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(ctxReader{ctx, r}, size+1))
+	n, over, err := ports.ReadLimited(ctxReader{ctx, r}, io.MultiWriter(tmp, hasher), size)
 	switch {
 	case err != nil:
 		discard(tmp)
 		return false, err
-	case n != size:
+	case n != size || over:
 		discard(tmp)
-		return false, fmt.Errorf("%w: got %d bytes or more, want %d", ports.ErrSizeMismatch, n, size)
+		return false, fmt.Errorf("%w: got %d bytes (more: %v), want %d", ports.ErrSizeMismatch, n, over, size)
 	case hasher.Sum() != h:
 		discard(tmp)
 		return false, fmt.Errorf("%w: got %s, want %s", ports.ErrHashMismatch, hasher.Sum(), h)
@@ -263,12 +263,12 @@ func (s *Store) PutStream(ctx context.Context, tmpDir string, r io.Reader, maxSi
 		return ports.ObjectInfo{}, false, err
 	}
 	hasher := contenthash.NewHasher()
-	n, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(ctxReader{ctx, r}, maxSize+1))
+	n, over, err := ports.ReadLimited(ctxReader{ctx, r}, io.MultiWriter(tmp, hasher), maxSize)
 	if err != nil {
 		discard(tmp)
 		return ports.ObjectInfo{}, false, err
 	}
-	if n > maxSize {
+	if over {
 		discard(tmp)
 		return ports.ObjectInfo{}, false, fmt.Errorf("%w: more than %d bytes", ports.ErrTooLarge, maxSize)
 	}

@@ -31,6 +31,10 @@ const (
 	DefaultAPIPrefix     = "/api/v1"
 	DefaultTenantID      = "00000000000000000000000000"
 	DefaultMaxUpload     = 1 << 30
+	// MaxUploadLimit is the largest value of MFGRAPH_MAX_UPLOAD_BYTES: 5 TiB,
+	// the largest object of Amazon S3 and far below the 2^53-1 bytes a file
+	// size of the content format can hold.
+	MaxUploadLimit = 5 << 40
 	DefaultMaxChanges    = 10_000
 	DefaultShutdown      = 8 * time.Second
 	unixPrefix           = "unix:"
@@ -61,7 +65,7 @@ type Config struct {
 	// TenantID is the tenant of a standalone deployment (a ULID; default
 	// 00000000000000000000000000).
 	TenantID string
-	// MaxUploadBytes bounds one upload (default 1 GiB).
+	// MaxUploadBytes bounds one upload (default 1 GiB; 1 byte to 5 TiB).
 	MaxUploadBytes int64
 	// MaxCommitChanges bounds the changes of one commit (default 10000).
 	MaxCommitChanges int
@@ -148,8 +152,8 @@ func Load(getenv func(string) string) (Config, error) {
 		c.TenantID = v
 	}
 	var err error
-	if c.MaxUploadBytes, err = parsePositive(getenv, EnvMaxUploadBytes, DefaultMaxUpload); err != nil {
-		return Config{}, err
+	if c.MaxUploadBytes, err = parsePositive(getenv, EnvMaxUploadBytes, DefaultMaxUpload); err != nil || c.MaxUploadBytes > MaxUploadLimit {
+		return Config{}, fmt.Errorf("config: %s must be an integer between 1 and %d (5 TiB)", EnvMaxUploadBytes, int64(MaxUploadLimit))
 	}
 	maxChanges, err := parsePositive(getenv, EnvMaxCommitChanges, DefaultMaxChanges)
 	if err != nil || maxChanges > 1_000_000 {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -167,6 +168,28 @@ func RunBlobStore(t *testing.T, newStore func(t *testing.T) (ports.BlobStore, Co
 		// A failing reader stores nothing.
 		if _, _, err := s.PutStream(ctx, tmpDir, io.MultiReader(bytes.NewReader(other), errReader{}), 1000, contenthash.Hash{}, objKey); err == nil {
 			t.Error("a failing reader succeeded")
+		}
+	})
+
+	t.Run("SizeLimits", func(t *testing.T) {
+		s, _ := newStore(t)
+		data := []byte("exactly 23 bytes long..")
+		h := contenthash.SumBytes(data)
+		// The largest limit there is: limit+1 would overflow.
+		info, _, err := s.PutStream(ctx, tmpDir, bytes.NewReader(data), math.MaxInt64, contenthash.Hash{}, objKey)
+		if err != nil || info.Size != int64(len(data)) || info.Hash != h || read(t, s, info.Key, 0, -1) != string(data) {
+			t.Fatalf("PutStream with the limit MaxInt64: %+v %v", info, err)
+		}
+		// The limit is inclusive.
+		other := append([]byte("x"), data...)
+		if _, _, err := s.PutStream(ctx, tmpDir, bytes.NewReader(other), int64(len(other)), contenthash.Hash{}, objKey); err != nil {
+			t.Fatalf("content of exactly the limit: %v", err)
+		}
+		if _, _, err := s.PutStream(ctx, tmpDir, bytes.NewReader(other), int64(len(other))-1, contenthash.Hash{}, objKey); !errors.Is(err, ports.ErrTooLarge) {
+			t.Fatalf("one byte over the limit: %v", err)
+		}
+		if _, _, err := s.PutStream(ctx, tmpDir, bytes.NewReader(nil), 0, contenthash.Hash{}, objKey); err != nil {
+			t.Fatalf("empty content with the limit 0: %v", err)
 		}
 	})
 

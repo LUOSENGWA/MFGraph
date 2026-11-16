@@ -47,6 +47,30 @@ type ObjectInfo struct {
 	ModTime time.Time
 }
 
+// ReadLimited reads r up to and including its end, as long as that is at
+// most limit bytes: it reads limit bytes and then probes for one more byte.
+// over reports that r had more (never computing limit+1, which overflows
+// for the largest int64). Implementations of BlobStore use it to enforce
+// sizes on readers that may be longer than announced.
+func ReadLimited(r io.Reader, w io.Writer, limit int64) (n int64, over bool, err error) {
+	if limit < 0 {
+		limit = 0
+	}
+	n, err = io.Copy(w, io.LimitReader(r, limit))
+	if err != nil || n < limit {
+		return n, false, err
+	}
+	var probe [1]byte
+	k, err := io.ReadFull(r, probe[:])
+	switch {
+	case k > 0:
+		return n, true, nil
+	case err == io.EOF:
+		return n, false, nil
+	}
+	return n, false, err
+}
+
 // BlobStore stores immutable objects under full keys
 // (workspace storage_prefix + "/" + relative key; see package storagekey).
 //

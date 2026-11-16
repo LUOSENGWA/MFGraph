@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -665,4 +666,14 @@ func TestDownloadOfLostContent(t *testing.T) {
 	e.must(e.objs.Delete(ctx, storagekey.Join(sd.ws.Workspace.StoragePrefix, storagekey.ObjectKey(f.Entry.Hash))))
 	_, err = f.Open(ctx, 0, -1)
 	wantCode(t, "lost content", err, core.CodeBlobMissing, "reason", core.ReasonMissingInStorage)
+}
+
+// TestUploadLimitAtInt64Max: the largest limit there is stores the content
+// (a limit+1 overflow once made the stores read nothing).
+func TestUploadLimitAtInt64Max(t *testing.T) {
+	e := newEnv(t, core.Config{MaxUploadBytes: math.MaxInt64})
+	sd := e.seed(alice)
+	if got := e.read(alice, sd.first.SnapshotID, "docs/b.txt"); got != "second file\n" {
+		t.Fatalf("content stored with the limit MaxInt64: %q", got)
+	}
 }

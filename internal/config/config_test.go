@@ -67,34 +67,36 @@ func TestAllVariables(t *testing.T) {
 
 func TestInvalid(t *testing.T) {
 	cases := map[string]map[string]string{
-		"bad bool":            {config.EnvMigrateOnStart: "yes please"},
-		"migrate without db":  {config.EnvMigrateOnStart: "true"},
-		"short token":         {config.EnvAuthTokens: "short=" + uidA},
-		"missing actor":       {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa"},
-		"empty actor":         {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa="},
-		"actor too long":      {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + strings.Repeat("x", 256)},
-		"control character":   {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\x01b"},
-		"invalid utf-8":       {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\xffb"},
-		"duplicate token":     {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + uidA + ",token-aaaaaaaaaaaaaaaa=" + uidA},
-		"bad level":           {config.EnvLogLevel: "loud"},
-		"bad format":          {config.EnvLogFormat: "xml"},
-		"bad timeout":         {config.EnvShutdownTimeout: "-1s"},
-		"empty socket path":   {config.EnvHTTPAddr: "unix:"},
-		"prefix without /":    {config.EnvAPIPrefix: "api/v1"},
-		"prefix with /":       {config.EnvAPIPrefix: "/api/v1/"},
-		"prefix //":           {config.EnvAPIPrefix: "/api//v1"},
-		"prefix ..":           {config.EnvAPIPrefix: "/api/../v1"},
-		"prefix space":        {config.EnvAPIPrefix: "/api v1"},
-		"prefix /":            {config.EnvAPIPrefix: "/"},
-		"prefix healthz":      {config.EnvAPIPrefix: "/healthz/v1"},
-		"prefix too long":     {config.EnvAPIPrefix: "/" + strings.Repeat("a", 128)},
-		"tenant not a ULID":   {config.EnvTenantID: "tenant-1"},
-		"tenant lowercase":    {config.EnvTenantID: strings.ToLower(uidA)},
-		"upload limit 0":      {config.EnvMaxUploadBytes: "0"},
-		"upload limit text":   {config.EnvMaxUploadBytes: "1GiB"},
-		"changes 0":           {config.EnvMaxCommitChanges: "0"},
-		"changes huge":        {config.EnvMaxCommitChanges: "2000000"},
-		"short pseudonym key": {config.EnvLogPseudonymKey: "short"},
+		"bad bool":                {config.EnvMigrateOnStart: "yes please"},
+		"migrate without db":      {config.EnvMigrateOnStart: "true"},
+		"short token":             {config.EnvAuthTokens: "short=" + uidA},
+		"missing actor":           {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa"},
+		"empty actor":             {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa="},
+		"actor too long":          {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + strings.Repeat("x", 256)},
+		"control character":       {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\x01b"},
+		"invalid utf-8":           {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=a\xffb"},
+		"duplicate token":         {config.EnvAuthTokens: "token-aaaaaaaaaaaaaaaa=" + uidA + ",token-aaaaaaaaaaaaaaaa=" + uidA},
+		"bad level":               {config.EnvLogLevel: "loud"},
+		"bad format":              {config.EnvLogFormat: "xml"},
+		"bad timeout":             {config.EnvShutdownTimeout: "-1s"},
+		"empty socket path":       {config.EnvHTTPAddr: "unix:"},
+		"prefix without /":        {config.EnvAPIPrefix: "api/v1"},
+		"prefix with /":           {config.EnvAPIPrefix: "/api/v1/"},
+		"prefix //":               {config.EnvAPIPrefix: "/api//v1"},
+		"prefix ..":               {config.EnvAPIPrefix: "/api/../v1"},
+		"prefix space":            {config.EnvAPIPrefix: "/api v1"},
+		"prefix /":                {config.EnvAPIPrefix: "/"},
+		"prefix healthz":          {config.EnvAPIPrefix: "/healthz/v1"},
+		"prefix too long":         {config.EnvAPIPrefix: "/" + strings.Repeat("a", 128)},
+		"tenant not a ULID":       {config.EnvTenantID: "tenant-1"},
+		"tenant lowercase":        {config.EnvTenantID: strings.ToLower(uidA)},
+		"upload limit 0":          {config.EnvMaxUploadBytes: "0"},
+		"upload limit int64":      {config.EnvMaxUploadBytes: "9223372036854775807"},
+		"upload limit over 5 TiB": {config.EnvMaxUploadBytes: "5497558138881"},
+		"upload limit text":       {config.EnvMaxUploadBytes: "1GiB"},
+		"changes 0":               {config.EnvMaxCommitChanges: "0"},
+		"changes huge":            {config.EnvMaxCommitChanges: "2000000"},
+		"short pseudonym key":     {config.EnvLogPseudonymKey: "short"},
 	}
 	for name, m := range cases {
 		_, err := config.Load(env(m))
@@ -140,5 +142,14 @@ func TestCheckServe(t *testing.T) {
 	}
 	if err := (config.Config{}).CheckServe(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUploadLimitRange(t *testing.T) {
+	for v, want := range map[string]int64{"1": 1, "5497558138880": 5 << 40, "1073741824": 1 << 30} {
+		c, err := config.Load(env(map[string]string{config.EnvMaxUploadBytes: v}))
+		if err != nil || c.MaxUploadBytes != want {
+			t.Errorf("%s: %d %v", v, c.MaxUploadBytes, err)
+		}
 	}
 }
