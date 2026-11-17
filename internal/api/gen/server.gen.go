@@ -769,6 +769,15 @@ type UnprocessableEntity = Error
 // UnsupportedMediaType defines model for UnsupportedMediaType.
 type UnsupportedMediaType = Error
 
+// UploadObjectParams defines parameters for UploadObject.
+type UploadObjectParams struct {
+	// XContentSHA256 Expected content hash, verified after the upload.
+	XContentSHA256 *Hash `json:"X-Content-SHA256,omitempty"`
+
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+}
+
 // CreateProjectParams defines parameters for CreateProject.
 type CreateProjectParams struct {
 	// XRequestId Client request ID; reused when valid, otherwise replaced.
@@ -916,6 +925,9 @@ type CreateCommitJSONRequestBody = CommitRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// UploadObject Upload a whole file into the workspace staging area (upload path)
+	// (PUT /api/v1/objects/{workspace_id})
+	UploadObject(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params UploadObjectParams)
 	// CreateProject Create a project (standalone deployments)
 	// (POST /api/v1/projects)
 	CreateProject(w http.ResponseWriter, r *http.Request, params CreateProjectParams)
@@ -971,6 +983,75 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// UploadObject operation middleware
+func (siw *ServerInterfaceWrapper) UploadObject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", r.PathValue("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspace_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UploadObjectParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Content-SHA256" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Content-SHA256")]; found {
+		var XContentSHA256 Hash
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Content-SHA256", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Content-SHA256", valueList[0], &XContentSHA256, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Content-SHA256", Err: err})
+			return
+		}
+
+		params.XContentSHA256 = &XContentSHA256
+
+	}
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadObject(w, r, workspaceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // CreateProject operation middleware
 func (siw *ServerInterfaceWrapper) CreateProject(w http.ResponseWriter, r *http.Request) {
@@ -2103,6 +2184,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}", wrapper.GetWorkspace)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/branches", wrapper.ListBranches)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/objects", wrapper.PutObject)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/objects/{workspace_id}", wrapper.UploadObject)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/commits", wrapper.CreateCommit)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/timeline", wrapper.GetTimeline)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/snapshots/{snapshot_id}", wrapper.GetSnapshot)
@@ -2137,6 +2219,131 @@ type UnauthenticatedJSONResponse Error
 type UnprocessableEntityJSONResponse Error
 
 type UnsupportedMediaTypeJSONResponse Error
+
+type UploadObjectRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspace_id"`
+	Params      UploadObjectParams
+	Body        io.Reader
+}
+
+type UploadObjectResponseObject interface {
+	VisitUploadObjectResponse(w http.ResponseWriter) error
+}
+
+type UploadObject200JSONResponse StagedObject
+
+func (response UploadObject200JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject201JSONResponse StagedObject
+
+func (response UploadObject201JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UploadObject400JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response UploadObject401JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response UploadObject403JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UploadObject404JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject413JSONResponse struct{ PayloadTooLargeJSONResponse }
+
+func (response UploadObject413JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObjectdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UploadObjectdefaultJSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type CreateProjectRequestObject struct {
 	Params CreateProjectParams
@@ -3721,6 +3928,9 @@ func (response GetReadyzdefaultJSONResponse) VisitGetReadyzResponse(w http.Respo
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// UploadObject Upload a whole file into the workspace staging area (upload path)
+	// (PUT /api/v1/objects/{workspace_id})
+	UploadObject(ctx context.Context, request UploadObjectRequestObject) (UploadObjectResponseObject, error)
 	// CreateProject Create a project (standalone deployments)
 	// (POST /api/v1/projects)
 	CreateProject(ctx context.Context, request CreateProjectRequestObject) (CreateProjectResponseObject, error)
@@ -3805,6 +4015,35 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// UploadObject operation middleware
+func (sh *strictHandler) UploadObject(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params UploadObjectParams) {
+	var request UploadObjectRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadObject(ctx, request.(UploadObjectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadObject")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadObjectResponseObject); ok {
+		if err := validResponse.VisitUploadObjectResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // CreateProject operation middleware

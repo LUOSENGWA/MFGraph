@@ -353,6 +353,72 @@ paths:
         `details.max_bytes`); a `Content-Length` above it is refused before
         the body is read. Object storage is written before the upload is
         recorded: the content is durable when the response arrives.
+        `PUT /api/v1/objects/{workspace_id}` is the same operation under a
+        path that a proxy can give larger upload limits.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+        (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: X-Content-SHA256
+          in: header
+          required: false
+          description: Expected content hash, verified after the upload.
+          schema:
+            $ref: '#/components/schemas/Hash'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        description: The exact file content; may be empty (zero bytes).
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: The content was already present in this workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagedObject'
+        '201':
+          description: The content was stored and staged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagedObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/objects/{workspace_id}:
+    put:
+      tags: [objects]
+      operationId: uploadObject
+      summary: Upload a whole file into the workspace staging area (upload path)
+      description: |
+        The same operation as `PUT /api/v1/workspaces/{workspace_id}/objects`,
+        with the same parameters, body, responses and errors, under a path
+        that starts with `/objects/`. A proxy in front of the server can give
+        uploads their own body size and time limits by path prefix: embedded
+        in a host platform, the host allows 1 GiB and 600 s only below
+        `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
+        its default limit (8 MiB), which also applies to the other upload
+        path there. Uploads in parts will be added below `{prefix}/uploads/`.
+
+        The request body is the exact file content; uploading creates no
+        snapshot (reference the returned hash in a commit), content that is
+        already present gives 200, and a mismatching `X-Content-SHA256` gives
+        `400 invalid_request` with `details.reason` = `checksum_mismatch`.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).

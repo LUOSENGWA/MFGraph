@@ -175,6 +175,7 @@ func TestEveryOperationAnswers503WithoutDatabase(t *testing.T) {
 		{"getWorkspace", "GET", "/api/v1/workspaces/" + ulid1, "", ""},
 		{"listBranches", "GET", "/api/v1/workspaces/" + ulid1 + "/branches?limit=10", "", ""},
 		{"putObject", "PUT", "/api/v1/workspaces/" + ulid1 + "/objects", "hello\n", "application/octet-stream"},
+		{"uploadObject", "PUT", "/api/v1/objects/" + ulid1, "hello\n", "application/octet-stream"},
 		{"createCommit", "POST", "/api/v1/workspaces/" + ulid1 + "/commits", commit, "application/json"},
 		{"getTimeline", "GET", "/api/v1/workspaces/" + ulid1 + "/timeline?branch_id=" + ulid1, "", ""},
 		{"getSnapshot", "GET", "/api/v1/snapshots/" + ulid1, "", ""},

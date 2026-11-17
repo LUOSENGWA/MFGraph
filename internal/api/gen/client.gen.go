@@ -90,6 +90,30 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// UploadObjectWithBody Upload a whole file into the workspace staging area (upload path)
+	//
+	// The same operation as `PUT /api/v1/workspaces/{workspace_id}/objects`,
+	// with the same parameters, body, responses and errors, under a path
+	// that starts with `/objects/`. A proxy in front of the server can give
+	// uploads their own body size and time limits by path prefix: embedded
+	// in a host platform, the host allows 1 GiB and 600 s only below
+	// `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
+	// its default limit (8 MiB), which also applies to the other upload
+	// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+	//
+	// The request body is the exact file content; uploading creates no
+	// snapshot (reference the returned hash in a commit), content that is
+	// already present gives 200, and a mismatching `X-Content-SHA256` gives
+	// `400 invalid_request` with `details.reason` = `checksum_mismatch`.
+	//
+	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+	// (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/objects/{workspace_id} (the `UploadObject` operationId).
+	UploadObjectWithBody(ctx context.Context, workspaceId WorkspaceId, params *UploadObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateProjectWithBody Create a project (standalone deployments)
 	//
 	// Kernel capability of standalone deployments. When MFGraph is embedded
@@ -406,6 +430,8 @@ type ClientInterface interface {
 	// `details.max_bytes`); a `Content-Length` above it is refused before
 	// the body is read. Object storage is written before the upload is
 	// recorded: the content is durable when the response arrives.
+	// `PUT /api/v1/objects/{workspace_id}` is the same operation under a
+	// path that a proxy can give larger upload limits.
 	//
 	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
 	// (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -441,6 +467,40 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /readyz (the `GetReadyz` operationId).
 	GetReadyz(ctx context.Context, params *GetReadyzParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// UploadObjectWithBody Upload a whole file into the workspace staging area (upload path)
+//
+// The same operation as `PUT /api/v1/workspaces/{workspace_id}/objects`,
+// with the same parameters, body, responses and errors, under a path
+// that starts with `/objects/`. A proxy in front of the server can give
+// uploads their own body size and time limits by path prefix: embedded
+// in a host platform, the host allows 1 GiB and 600 s only below
+// `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
+// its default limit (8 MiB), which also applies to the other upload
+// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+//
+// The request body is the exact file content; uploading creates no
+// snapshot (reference the returned hash in a commit), content that is
+// already present gives 200, and a mismatching `X-Content-SHA256` gives
+// `400 invalid_request` with `details.reason` = `checksum_mismatch`.
+//
+// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+// (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/objects/{workspace_id} (the `UploadObject` operationId).
+func (c *Client) UploadObjectWithBody(ctx context.Context, workspaceId WorkspaceId, params *UploadObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUploadObjectRequestWithBody(c.Server, workspaceId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // CreateProjectWithBody Create a project (standalone deployments)
@@ -909,6 +969,8 @@ func (c *Client) CreateCommit(ctx context.Context, workspaceId WorkspaceId, para
 // `details.max_bytes`); a `Content-Length` above it is refused before
 // the body is read. Object storage is written before the upload is
 // recorded: the content is durable when the response arrives.
+// `PUT /api/v1/objects/{workspace_id}` is the same operation under a
+// path that a proxy can give larger upload limits.
 //
 // Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
 // (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -983,6 +1045,68 @@ func (c *Client) GetReadyz(ctx context.Context, params *GetReadyzParams, reqEdit
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewUploadObjectRequestWithBody constructs an http.Request for the UploadObject method, with any body, and a specified content type
+func NewUploadObjectRequestWithBody(server string, workspaceId WorkspaceId, params *UploadObjectParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/objects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XContentSHA256 != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Content-SHA256", *params.XContentSHA256, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Content-SHA256", headerParam0)
+		}
+
+		if params.XRequestId != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", *params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Request-Id", headerParam1)
+		}
+
+	}
+
+	return req, nil
 }
 
 // NewCreateProjectRequest calls the generic CreateProject builder with application/json body
@@ -2082,6 +2206,30 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// UploadObjectWithBodyWithResponse Upload a whole file into the workspace staging area (upload path)
+	//
+	// The same operation as `PUT /api/v1/workspaces/{workspace_id}/objects`,
+	// with the same parameters, body, responses and errors, under a path
+	// that starts with `/objects/`. A proxy in front of the server can give
+	// uploads their own body size and time limits by path prefix: embedded
+	// in a host platform, the host allows 1 GiB and 600 s only below
+	// `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
+	// its default limit (8 MiB), which also applies to the other upload
+	// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+	//
+	// The request body is the exact file content; uploading creates no
+	// snapshot (reference the returned hash in a commit), content that is
+	// already present gives 200, and a mismatching `X-Content-SHA256` gives
+	// `400 invalid_request` with `details.reason` = `checksum_mismatch`.
+	//
+	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+	// (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/objects/{workspace_id} (the `UploadObject` operationId).
+	UploadObjectWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceId, params *UploadObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadObjectResponse, error)
+
 	// CreateProjectWithBodyWithResponse Create a project (standalone deployments)
 	//
 	// Kernel capability of standalone deployments. When MFGraph is embedded
@@ -2412,6 +2560,8 @@ type ClientWithResponsesInterface interface {
 	// `details.max_bytes`); a `Content-Length` above it is refused before
 	// the body is read. Object storage is written before the upload is
 	// recorded: the content is durable when the response arrives.
+	// `PUT /api/v1/objects/{workspace_id}` is the same operation under a
+	// path that a proxy can give larger upload limits.
 	//
 	// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
 	// (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -2453,6 +2603,96 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /readyz (the `GetReadyz` operationId).
 	GetReadyzWithResponse(ctx context.Context, params *GetReadyzParams, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
+}
+
+type UploadObjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *StagedObject
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *StagedObject
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *PayloadTooLarge
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UploadObjectResponse) GetJSON200() *StagedObject {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r UploadObjectResponse) GetJSON201() *StagedObject {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UploadObjectResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UploadObjectResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UploadObjectResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UploadObjectResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r UploadObjectResponse) GetJSON413() *PayloadTooLarge {
+	return r.JSON413
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r UploadObjectResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UploadObjectResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UploadObjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UploadObjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UploadObjectResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type CreateProjectResponse struct {
@@ -3637,6 +3877,36 @@ func (r GetReadyzResponse) ContentType() string {
 	return ""
 }
 
+// UploadObjectWithBodyWithResponse Upload a whole file into the workspace staging area (upload path)
+//
+// The same operation as `PUT /api/v1/workspaces/{workspace_id}/objects`,
+// with the same parameters, body, responses and errors, under a path
+// that starts with `/objects/`. A proxy in front of the server can give
+// uploads their own body size and time limits by path prefix: embedded
+// in a host platform, the host allows 1 GiB and 600 s only below
+// `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
+// its default limit (8 MiB), which also applies to the other upload
+// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+//
+// The request body is the exact file content; uploading creates no
+// snapshot (reference the returned hash in a commit), content that is
+// already present gives 200, and a mismatching `X-Content-SHA256` gives
+// `400 invalid_request` with `details.reason` = `checksum_mismatch`.
+//
+// Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+// (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/objects/{workspace_id} (the `UploadObject` operationId).
+func (c *ClientWithResponses) UploadObjectWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceId, params *UploadObjectParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadObjectResponse, error) {
+	rsp, err := c.UploadObjectWithBody(ctx, workspaceId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUploadObjectResponse(rsp)
+}
+
 // CreateProjectWithBodyWithResponse Create a project (standalone deployments)
 //
 // Kernel capability of standalone deployments. When MFGraph is embedded
@@ -4057,6 +4327,8 @@ func (c *ClientWithResponses) CreateCommitWithResponse(ctx context.Context, work
 // `details.max_bytes`); a `Content-Length` above it is refused before
 // the body is read. Object storage is written before the upload is
 // recorded: the content is durable when the response arrives.
+// `PUT /api/v1/objects/{workspace_id}` is the same operation under a
+// path that a proxy can give larger upload limits.
 //
 // Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
 // (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -4121,6 +4393,81 @@ func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, params 
 		return nil, err
 	}
 	return ParseGetReadyzResponse(rsp)
+}
+
+// ParseUploadObjectResponse parses an HTTP response from a UploadObjectWithResponse call
+func ParseUploadObjectResponse(rsp *http.Response) (*UploadObjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UploadObjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StagedObject
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest StagedObject
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest PayloadTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseCreateProjectResponse parses an HTTP response from a CreateProjectWithResponse call

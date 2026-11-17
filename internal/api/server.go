@@ -120,10 +120,10 @@ func withoutProjects(next http.Handler) http.Handler {
 	})
 }
 
-// contentLength passes the request's Content-Length to the upload handler,
-// which refuses a body above the limit before reading it.
+// contentLength passes the request's Content-Length to the upload handlers,
+// which refuse a body above the limit before reading it.
 func contentLength(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFunc {
-	if operationID != "PutObject" {
+	if operationID != "PutObject" && operationID != "UploadObject" {
 		return f
 	}
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {

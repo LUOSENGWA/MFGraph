@@ -290,3 +290,77 @@ func TestHTTPFlowOnTheService(t *testing.T) {
 	}
 	c.wantError("GET", "/snapshots/not-a-ulid", "", nil, 400, api.CodeInvalidRequest)
 }
+
+// TestUploadRoutesBehaveAlike: PUT /objects/{workspace_id} is the upload of
+// PUT /workspaces/{workspace_id}/objects under another path: the same
+// answers for new and known content, a wrong checksum, a body above the
+// upload limit (also before it is read), an unknown workspace, and neither
+// is bound by the JSON body limit.
+func TestUploadRoutesBehaveAlike(t *testing.T) {
+	const prefix = "/internal/v1/mfgraph"
+	srv := httptest.NewServer(newServiceHandler(t, prefix, core.Config{MaxUploadBytes: 4 << 10},
+		func(o *api.Options) { o.MaxJSONBodyBytes = 1 << 10 }))
+	defer srv.Close()
+	c := caller{t: t, srv: srv, prefix: prefix, token: token}
+	var proj struct {
+		ID string `json:"project_id"`
+	}
+	c.json("POST", "/projects", `{"name":"p"}`, 201, &proj)
+	var ws struct {
+		ID string `json:"workspace_id"`
+	}
+	c.json("POST", "/workspaces", `{"project_id":"`+proj.ID+`"}`, 201, &ws)
+	routes := []string{"/workspaces/" + ws.ID + "/objects", "/objects/" + ws.ID}
+	type answer struct {
+		status int
+		body   string
+	}
+	send := func(route, body string, hdr map[string]string) answer {
+		h := map[string]string{"Content-Type": "application/octet-stream"}
+		for k, v := range hdr {
+			h[k] = v
+		}
+		resp, b := c.call("PUT", route, body, h)
+		var e map[string]any
+		if json.Unmarshal(b, &e) == nil {
+			delete(e, "request_id")
+		}
+		norm, _ := json.Marshal(e)
+		return answer{resp.StatusCode, string(norm)}
+	}
+	big := strings.Repeat("b", 2<<10) // above the JSON body limit, within the upload limit
+	for i, content := range []string{"first content", big} {
+		first, second := send(routes[i%2], content, nil), send(routes[(i+1)%2], content, nil)
+		if first.status != 201 || second.status != 200 || first.body != second.body {
+			t.Fatalf("content %d: %+v then %+v", i, first, second)
+		}
+	}
+	cases := map[string]struct {
+		body string
+		hdr  map[string]string
+		want int
+	}{
+		"checksum mismatch": {"abc", map[string]string{"X-Content-SHA256": shaOf("xyz")}, 400},
+		"too large":         {strings.Repeat("x", 5<<10), nil, 413},
+		"bad checksum form": {"abc", map[string]string{"X-Content-SHA256": "md5:abc"}, 400},
+	}
+	for name, tc := range cases {
+		a, b := send(routes[0], tc.body, tc.hdr), send(routes[1], tc.body, tc.hdr)
+		if a.status != tc.want || a != b {
+			t.Errorf("%s: %+v and %+v, want %d from both", name, a, b, tc.want)
+		}
+	}
+	const unknown = "01JD3X5Q8Z9W2V4T6R8P0N2MZZ"
+	a, b := send("/workspaces/"+unknown+"/objects", "x", nil), send("/objects/"+unknown, "x", nil)
+	if a.status != 404 || a != b {
+		t.Fatalf("unknown workspace: %+v and %+v", a, b)
+	}
+	// Another principal sees neither route.
+	other := caller{t: t, srv: srv, prefix: prefix, token: otherToken}
+	for _, route := range routes {
+		resp, _ := other.call("PUT", route, "x", map[string]string{"Content-Type": "application/octet-stream"})
+		if resp.StatusCode != 404 {
+			t.Errorf("%s by another principal: %d", route, resp.StatusCode)
+		}
+	}
+}

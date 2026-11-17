@@ -19,12 +19,16 @@ const DefaultMaxJSONBodyBytes = 16 << 20
 // another Content-Type (415, code invalid_request).
 const ReasonUnsupportedContentType = "unsupported_content_type"
 
-// uploadPattern is the route of uploads, which stream their body and have a
-// limit of their own (file_too_large).
-const uploadPattern = http.MethodPut + " " + apiBase + "/workspaces/{workspace_id}/objects"
+// uploadPatterns are the routes of uploads, which stream their body and
+// have a limit of their own (file_too_large): the upload of the first core
+// slice and the same operation under the upload path /objects/.
+var uploadPatterns = map[string]bool{
+	http.MethodPut + " " + apiBase + "/workspaces/{workspace_id}/objects": true,
+	http.MethodPut + " " + apiBase + "/objects/{workspace_id}":            true,
+}
 
 // requestBody checks the body of every request of a route other than the
-// upload route, before the generated handler decodes it:
+// upload routes, before the generated handler decodes it:
 //
 //   - a body above limit bytes gives 413 request_too_large with
 //     details.max_bytes: at once when Content-Length says so, and
@@ -52,7 +56,7 @@ func requestBody(limit int64) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Pattern == uploadPattern {
+			if uploadPatterns[r.Pattern] {
 				next.ServeHTTP(w, r)
 				return
 			}
