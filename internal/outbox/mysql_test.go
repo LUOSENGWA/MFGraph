@@ -378,9 +378,9 @@ func TestMySQLForwarder(t *testing.T) {
 func TestMySQLInsertOnlyAccount(t *testing.T) {
 	e := newMySQLEnv(t)
 	user := fmt.Sprintf("mfg_ops_%d", time.Now().UnixNano()%1_000_000_000)
-	const password = "ops-test-0123456789"
+	const opsPass = "ops-test-0123456789"
 	for _, stmt := range []string{
-		"CREATE USER '" + user + "'@'%' IDENTIFIED BY '" + password + "'",
+		"CREATE USER '" + user + "'@'%' IDENTIFIED BY '" + opsPass + "'",
 		"GRANT INSERT ON " + e.opsName + ".module_outbox TO '" + user + "'@'%'",
 	} {
 		if _, err := e.ops.Exec(stmt); err != nil {
@@ -389,7 +389,7 @@ func TestMySQLInsertOnlyAccount(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = e.ops.Exec("DROP USER '" + user + "'@'%'") })
 	cfg, _ := mysql.ParseDSN(os.Getenv("MFGRAPH_TEST_MYSQL_DSN"))
-	cfg.User, cfg.Passwd, cfg.DBName = user, password, ""
+	cfg.User, cfg.Passwd, cfg.DBName = user, opsPass, ""
 	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		t.Fatal(err)
