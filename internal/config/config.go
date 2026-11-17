@@ -256,7 +256,8 @@ func (c *Config) SetSocket(path string) error {
 // CheckServe reports settings that the server needs in addition to what
 // Load checks (the migrate command needs fewer). Standalone mode: with a
 // database, a storage root. Module mode: a socket, the internal token, a
-// database, a storage root and a tenant other than the all-zero default.
+// database, a storage root, a tenant other than the all-zero default, and a
+// forwarder connection with the character set utf8mb4 (ForwarderDSN).
 func (c Config) CheckServe() error {
 	if !c.Module() {
 		if c.DBDSN != "" && c.StorageRoot == "" {
@@ -285,6 +286,9 @@ func (c Config) CheckServe() error {
 	}
 	if c.TenantID == DefaultTenantID {
 		return fmt.Errorf("config: module mode requires a fixed tenant ULID in %s, not the all-zero default", EnvTenantID)
+	}
+	if _, err := c.ForwarderDSN(); err != nil {
+		return err
 	}
 	return nil
 }

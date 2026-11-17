@@ -17,6 +17,7 @@ import (
 
 	"github.com/LUOSENGWA/MFGraph/internal/authz"
 	"github.com/LUOSENGWA/MFGraph/internal/blob/posix"
+	"github.com/LUOSENGWA/MFGraph/internal/config"
 	"github.com/LUOSENGWA/MFGraph/internal/core"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
 	"github.com/LUOSENGWA/MFGraph/internal/migrate"
@@ -426,6 +427,95 @@ func TestMySQLInsertOnlyAccount(t *testing.T) {
 		t.Fatal("readiness of a missing table")
 	}
 	t.Log("measured: an account with INSERT on the host table only writes rows, absorbs duplicates and passes the readiness check")
+}
+
+// TestMySQLForwarderCharset: the forwarder's connection always uses
+// utf8mb4. A DSN without charset (and one with charset=utf8mb4) delivers an
+// actor with Chinese characters and an emoji unchanged; the DSNs of the
+// review's reproduction (charset=utf8, charset=latin1, and a list) are
+// refused by the configuration. What such a connection would do is logged
+// for the record (MySQL 8.0: utf8 fails for every attempt, latin1 mangles
+// the text; seekdb: utf8 works, latin1 is an unknown character set).
+func TestMySQLForwarderCharset(t *testing.T) {
+	e := newMySQLEnv(t)
+	base, _ := mysql.ParseDSN(os.Getenv("MFGRAPH_TEST_MYSQL_DSN"))
+	base.DBName = e.opsName
+	plain := base.FormatDSN()
+	sep := "?"
+	if strings.Contains(plain, "?") {
+		sep = "&"
+	}
+	const actor = "张三-😀" // 张三-😀
+	forwarder := func(dsn string) (*outbox.SQLSink, error) {
+		c, err := config.Load(func(k string) string {
+			return map[string]string{config.EnvMode: "module", config.EnvDSN: plain, config.EnvOpsDSN: dsn}[k]
+		})
+		if err != nil {
+			return nil, err
+		}
+		mc, err := c.ForwarderDSN()
+		if err != nil {
+			return nil, err
+		}
+		conn, err := mysql.NewConnector(mc)
+		if err != nil {
+			return nil, err
+		}
+		db := sql.OpenDB(conn)
+		t.Cleanup(func() { db.Close() })
+		return outbox.NewSQLSink(db, e.opsName+".module_outbox")
+	}
+	row := func(n int) outbox.Row {
+		payload, _ := json.Marshal(map[string]any{"v": 1, "actor": map[string]any{"type": "human", "id": actor}})
+		now := time.Now()
+		return outbox.Row{EventID: fmt.Sprintf("%064x", n), EventKind: ports.EventWorkspaceCreated, ScopeID: projectM,
+			ActorType: strPtr("human"), ActorID: actor, Payload: payload, CreatedAt: now, AvailableAt: now, UpdatedAt: now}
+	}
+	for i, dsn := range []string{plain, plain + sep + "charset=utf8mb4"} {
+		sink, err := forwarder(dsn)
+		if err != nil {
+			t.Fatalf("DSN %d: %v", i, err)
+		}
+		if err := sink.Insert(ctx, row(i+1)); err != nil {
+			t.Fatalf("DSN %d: insert: %v", i, err)
+		}
+	}
+	rows := e.hostRows()
+	if len(rows) != 2 {
+		t.Fatalf("%d host rows", len(rows))
+	}
+	for _, r := range rows {
+		var env struct {
+			Actor struct {
+				ID string `json:"id"`
+			} `json:"actor"`
+		}
+		_ = json.Unmarshal([]byte(r.payload), &env)
+		if r.actorID.String != actor || env.Actor.ID != actor {
+			t.Fatalf("stored actor %q, payload actor %q, want %q", r.actorID.String, env.Actor.ID, actor)
+		}
+	}
+	for _, bad := range []string{"charset=utf8", "charset=latin1", "charset=utf8,utf8mb4", "charset=utf8mb4,utf8",
+		"collation=latin1_swedish_ci", "character_set_client=latin1"} {
+		if _, err := forwarder(plain + sep + bad); err == nil || !strings.Contains(err.Error(), config.EnvOpsDSN) ||
+			!strings.Contains(err.Error(), "utf8mb4") {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	// For the record: a connection with those character sets, bypassing the
+	// configuration.
+	for i, cs := range []string{"utf8", "latin1"} {
+		db, err := sql.Open("mysql", plain+sep+"charset="+cs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sink, _ := outbox.NewSQLSink(db, e.opsName+".module_outbox")
+		err = sink.Insert(ctx, row(10+i))
+		var stored string
+		_ = e.ops.QueryRow("SELECT actor_id FROM module_outbox WHERE event_id = ?", fmt.Sprintf("%064x", 10+i)).Scan(&stored)
+		t.Logf("measured: charset=%s without the check: insert error %v; stored actor %q (want %q)", cs, err, stored, actor)
+		db.Close()
+	}
 }
 
 func strPtr(s string) *string { return &s }

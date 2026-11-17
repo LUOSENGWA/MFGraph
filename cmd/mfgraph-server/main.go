@@ -43,7 +43,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql" // database/sql driver "mysql"
+	mysqldriver "github.com/go-sql-driver/mysql" // also the database/sql driver "mysql"
 
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/api"
@@ -469,18 +469,20 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 }
 
 // hostOutbox opens the connection of the forwarder (MFGRAPH_OPS_DSN, or
-// MFGRAPH_DSN without it) and the sink of the host's outbox table. The
+// MFGRAPH_DSN without it, always with the character set utf8mb4; see
+// config.ForwarderDSN) and the sink of the host's outbox table. The
 // connection is not tested here: /readyz reports whether the table can be
 // reached, and the forwarder retries until it can.
 func hostOutbox(cfg config.Config) (*sql.DB, *outbox.SQLSink, error) {
-	dsn := cfg.OpsDSN
-	if dsn == "" {
-		dsn = cfg.DBDSN
-	}
-	db, err := sql.Open("mysql", dsn)
+	dsn, err := cfg.ForwarderDSN()
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s is not a valid DSN", config.EnvOpsDSN)
+		return nil, nil, err
 	}
+	conn, err := mysqldriver.NewConnector(dsn)
+	if err != nil {
+		return nil, nil, errors.New("the DSN of the event forwarder is not valid")
+	}
+	db := sql.OpenDB(conn)
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxLifetime(30 * time.Minute)

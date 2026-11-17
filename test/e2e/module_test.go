@@ -802,6 +802,26 @@ func TestModuleModeEvents(t *testing.T) {
 	}
 }
 
+// The forwarder's connection is always utf8mb4: an actor with Chinese
+// characters and an emoji arrives unchanged in the host table (with
+// charset=utf8 it failed on MySQL for every attempt, and latin1 mangled it).
+func TestModuleModeUnicodeActor(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	s := m.start(nil)
+	const actor = "\u5f20\u4e09-\U0001F600" // 张三-😀
+	c := claims{token: modToken, actor: actor, actorType: "human", project: projP}
+	ws, main := s.workspace(c)
+	r, _ := s.commit(c, ws, main, 1, "", putChange("u.txt", s.upload(c, ws, "unicode")))
+	s.expect(r, "commit", 201, nil)
+	for _, row := range m.waitHostRows(ws, 4, 10*time.Second) {
+		a, _ := row.env["actor"].(map[string]any)
+		if row.actorID.String != actor || a["id"] != actor {
+			t.Fatalf("%s: actor_id %q, envelope actor %v, want %q", row.kind, row.actorID.String, a["id"], actor)
+		}
+	}
+}
+
 // Row 8: SIGTERM ends the process within 8 s and removes the socket; the
 // data is there after a restart, and events that could not be delivered
 // before the stop are delivered after it.
@@ -867,6 +887,13 @@ func TestModuleModeConfig(t *testing.T) {
 	noSocket := []string{"serve", "--config", m.config}
 	exp := filepath.Join(t.TempDir(), "expansion.env")
 	writeFile(t, exp, "MFGRAPH_MODE=module\nMFGRAPH_DSN=${DSN}\n")
+	withParam := func(dsn, param string) string {
+		if strings.Contains(dsn, "?") {
+			return dsn + "&" + param
+		}
+		return dsn + "?" + param
+	}
+	opsDSN, dsn := m.env["MFGRAPH_OPS_DSN"], m.env["MFGRAPH_DSN"]
 	cases := map[string]tc{
 		"TCP address":        {env{"MODULE_SOCKET": "", "MFGRAPH_HTTP_ADDR": "127.0.0.1:0"}, noSocket, "Unix domain socket"},
 		"no socket":          {env{"MODULE_SOCKET": ""}, noSocket, "socket"},
@@ -886,6 +913,12 @@ func TestModuleModeConfig(t *testing.T) {
 			"MFGRAPH_OPS_DSN is not a valid DSN"},
 		"malformed DSN": {env{"MFGRAPH_DSN": "zzops:ZzOps/Pw-77gg@tcp(127.0.0.1:33406)"}, []string{"--config", m.config, "migrate"},
 			"MFGRAPH_DSN is not a valid DSN"},
+		// The forwarder's connection is utf8mb4 or nothing.
+		"ops charset utf8":   {env{"MFGRAPH_OPS_DSN": withParam(opsDSN, "charset=utf8")}, serve, "MFGRAPH_OPS_DSN sets the character set utf8;"},
+		"ops charset latin1": {env{"MFGRAPH_OPS_DSN": withParam(opsDSN, "charset=latin1")}, serve, "character set latin1"},
+		"ops charset list":   {env{"MFGRAPH_OPS_DSN": withParam(opsDSN, "charset=utf8,utf8mb4")}, serve, "list of character sets"},
+		"DSN charset without an ops DSN": {env{"MFGRAPH_OPS_DSN": "", "MFGRAPH_DSN": withParam(dsn, "charset=utf8")}, serve,
+			"MFGRAPH_DSN sets the character set utf8;"},
 	}
 	for name, c := range cases {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

@@ -215,6 +215,70 @@ func TestMalformedDSN(t *testing.T) {
 	}
 }
 
+// TestForwarderDSN: the forwarder's connection gets charset=utf8mb4 unless
+// the DSN sets it; any other character set stops the start of module mode
+// (CheckServe) with a message that names the variable but not the DSN.
+// Standalone mode has no forwarder and accepts any character set.
+func TestForwarderDSN(t *testing.T) {
+	for _, ok := range []string{"", "?charset=utf8mb4", "?charset=UTF8MB4", "?parseTime=true&collation=utf8mb4_bin",
+		"?character_set_client=utf8mb4&collation_connection=%27utf8mb4_0900_ai_ci%27"} {
+		c, err := config.Load(env(with(moduleEnv(), config.EnvOpsDSN, "ops:s3cret-pass@tcp(h:1)/ops"+ok)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mc, err := c.ForwarderDSN()
+		if err != nil || c.CheckServe() != nil {
+			t.Errorf("%q: %v %v", ok, err, c.CheckServe())
+			continue
+		}
+		if f := mc.FormatDSN(); !strings.Contains(f, "charset=utf8mb4") || mc.User != "ops" || mc.DBName != "ops" {
+			t.Errorf("%q: %s", ok, f)
+		}
+	}
+	bad := map[string]string{
+		"?charset=utf8":                       "character set utf8",
+		"?charset=latin1":                     "character set latin1",
+		"?charset=utf8,utf8mb4":               "list of character sets",
+		"?charset=utf8mb4,utf8":               "list of character sets",
+		"?parseTime=true&charset=utf8mb3":     "character set utf8mb3",
+		"?collation=latin1_swedish_ci":        "collation latin1_swedish_ci",
+		"?character_set_client=latin1":        "session variable character_set_client",
+		"?collation_connection=utf8_bin":      "session variable collation_connection",
+		"?charset=%27%3Bselect%20s3cret%27":   "(another value)",
+		"?charset=utf8mb4&charset=latin1":     "character set latin1",
+		"?character_set_results=%27latin1%27": "session variable character_set_results",
+	}
+	for q, says := range bad {
+		for _, m := range []map[string]string{
+			with(moduleEnv(), config.EnvOpsDSN, "ops:s3cret-pass@tcp(h:1)/ops"+q),
+			with(moduleEnv(), config.EnvDSN, "", config.EnvDBDSN, dsnM+q), // no ops DSN: MFGRAPH_DB_DSN
+		} {
+			c, err := config.Load(env(m))
+			if err != nil {
+				t.Fatalf("%q: Load: %v", q, err)
+			}
+			err = c.CheckServe()
+			name := config.EnvOpsDSN
+			if m[config.EnvOpsDSN] == "" {
+				name = config.EnvDBDSN
+			}
+			if err == nil || !strings.Contains(err.Error(), name+" ") || !strings.Contains(err.Error(), says) ||
+				!strings.Contains(err.Error(), "charset=utf8mb4") {
+				t.Errorf("%q (%s): %v", q, name, err)
+				continue
+			}
+			if strings.Contains(err.Error(), "s3cret") || strings.Contains(err.Error(), "@tcp") {
+				t.Errorf("%q: the error repeats the DSN: %v", q, err)
+			}
+		}
+	}
+	// Standalone mode: no forwarder, any character set.
+	c, err := config.Load(env(map[string]string{config.EnvDBDSN: dsnM + "?charset=utf8", config.EnvStorageRoot: "/data"}))
+	if err != nil || c.CheckServe() != nil {
+		t.Fatalf("standalone with charset=utf8: %v %v", err, c.CheckServe())
+	}
+}
+
 // TestModuleWarnings: a short internal token and static tokens in module
 // mode are accepted with a warning.
 func TestModuleWarnings(t *testing.T) {
