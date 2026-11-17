@@ -21,7 +21,7 @@ LDFLAGS := -X main.version=$(VERSION)
 .PHONY: all build test test-e2e test-e2e-mysql test-e2e-seekdb e2e-compile test-heavy test-mysql test-seekdb generate generate-check openapi-check run vet fmt fmt-check clean \
 	dev-db-up dev-db-down dev-db-reset dev-seekdb-up \
 	vectors-verify vectors-verify-heavy vectors-crosscheck vectors-generate vectors-review \
-	tidy-check deps-check docs-check ci ci-mysql ci-seekdb
+	tidy-check deps-check docs-check host-names-check bundle bundle-check ci ci-mysql ci-seekdb
 
 all: build test
 
@@ -44,10 +44,29 @@ tidy-check:
 deps-check:
 	python3 scripts/check_deps.py
 
-## docs-check: relative Markdown links resolve; no secrets or private markers
-docs-check:
+## docs-check: relative Markdown links resolve; no secrets or private markers; the
+## host platform is named only in packaging/host-module
+docs-check: host-names-check
 	python3 scripts/check_links.py .
 	python3 scripts/scan_sensitive.py .
+
+## host-names-check: the host platform's name and header prefix appear only in packaging/host-module
+host-names-check:
+	python3 packaging/host-module/check_host_names.py
+
+# Module bundles (packaging/host-module): platforms and output directory.
+BUNDLE_PLATFORMS ?= linux/amd64,linux/arm64
+BUNDLE_OUT ?= dist
+
+## bundle: the module bundles, one tar.zst per platform and sha256sums.txt, in dist/
+## (reproducible; built with Go only, zstd from klauspost/compress)
+bundle:
+	$(GO) run ./tools/bundle -out $(BUNDLE_OUT) -platforms $(BUNDLE_PLATFORMS)
+
+## bundle-check: build the bundles of dist/ again, from an empty Go build cache in a
+## temporary directory, and check that every archive is byte for byte the same
+bundle-check:
+	$(GO) run ./tools/bundle -out $(BUNDLE_OUT) -platforms $(BUNDLE_PLATFORMS) -verify
 
 ## build: compile every package and the two binaries into ./bin
 build:

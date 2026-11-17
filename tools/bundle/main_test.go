@@ -1,0 +1,230 @@
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"encoding/json"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/klauspost/compress/zstd"
+
+	"github.com/LUOSENGWA/MFGraph/migrations"
+)
+
+const root = "../.." // the repository, seen from this package
+
+func testEntries(t *testing.T) []Entry {
+	t.Helper()
+	es, err := Entries(root, "0.1.0", []byte("\x7fELF fake server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return es
+}
+
+type header struct {
+	name         string
+	mode         int64
+	typ          byte
+	uid, gid     int
+	uname, gname string
+	mtime        time.Time
+	format       tar.Format
+	data         []byte
+}
+
+func readArchive(t *testing.T, b []byte) []header {
+	t.Helper()
+	zr, err := zstd.NewReader(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	tr := tar.NewReader(zr)
+	var out []header
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return out
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(tr)
+		out = append(out, header{h.Name, h.Mode, h.Typeflag, h.Uid, h.Gid, h.Uname, h.Gname, h.ModTime, h.Format, data})
+	}
+}
+
+// TestPackIsReproducible: the same files give the same bytes, whatever
+// their order, and the headers carry nothing of the machine.
+func TestPackIsReproducible(t *testing.T) {
+	es := testEntries(t)
+	a, err := Pack(es, defaultEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reversed := slices.Clone(es)
+	slices.Reverse(reversed)
+	b, err := Pack(reversed, defaultEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatal("two packs of the same files differ")
+	}
+	hs := readArchive(t, a)
+	var names []string
+	for _, h := range hs {
+		names = append(names, h.name)
+		if h.uid != 0 || h.gid != 0 || h.uname != "" || h.gname != "" || !h.mtime.Equal(defaultEpoch) {
+			t.Errorf("%s: owner %d:%d %q:%q, time %v", h.name, h.uid, h.gid, h.uname, h.gname, h.mtime)
+		}
+	}
+	if !slices.IsSorted(names) {
+		t.Errorf("entries are not sorted: %v", names)
+	}
+	later, _ := Pack(es, defaultEpoch.Add(time.Hour))
+	if bytes.Equal(a, later) {
+		t.Error("the time is not part of the archive")
+	}
+}
+
+// TestBundleLayout: the files, their modes and contents; the migrations
+// are exactly those the binary embeds, without the kernel's.
+func TestBundleLayout(t *testing.T) {
+	a, err := Pack(testEntries(t), defaultEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]header{}
+	for _, h := range readArchive(t, a) {
+		got[h.name] = h
+	}
+	file := func(p string) []byte {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	want := map[string]struct {
+		mode int64
+		data []byte
+	}{
+		"bin/mfgraph-server":               {0o755, []byte("\x7fELF fake server")},
+		"etc/module.env":                   {0o644, file(packaging + "/module.env")},
+		"scripts/acceptance-m1.0a.sh":      {0o755, file(packaging + "/acceptance-m1.0a.sh")},
+		"scripts/acceptance-m1.0a-diff.md": {0o644, file(packaging + "/acceptance-m1.0a-diff.md")},
+		"docs/events.md":                   {0o644, file("docs/events.md")},
+		"LICENSE":                          {0o644, file("LICENSE")},
+		"NOTICE":                           {0o644, file("NOTICE")},
+		"THIRD_PARTY_NOTICES.md":           {0o644, file("THIRD_PARTY_NOTICES.md")},
+	}
+	embedded, _ := fs.ReadDir(migrations.MySQL(), ".")
+	for _, e := range embedded {
+		b, _ := fs.ReadFile(migrations.MySQL(), e.Name())
+		want["migrations/"+e.Name()] = struct {
+			mode int64
+			data []byte
+		}{0o644, b}
+		// The copy in the bundle is the file of the repository too.
+		if !bytes.Equal(b, file("migrations/mysql/"+e.Name())) {
+			t.Errorf("embedded %s differs from migrations/mysql", e.Name())
+		}
+	}
+	for _, d := range []string{"bin/", "docs/", "etc/", "migrations/", "scripts/"} {
+		if h, ok := got[d]; !ok || h.typ != tar.TypeDir || h.mode != 0o755 {
+			t.Errorf("directory %s: %+v", d, h)
+		}
+	}
+	for name, w := range want {
+		h, ok := got[name]
+		if !ok || h.typ != tar.TypeReg || h.mode != w.mode || !bytes.Equal(h.data, w.data) {
+			t.Errorf("%s: missing or different (mode %o)", name, h.mode)
+		}
+	}
+	if len(got) != len(want)+5+1 { // + directories + manifest
+		t.Errorf("%d entries, want %d: %v", len(got), len(want)+6, got)
+	}
+	for name := range got {
+		if strings.Contains(name, "kernel") || strings.Contains(name, "0000_bootstrap") {
+			t.Errorf("kernel migration in the bundle: %s", name)
+		}
+	}
+	// The manifest: the template with the version, as the host reads it.
+	var m map[string]any
+	if err := json.Unmarshal(got["manifest.json"].data, &m); err != nil {
+		t.Fatal(err)
+	}
+	health, _ := m["health"].(map[string]any)
+	runtime, _ := m["runtime"].(map[string]any)
+	if m["id"] != "mfgraph" || m["version"] != "0.1.0" || m["protocol"] != float64(1) || health["path"] != "/healthz" ||
+		health["ready"] != "/readyz" || health["timeout_seconds"] != float64(30) || m["namespace"] != nil || m["api_version"] != nil ||
+		runtime["type"] != "binary" || m["sha256"] != "" || m["signature"] != "" {
+		t.Errorf("manifest: %v", m)
+	}
+	args, _ := json.Marshal(runtime["args"])
+	if string(args) != `["serve","--config","etc/module.env","--socket","{socket}"]` {
+		t.Errorf("runtime.args %s", args)
+	}
+	mig, _ := json.Marshal(m["migrations"])
+	if string(mig) != `{"command":["bin/mfgraph-server","--config","etc/module.env","migrate"],"dir":"migrations"}` {
+		t.Errorf("migrations %s", mig)
+	}
+	caps, _ := json.Marshal(m["capabilities"])
+	if string(caps) != `["versioned-workspace","snapshot","branch","diff","restore"]` {
+		t.Errorf("capabilities %s (lock comes with locks)", caps)
+	}
+	for _, r := range m["routes"].([]any) {
+		if !strings.HasPrefix(r.(string), "/") {
+			t.Errorf("route %v is not absolute", r)
+		}
+	}
+	if _, err := RenderManifest([]byte(`{"version":"x"}`), "0.1.0"); err == nil {
+		t.Error("a template without {{version}} was accepted")
+	}
+	if _, err := RenderManifest([]byte(`{"version":"{{version}}",}`), "0.1.0"); err == nil {
+		t.Error("a template that is not JSON was accepted")
+	}
+}
+
+// TestExtract: a bundle unpacks to its files with their modes; entries
+// that leave the directory are refused.
+func TestExtract(t *testing.T) {
+	es := testEntries(t)
+	a, err := Pack(es, defaultEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := Extract(bytes.NewReader(a), dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range es {
+		p := filepath.Join(dir, filepath.FromSlash(e.Name))
+		b, err := os.ReadFile(p)
+		fi, serr := os.Stat(p)
+		if err != nil || serr != nil || !bytes.Equal(b, e.Data) || int64(fi.Mode().Perm()) != e.Mode {
+			t.Errorf("%s: %v %v mode %v", e.Name, err, serr, fi.Mode())
+		}
+	}
+	if _, err := Pack([]Entry{{Name: "../x", Mode: 0o644}}, defaultEpoch); err == nil {
+		t.Error("an entry leaving the directory was packed")
+	}
+	var buf bytes.Buffer
+	zw, _ := zstd.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	_ = tw.WriteHeader(&tar.Header{Name: "../evil", Mode: 0o644, Typeflag: tar.TypeReg})
+	_ = tw.Close()
+	_ = zw.Close()
+	if err := Extract(&buf, t.TempDir()); err == nil {
+		t.Error("an entry leaving the directory was extracted")
+	}
+}

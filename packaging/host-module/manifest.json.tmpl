@@ -1,0 +1,25 @@
+{
+  "id": "mfgraph",
+  "version": "{{version}}",
+  "protocol": 1,
+  "platforms": ["linux/amd64", "linux/arm64"],
+  "runtime": {
+    "type": "binary",
+    "entrypoint": ["bin/mfgraph-server"],
+    "args": ["serve", "--config", "etc/module.env", "--socket", "{socket}"]
+  },
+  "requires": {
+    "agentteams-service": ">=0.1.0 <1.0.0",
+    "database": "mysql",
+    "schema": "mfgraph"
+  },
+  "migrations": {
+    "command": ["bin/mfgraph-server", "--config", "etc/module.env", "migrate"],
+    "dir": "migrations"
+  },
+  "health": {"path": "/healthz", "ready": "/readyz", "timeout_seconds": 30},
+  "capabilities": ["versioned-workspace", "snapshot", "branch", "diff", "restore"],
+  "routes": ["/internal/v1/mfgraph/*"],
+  "sha256": "",
+  "signature": ""
+}
