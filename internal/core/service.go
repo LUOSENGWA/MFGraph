@@ -67,6 +67,9 @@ type Deps struct {
 	IDs     ports.IDGen
 	// Logger receives warnings about stored data (nil: slog.Default()).
 	Logger *slog.Logger
+	// EventsCommitted, if set, is called after a change committed outbox
+	// events (module mode: it wakes the forwarder). It must not block.
+	EventsCommitted func()
 }
 
 // Service implements the use cases of the first core slice: projects,
@@ -110,6 +113,13 @@ func New(cfg Config, d Deps) (*Service, error) {
 func (s *Service) Config() Config { return s.cfg }
 
 func (s *Service) nowUs() int64 { return s.d.Clock.Now().UnixMicro() }
+
+// eventsCommitted reports committed outbox events.
+func (s *Service) eventsCommitted() {
+	if s.d.EventsCommitted != nil {
+		s.d.EventsCommitted()
+	}
+}
 
 // isULID reports a canonical ULID (26 uppercase Crockford base32
 // characters, the first one 0-7).

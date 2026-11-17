@@ -150,7 +150,11 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 		if errors.Is(err, ports.ErrAlreadyExists) {
 			return WorkspaceView{}, &Error{Code: CodeConflict, Message: "the storage prefix of the new workspace is in use", Err: err}
 		}
-		return view, mapErr(err, "workspace")
+		if err != nil {
+			return WorkspaceView{}, mapErr(err, "workspace")
+		}
+		s.eventsCommitted()
+		return view, nil
 	})
 }
 

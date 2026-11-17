@@ -24,10 +24,13 @@ type EventReader interface {
 	Events(ctx context.Context) ([]ports.Event, error)
 }
 
-// Store is what the suite needs: a ports.Store whose events can be read.
+// Store is what the suite needs: a ports.Store whose events can be read
+// and delivered.
 type Store interface {
 	ports.Store
 	EventReader
+	ports.OutboxQueue
+	EventDelivery(ctx context.Context, id string) (ports.EventDelivery, error)
 }
 
 // Run runs the contract tests. newStore must return an empty store; it is
@@ -48,6 +51,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"Blobs", testBlobs},
 		{"Idempotency", testIdempotency},
 		{"Outbox", testOutbox},
+		{"OutboxQueue", testOutboxQueue},
 		{"Usage", testUsage},
 	}
 	for _, tc := range tests {
@@ -588,6 +592,86 @@ func testOutbox(t *testing.T, s Store) {
 	want := ev("01JD3X5Q8Z9W2V4T6R8P0N2E01", ports.EventSnapshotCreated)
 	if !reflect.DeepEqual(events[0], want) {
 		t.Fatalf("event = %+v\nwant %+v", events[0], want)
+	}
+}
+
+// testOutboxQueue: the pending events come in outbox order (time, then
+// ID), without events of an earlier version's kinds; a failed delivery
+// counts a retry and keeps the event pending; a published event stays
+// published and leaves the queue.
+func testOutboxQueue(t *testing.T, s Store) {
+	ev := func(id, typ string, at int64) ports.Event {
+		return ports.Event{ID: id, Type: typ, WorkspaceID: wsA, AggregateID: wsA, Payload: []byte(`{"v":1}`), CreatedAtUs: at}
+	}
+	// Appended out of order, in two transactions; one row of an old kind.
+	tx(t, s, func(tx ports.Tx) error {
+		for _, e := range []ports.Event{
+			ev("01JD3X5Q8Z9W2V4T6R8P0N2E05", ports.EventBranchUpdated, 21),
+			ev("01JD3X5Q8Z9W2V4T6R8P0N2E09", ports.EventCommitCreated, 20),
+			ev("01JD3X5Q8Z9W2V4T6R8P0N2E01", "snapshot.created", 5),
+		} {
+			if err := s.Append(ctx, tx, e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	tx(t, s, func(tx ports.Tx) error {
+		if err := s.Append(ctx, tx, ev("01JD3X5Q8Z9W2V4T6R8P0N2E07", ports.EventWorkspaceCreated, 10)); err != nil {
+			return err
+		}
+		return s.Append(ctx, tx, ev("01JD3X5Q8Z9W2V4T6R8P0N2E02", ports.EventBranchCreated, 10))
+	})
+	ids := func(evs []ports.Event) string {
+		var out []string
+		for _, e := range evs {
+			out = append(out, e.ID[len(e.ID)-2:])
+		}
+		return strings.Join(out, ",")
+	}
+	got, err := s.PendingEvents(ctx, 100)
+	if err != nil || ids(got) != "02,07,09,05" {
+		t.Fatalf("pending = %s, %v; want 02,07,09,05", ids(got), err)
+	}
+	if got, _ := s.PendingEvents(ctx, 2); ids(got) != "02,07" {
+		t.Fatalf("pending with limit 2 = %s", ids(got))
+	}
+	if !reflect.DeepEqual(got[0], ev("01JD3X5Q8Z9W2V4T6R8P0N2E02", ports.EventBranchCreated, 10)) {
+		t.Fatalf("pending event = %+v", got[0])
+	}
+	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02", 777); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02", 888); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := s.EventDelivery(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02"); err != nil || d.Status != ports.EventPending || d.RetryCount != 2 ||
+		d.NextRetryAtUs != 888 {
+		t.Fatalf("after two failures: %+v %v", d, err)
+	}
+	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "02,07,09,05" {
+		t.Fatalf("a failed event left the queue: %s", ids(got))
+	}
+	for _, id := range []string{"01JD3X5Q8Z9W2V4T6R8P0N2E02", "01JD3X5Q8Z9W2V4T6R8P0N2E07"} {
+		if err := s.MarkPublished(ctx, id, 999); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.MarkPublished(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E07", 1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E07", 5); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := s.EventDelivery(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E07"); err != nil || d.Status != ports.EventPublished || d.PublishedAtUs != 999 ||
+		d.RetryCount != 0 {
+		t.Fatalf("published event: %+v %v", d, err)
+	}
+	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "09,05" {
+		t.Fatalf("pending after publishing = %s", ids(got))
+	}
+	if d, err := s.EventDelivery(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E01"); err != nil || d.Status != ports.EventPending {
+		t.Fatalf("old kind: %+v %v", d, err)
 	}
 }
 

@@ -53,6 +53,7 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/core"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
 	"github.com/LUOSENGWA/MFGraph/internal/migrate"
+	"github.com/LUOSENGWA/MFGraph/internal/outbox"
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"github.com/LUOSENGWA/MFGraph/internal/store/mysql"
@@ -340,7 +341,9 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	logger.Info("starting mfgraph-server", append([]any{"version", version, "unicode_version", pathx.UnicodeVersion}, cfg.Summary()...)...)
 	dbCheck := api.ReadinessCheck{Name: "db", Code: api.CodeDBUnavailable, Required: true}
 	storageCheck := api.ReadinessCheck{Name: "storage", Code: api.CodeStorageUnavailable}
+	readiness := []api.ReadinessCheck{dbCheck, storageCheck}
 	var svc *core.Service
+	var fwd *outbox.Forwarder
 	if cfg.DBDSN != "" {
 		db, err := openDB(ctx, cfg.DBDSN)
 		if err != nil {
@@ -365,18 +368,27 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		if err != nil {
 			return err
 		}
-		var policy ports.Authorizer = authz.ProjectOwner{}
+		deps := core.Deps{Store: store, Objects: objects, Trees: trees, Authz: authz.ProjectOwner{}, Clock: ports.ClockFunc(time.Now),
+			IDs: ids.NewGenerator(), Logger: logger}
+		readiness[0].Check, readiness[1].Check = store.Ping, objects.Check
 		if cfg.Module() {
-			policy = authz.ProjectScope{}
+			deps.Authz = authz.ProjectScope{}
+			ops, sink, err := hostOutbox(cfg)
+			if err != nil {
+				return err
+			}
+			defer ops.Close()
+			fwd = outbox.New(store, sink, outbox.Options{Logger: logger})
+			deps.EventsCommitted = fwd.Notify
+			// Ready only when the host's outbox table can be written.
+			readiness = append(readiness, api.ReadinessCheck{Name: "outbox", Code: api.CodeDBUnavailable, Required: true,
+				Check: sink.Check})
 		}
 		svc, err = core.New(core.Config{TenantID: cfg.TenantID, MaxUploadBytes: cfg.MaxUploadBytes,
-			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()},
-			core.Deps{Store: store, Objects: objects, Trees: trees, Authz: policy, Clock: ports.ClockFunc(time.Now),
-				IDs: ids.NewGenerator(), Logger: logger})
+			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)
 		if err != nil {
 			return err
 		}
-		dbCheck.Check, storageCheck.Check = store.Ping, objects.Check
 	} else {
 		logger.Warn("no " + config.EnvDBDSN + " configured: /readyz and every business endpoint answer 503 db_unavailable")
 	}
@@ -391,7 +403,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	opts := api.Options{
 		Authenticator: authn,
 		IDGen:         ids.NewGenerator(),
-		Readiness:     []api.ReadinessCheck{dbCheck, storageCheck},
+		Readiness:     readiness,
 		Logger:        logger,
 		Service:       svc,
 		APIPrefix:     cfg.APIPrefix,
@@ -410,6 +422,15 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		MaxHeaderBytes:    64 << 10,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
+	// The forwarder of module mode runs until the server stops.
+	fctx, stopForwarder := context.WithCancel(context.Background())
+	defer stopForwarder()
+	forwarderDone := make(chan struct{})
+	if fwd != nil {
+		go func() { fwd.Run(fctx); close(forwarderDone) }()
+	} else {
+		close(forwarderDone)
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	logger.Info("listening", "addr", ln.Addr().String(), "api_prefix", cfg.APIPrefix)
@@ -418,14 +439,53 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		return err
 	case <-ctx.Done():
 	}
+	// Shutdown: stop accepting requests and finish the running ones, then
+	// deliver what the forwarder can in the time that is left; all of it
+	// within ShutdownTimeout. Events not delivered stay in the local outbox
+	// and go out after the next start.
 	logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String())
 	sctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(sctx); err != nil {
-		return err
+	shutdownErr := srv.Shutdown(sctx)
+	stopForwarder()
+	<-forwarderDone
+	if fwd != nil {
+		n, err := fwd.Flush(sctx)
+		attrs := []any{"delivered", n}
+		if err != nil {
+			attrs = append(attrs, "err", err.Error())
+		}
+		logger.Info("outbox: last delivery before the stop", attrs...)
+	}
+	if shutdownErr != nil {
+		return shutdownErr
 	}
 	if err := <-errc; !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// hostOutbox opens the connection of the forwarder (MFGRAPH_OPS_DSN, or
+// MFGRAPH_DSN without it) and the sink of the host's outbox table. The
+// connection is not tested here: /readyz reports whether the table can be
+// reached, and the forwarder retries until it can.
+func hostOutbox(cfg config.Config) (*sql.DB, *outbox.SQLSink, error) {
+	dsn := cfg.OpsDSN
+	if dsn == "" {
+		dsn = cfg.DBDSN
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", config.EnvOpsDSN, err)
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	sink, err := outbox.NewSQLSink(db, cfg.OutboxTable)
+	if err != nil {
+		db.Close()
+		return nil, nil, err
+	}
+	return db, sink, nil
 }

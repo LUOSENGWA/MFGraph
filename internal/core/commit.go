@@ -382,6 +382,7 @@ func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Worksp
 	if err != nil {
 		return CommitResult{}, mapErr(err, "snapshot")
 	}
+	s.eventsCommitted()
 	return result, nil
 }
 

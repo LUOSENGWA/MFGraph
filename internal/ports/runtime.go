@@ -73,3 +73,38 @@ type Transactor interface {
 type EventSink interface {
 	Append(ctx context.Context, tx Tx, ev Event) error
 }
+
+// OutboxQueue is the read side of the outbox, for the publisher of module
+// mode (package outbox): the events that are still to be delivered, in the
+// order they must be delivered.
+type OutboxQueue interface {
+	// PendingEvents returns up to limit committed events that are not
+	// published yet and have a current kind (mfgraph.*), in outbox order:
+	// by CreatedAtUs, then by ID.
+	PendingEvents(ctx context.Context, limit int) ([]Event, error)
+	// MarkPublished records that an event was delivered; a published event
+	// stays published.
+	MarkPublished(ctx context.Context, id string, publishedAtUs int64) error
+	// MarkFailed records a failed delivery: the event stays pending, its
+	// retry count grows by one and nextRetryAtUs says when the publisher
+	// tries again.
+	MarkFailed(ctx context.Context, id string, nextRetryAtUs int64) error
+}
+
+// EventPrefix starts every current event kind; PendingEvents leaves out
+// rows of other kinds (written by an earlier version).
+const EventPrefix = "mfgraph."
+
+// Outbox row states.
+const (
+	EventPending   = "pending"
+	EventPublished = "published"
+)
+
+// EventDelivery is the delivery state of an outbox row.
+type EventDelivery struct {
+	Status        string // EventPending or EventPublished
+	RetryCount    int
+	NextRetryAtUs int64 // 0 = NULL
+	PublishedAtUs int64 // 0 = NULL
+}

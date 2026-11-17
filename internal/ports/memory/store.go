@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
@@ -44,6 +45,7 @@ type state struct {
 	blobs      map[blobKey]ports.Blob
 	idem       map[idemKey]ports.IdempotencyRecord
 	events     []ports.Event
+	delivery   map[string]ports.EventDelivery // by event ID; absent = pending, never tried
 }
 
 func newState() *state {
@@ -57,6 +59,7 @@ func newState() *state {
 		snapshots:  map[string]ports.Snapshot{},
 		blobs:      map[blobKey]ports.Blob{},
 		idem:       map[idemKey]ports.IdempotencyRecord{},
+		delivery:   map[string]ports.EventDelivery{},
 	}
 }
 
@@ -83,6 +86,7 @@ func (s *state) clone() *state {
 		blobs:      cloneMap(s.blobs),
 		idem:       cloneMap(s.idem),
 		events:     append([]ports.Event(nil), s.events...),
+		delivery:   cloneMap(s.delivery),
 	}
 }
 
@@ -543,4 +547,83 @@ func (s *Store) Events(context.Context) ([]ports.Event, error) {
 	out := make([]ports.Event, len(s.cur.events))
 	copy(out, s.cur.events)
 	return out, nil
+}
+
+// PendingEvents implements ports.OutboxQueue.
+func (s *Store) PendingEvents(_ context.Context, limit int) ([]ports.Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []ports.Event
+	for _, ev := range s.cur.events {
+		if s.cur.delivery[ev.ID].Status != ports.EventPublished && strings.HasPrefix(ev.Type, ports.EventPrefix) {
+			out = append(out, ev)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAtUs != out[j].CreatedAtUs {
+			return out[i].CreatedAtUs < out[j].CreatedAtUs
+		}
+		return out[i].ID < out[j].ID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// MarkPublished implements ports.OutboxQueue.
+func (s *Store) MarkPublished(_ context.Context, id string, publishedAtUs int64) error {
+	s.updateDelivery(id, func(d *ports.EventDelivery) {
+		if d.Status != ports.EventPublished {
+			d.Status, d.PublishedAtUs = ports.EventPublished, publishedAtUs
+		}
+	})
+	return nil
+}
+
+// MarkFailed implements ports.OutboxQueue.
+func (s *Store) MarkFailed(_ context.Context, id string, nextRetryAtUs int64) error {
+	s.updateDelivery(id, func(d *ports.EventDelivery) {
+		if d.Status != ports.EventPublished {
+			d.RetryCount++
+			d.NextRetryAtUs = nextRetryAtUs
+		}
+	})
+	return nil
+}
+
+// EventDelivery returns the delivery state of an outbox event.
+func (s *Store) EventDelivery(_ context.Context, id string) (ports.EventDelivery, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ev := range s.cur.events {
+		if ev.ID == id {
+			d := s.cur.delivery[id]
+			if d.Status == "" {
+				d.Status = ports.EventPending
+			}
+			return d, nil
+		}
+	}
+	return ports.EventDelivery{}, notFound("event", id)
+}
+
+// updateDelivery changes the delivery state of a committed event between
+// transactions (txMu keeps a transaction from replacing the change).
+func (s *Store) updateDelivery(id string, fn func(*ports.EventDelivery)) {
+	s.txMu.Lock()
+	defer s.txMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ev := range s.cur.events {
+		if ev.ID == id {
+			d := s.cur.delivery[id]
+			if d.Status == "" {
+				d.Status = ports.EventPending
+			}
+			fn(&d)
+			s.cur.delivery[id] = d
+			return
+		}
+	}
 }

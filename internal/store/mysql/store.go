@@ -695,3 +695,51 @@ func (s *Store) Events(ctx context.Context) ([]ports.Event, error) {
 	}
 	return out, wrap(rows.Err())
 }
+
+// PendingEvents implements ports.OutboxQueue.
+func (s *Store) PendingEvents(ctx context.Context, limit int) ([]ports.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT event_id, workspace_id, event_type, aggregate_id, payload_json, created_at_us
+		FROM outbox_events WHERE status = 'pending' AND event_type LIKE ? ORDER BY created_at_us, event_id LIMIT ?`,
+		ports.EventPrefix+"%", limit)
+	if err != nil {
+		return nil, wrap(err)
+	}
+	defer rows.Close()
+	var out []ports.Event
+	for rows.Next() {
+		var ev ports.Event
+		var ws, agg sql.NullString
+		var payload string
+		if err := rows.Scan(&ev.ID, &ws, &ev.Type, &agg, &payload, &ev.CreatedAtUs); err != nil {
+			return nil, wrap(err)
+		}
+		ev.WorkspaceID, ev.AggregateID, ev.Payload = ws.String, agg.String, []byte(payload)
+		out = append(out, ev)
+	}
+	return out, wrap(rows.Err())
+}
+
+// MarkPublished implements ports.OutboxQueue.
+func (s *Store) MarkPublished(ctx context.Context, id string, publishedAtUs int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox_events SET status = 'published', published_at_us = ?
+		WHERE event_id = ? AND status = 'pending'`, publishedAtUs, id)
+	return wrap(err)
+}
+
+// MarkFailed implements ports.OutboxQueue.
+func (s *Store) MarkFailed(ctx context.Context, id string, nextRetryAtUs int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox_events SET retry_count = retry_count + 1, next_retry_at_us = ?
+		WHERE event_id = ? AND status = 'pending'`, nextRetryAtUs, id)
+	return wrap(err)
+}
+
+// EventDelivery returns the delivery state of an outbox event: its status,
+// retry count and next retry time (tests and diagnostics).
+func (s *Store) EventDelivery(ctx context.Context, id string) (ports.EventDelivery, error) {
+	var d ports.EventDelivery
+	var next, published sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT status, retry_count, next_retry_at_us, published_at_us FROM outbox_events
+		WHERE event_id = ?`, id).Scan(&d.Status, &d.RetryCount, &next, &published)
+	d.NextRetryAtUs, d.PublishedAtUs = next.Int64, published.Int64
+	return d, wrap(err)
+}

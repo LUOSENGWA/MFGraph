@@ -80,9 +80,10 @@ e2e-compile:
 test-heavy:
 	MFGRAPH_HEAVY_VECTORS=1 $(GO) test -count=1 ./internal/tree/...
 
-# Packages with database tests (tests named *MySQL*): the migrations and the
-# MySQL repositories (contract tests).
-DB_TEST_PKGS = ./internal/migrate/... ./internal/store/mysql/... ./cmd/mfgraph-server/...
+# Packages with database tests (tests named *MySQL*): the migrations, the
+# MySQL repositories (contract tests) and the forwarder of module mode (with
+# a fixture of the host's outbox table).
+DB_TEST_PKGS = ./internal/migrate/... ./internal/store/mysql/... ./internal/outbox/... ./cmd/mfgraph-server/...
 
 ## test-mysql: migration and repository tests against MySQL 8.0 (start it with `make dev-db-up`; requires Docker)
 test-mysql:
