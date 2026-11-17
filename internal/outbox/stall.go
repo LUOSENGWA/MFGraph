@@ -138,7 +138,7 @@ func (f *Forwarder) Status(ctx context.Context) (Status, error) {
 
 // clip returns s as valid UTF-8 of at most MaxErrorBytes bytes.
 func clip(s string) string {
-	s = strings.ToValidUTF8(s, "�")
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	if len(s) <= MaxErrorBytes {
 		return s
 	}

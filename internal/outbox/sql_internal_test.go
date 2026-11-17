@@ -22,7 +22,7 @@ func TestIsDuplicateOf(t *testing.T) {
 		dup("Duplicate entry '" + id + "' for key 'module_outbox.uk_module_outbox_event'"), // MySQL 8.0
 		dup("Duplicate entry '" + id + "' for key 'uk_module_outbox_event'"),               // seekdb
 		dup("Duplicate entry '" + id + "' for key 'module_outbox.uk_event_id'"),            // another name
-		dup("Doppelter Eintrag '" + id + "' für Schlüssel 'uk_event_id'"),                  // lc_messages=de_DE
+		dup("Doppelter Eintrag '" + id + "' f\u00fcr Schl\u00fcssel 'uk_event_id'"),        // lc_messages=de_DE
 	}
 	no := []error{
 		dup("Duplicate entry '" + other + "' for key 'uk_event_id'"),

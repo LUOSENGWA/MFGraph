@@ -888,7 +888,7 @@ func TestModuleModeUnicodeActor(t *testing.T) {
 	m := newModuleEnv(t)
 	m.migrate()
 	s := m.start(nil)
-	const actor = "\u5f20\u4e09-\U0001F600" // 张三-😀
+	const actor = "\u5f20\u4e09-\U0001F600" // two Chinese characters, a hyphen and an emoji
 	c := claims{token: modToken, actor: actor, actorType: "human", project: projP}
 	ws, main := s.workspace(c)
 	r, _ := s.commit(c, ws, main, 1, "", putChange("u.txt", s.upload(c, ws, "unicode")))

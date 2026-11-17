@@ -452,7 +452,7 @@ func TestMySQLForwarderCharset(t *testing.T) {
 	if strings.Contains(plain, "?") {
 		sep = "&"
 	}
-	const actor = "张三-😀" // 张三-😀
+	const actor = "\u5f20\u4e09-\U0001F600" // two Chinese characters, a hyphen and an emoji
 	forwarder := func(dsn string) (*outbox.SQLSink, error) {
 		c, err := config.Load(func(k string) string {
 			return map[string]string{config.EnvMode: "module", config.EnvDSN: plain, config.EnvOpsDSN: dsn}[k]
