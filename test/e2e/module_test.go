@@ -537,6 +537,38 @@ func TestModuleModeMigrate(t *testing.T) {
 	}
 }
 
+// The host runs the migration command with MFGRAPH_DSN alone; the rest
+// comes from the bundle's etc/module.env (here the file of the packaging
+// directory, which the bundle carries unchanged): no socket, internal
+// token, tenant, data directory or ops DSN, and nothing else in the
+// environment. Only the module's migrations run, and a second run skips
+// them.
+func TestModuleModeMigrateOnlyDSN(t *testing.T) {
+	m := newModuleEnv(t)
+	moduleEnvFile, err := filepath.Abs(filepath.Join("..", "..", "packaging", "host-module", "module.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{`"component":"mfgraph","applied":["0001_workspaces",`, `"component":"mfgraph","applied":null,"skipped":7`} {
+		cmd := exec.Command(serverBin, "--config", moduleEnvFile, "migrate")
+		cmd.Env = []string{"MFGRAPH_DSN=" + m.env["MFGRAPH_DSN"]}
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), want) || strings.Contains(string(out), `"component":"kernel"`) ||
+			strings.Contains(string(out), `"level":"WARN"`) || strings.Contains(string(out), `"level":"ERROR"`) {
+			t.Fatalf("migrate %d with MFGRAPH_DSN only: %v\n%s", i+1, err, out)
+		}
+	}
+	var mfgraph, others, kernel int
+	if err := m.db.QueryRow(`SELECT SUM(component = 'mfgraph'), SUM(component <> 'mfgraph') FROM schema_migrations`).Scan(&mfgraph,
+		&others); err != nil || mfgraph != 7 || others != 0 {
+		t.Fatalf("recorded versions: mfgraph %d, others %d, %v", mfgraph, others, err)
+	}
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()
+		AND table_name IN ('projects', 'principals')`).Scan(&kernel); err != nil || kernel != 0 {
+		t.Fatalf("kernel tables: %d %v", kernel, err)
+	}
+}
+
 // Row 1: readyz, the socket (mode 0600, a stale one replaced), no TCP port.
 func TestModuleModeStartup(t *testing.T) {
 	m := newModuleEnv(t)

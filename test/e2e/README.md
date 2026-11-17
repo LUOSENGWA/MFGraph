@@ -44,6 +44,7 @@ host's own settings are checked by the acceptance script of
 | test | acceptance criterion |
 |---|---|
 | `TestModuleModeMigrate` | `migrate` twice, with `--config` before or after the command; only the module's versions are recorded; no kernel tables |
+| `TestModuleModeMigrateOnlyDSN` | `mfgraph-server --config packaging/host-module/module.env migrate` with `MFGRAPH_DSN` as the only variable of the environment (as the host runs it): it succeeds twice without a warning, records the module's 7 versions and creates no kernel tables |
 | `TestModuleModeStartup` | `/readyz` ready with the checks db, storage and outbox; socket mode 0600, a stale socket replaced; no TCP listener (lsof or /proc); not ready while the host table is gone |
 | `TestModuleModePrefixAndIdentity` | `/internal/v1/mfgraph` works, `/api/v1` is 404; uploads through `/objects/{workspace_id}`; the actor, its type and the actor acted for are recorded; the request ID of the proxy is used; 401 without the token, with a wrong one, without actor, type or project, with an actor that is not UTF-8 or has 256 bytes, or with a bearer token only |
 | `TestModuleModeACL` | every endpoint with another project gives the 404 of an unknown ID; a workspace cannot be created in another project; `/projects` is 404 |
