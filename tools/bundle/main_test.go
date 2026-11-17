@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -20,9 +21,12 @@ import (
 
 const root = "../.." // the repository, seen from this package
 
+// testInfo is the build information of the tests.
+var testInfo = BuildInfo{Version: "0.1.0", Commit: strings.Repeat("ab", 20), GoVersion: "go1.26.1", Epoch: defaultEpoch}
+
 func testEntries(t *testing.T) []Entry {
 	t.Helper()
-	es, err := Entries(root, "0.1.0", []byte("\x7fELF fake server"))
+	es, err := Entries(root, testInfo, []byte("\x7fELF fake server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +118,7 @@ func TestBundleLayout(t *testing.T) {
 		}
 		return b
 	}
+	buildinfo := []byte("module=mfgraph\nversion=0.1.0\ncommit=" + strings.Repeat("ab", 20) + "\ngo=go1.26.1\nsource_date_epoch=1794787200\n")
 	want := map[string]struct {
 		mode int64
 		data []byte
@@ -123,6 +128,7 @@ func TestBundleLayout(t *testing.T) {
 		"scripts/acceptance-m1.0a.sh":      {0o755, file(packaging + "/acceptance-m1.0a.sh")},
 		"scripts/acceptance-m1.0a-diff.md": {0o644, file(packaging + "/acceptance-m1.0a-diff.md")},
 		"docs/events.md":                   {0o644, file("docs/events.md")},
+		"BUILDINFO":                        {0o644, buildinfo},
 		"LICENSE":                          {0o644, file("LICENSE")},
 		"NOTICE":                           {0o644, file("NOTICE")},
 		"THIRD_PARTY_NOTICES.md":           {0o644, file("THIRD_PARTY_NOTICES.md")},
@@ -226,5 +232,26 @@ func TestExtract(t *testing.T) {
 	_ = zw.Close()
 	if err := Extract(&buf, t.TempDir()); err == nil {
 		t.Error("an entry leaving the directory was extracted")
+	}
+}
+
+// TestPinnedToolchain: the bundles are built with the Go version that
+// go.mod pins, which is the toolchain these tests run with when nothing
+// overrides it.
+func TestPinnedToolchain(t *testing.T) {
+	pinned, err := pinnedToolchain(filepath.Join(root, "go.mod"))
+	if err != nil || !regexp.MustCompile(`^go1\.[0-9]+\.[0-9]+$`).MatchString(pinned) {
+		t.Fatalf("toolchain of go.mod: %q %v", pinned, err)
+	}
+	dir := t.TempDir()
+	gomod := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(gomod, []byte("module x\n\ngo 1.26.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pinnedToolchain(gomod); err == nil {
+		t.Fatal("a go.mod without toolchain was accepted")
+	}
+	if got := string(testInfo.Text()); !strings.Contains(got, "\ngo=go1.26.1\n") || strings.Contains(got, "{") {
+		t.Fatalf("BUILDINFO: %q", got)
 	}
 }

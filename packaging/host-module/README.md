@@ -24,6 +24,18 @@ writes to `dist/`:
 mfgraph-0.1.0-linux-amd64.tar.zst
 mfgraph-0.1.0-linux-arm64.tar.zst
 sha256sums.txt
+BUILDINFO.txt
+```
+
+`BUILDINFO.txt` (also `BUILDINFO` in each bundle; not in the manifest)
+records the build:
+
+```text
+module=mfgraph
+version=0.1.0
+commit=<the commit, 40 hex digits; "-dirty" when built with local changes>
+go=go1.26.1
+source_date_epoch=1794787200
 ```
 
 Each archive has the bundle root at its top level (no enclosing directory):
@@ -31,6 +43,7 @@ Each archive has the bundle root at its top level (no enclosing directory):
 ```text
 bin/mfgraph-server                 CGO_ENABLED=0, -trimpath, version 0.1.0
 manifest.json
+BUILDINFO                          version, commit and Go version of the build
 etc/module.env
 migrations/0001_workspaces.sql ... 0009_actor_types.sql   for audit only
 scripts/acceptance-m1.0a.sh
@@ -41,10 +54,13 @@ LICENSE  NOTICE  THIRD_PARTY_NOTICES.md
 
 The builds are reproducible: entries are sorted, owned by 0:0 and dated
 `SOURCE_DATE_EPOCH` (default 2026-11-16T00:00:00Z), zstd is single-threaded,
-and the binary has no paths, VCS data or build ID. Two builds of the same
-commit with the same Go version give the same `sha256sums.txt`;
-`make bundle-check` builds again with an empty Go build cache and compares.
-MFGraph's CI builds both architectures and uploads them unsigned.
+and the binary has no paths, VCS data or build ID. The Go version is pinned
+too: `go.mod` names the toolchain (`toolchain go1.26.1`), the go command
+switches to it by itself, and `make bundle` refuses to build with any other
+version. Two builds of the same commit give the same `sha256sums.txt`;
+`make bundle-check` builds again with an empty Go build cache and compares
+the archives and `BUILDINFO.txt`. MFGraph's CI builds both architectures
+with the pinned version, checks `go version`, and uploads them unsigned.
 
 `migrations/` holds the module's own migrations (never the kernel's) for
 audit. The host does not execute them: `migrations.command` runs the

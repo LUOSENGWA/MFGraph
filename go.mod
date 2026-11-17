@@ -2,6 +2,8 @@ module github.com/LUOSENGWA/MFGraph
 
 go 1.26.0
 
+toolchain go1.26.1
+
 require (
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/go-sql-driver/mysql v1.10.1

@@ -8,19 +8,26 @@
 //	scripts/acceptance-m1.0a.sh         the acceptance script
 //	scripts/acceptance-m1.0a-diff.md    the difference table, filled in beforehand
 //	docs/events.md                      the event vocabulary
+//	BUILDINFO                           the version, the commit and the Go version of the build
 //	LICENSE, NOTICE, THIRD_PARTY_NOTICES.md
 //
-// and dist/sha256sums.txt. Entries are sorted, have the time of
-// SOURCE_DATE_EPOCH (default 2026-11-16T00:00:00Z) and owner 0:0, and zstd
-// runs single-threaded, so two builds of the same tree with the same Go
-// toolchain produce the same bytes. Compression uses
-// github.com/klauspost/compress, not a zstd program.
+// and dist/sha256sums.txt and dist/BUILDINFO.txt (the same as BUILDINFO).
+// Entries are sorted, have the time of SOURCE_DATE_EPOCH (default
+// 2026-11-16T00:00:00Z) and owner 0:0, and zstd runs single-threaded, so
+// two builds of the same commit produce the same bytes. They also need the
+// same Go version: the build refuses any other than the toolchain that
+// go.mod pins (the go command switches to it by itself unless GOTOOLCHAIN
+// says otherwise). Compression uses github.com/klauspost/compress, not a
+// zstd program.
 //
-//	go run ./tools/bundle [-version V] [-out dist] [-platforms linux/amd64,linux/arm64] [-verify]
+//	go run ./tools/bundle [-version V] [-commit SHA] [-out dist] [-platforms linux/amd64,linux/arm64] [-verify]
 //	go run ./tools/bundle extract FILE DIR
 //
+// The commit is that of HEAD (git rev-parse HEAD), with "-dirty" when a
+// tracked file differs from it; -commit names it for a tree without git.
 // -verify builds again, from an empty Go build cache, and checks that every
-// archive equals the one in -out and its line in sha256sums.txt.
+// archive equals the one in -out and its line in sha256sums.txt, and that
+// BUILDINFO.txt is the same.
 //
 // Run it from the repository root. Nothing here names the host platform:
 // that is confined to packaging/host-module.
@@ -76,6 +83,7 @@ func main() {
 		return
 	}
 	version := flag.String("version", "", "module version (default: "+packaging+"/VERSION)")
+	commit := flag.String("commit", "", "the commit of the build (default: git rev-parse HEAD, -dirty with changed tracked files)")
 	out := flag.String("out", "dist", "output directory")
 	platforms := flag.String("platforms", "linux/amd64,linux/arm64", "comma-separated GOOS/GOARCH list")
 	verify := flag.Bool("verify", false, "build again from an empty Go build cache and compare with the bundles in -out")
@@ -94,13 +102,17 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	info, err := buildInfo(*version, *commit, epoch)
+	if err != nil {
+		fail(err)
+	}
 	if *verify {
-		if err := verifyBundles(*version, *platforms, *out, epoch); err != nil {
+		if err := verifyBundles(info, *platforms, *out); err != nil {
 			fail(err)
 		}
 		return
 	}
-	archives, err := buildAll(*version, *platforms, epoch, "")
+	archives, err := buildAll(info, *platforms, "")
 	if err != nil {
 		fail(err)
 	}
@@ -118,6 +130,78 @@ func main() {
 	if err := os.WriteFile(filepath.Join(*out, "sha256sums.txt"), []byte(strings.Join(sums, "\n")+"\n"), 0o644); err != nil {
 		fail(err)
 	}
+	if err := os.WriteFile(filepath.Join(*out, "BUILDINFO.txt"), info.Text(), 0o644); err != nil {
+		fail(err)
+	}
+	fmt.Print(string(info.Text()))
+}
+
+// BuildInfo is the content of BUILDINFO (in each bundle) and of
+// dist/BUILDINFO.txt: what a rebuild needs to give the same bytes.
+type BuildInfo struct {
+	Version   string    // the module version
+	Commit    string    // the commit (40 hex digits, "-dirty" with local changes)
+	GoVersion string    // the Go toolchain, for example go1.26.1
+	Epoch     time.Time // SOURCE_DATE_EPOCH
+}
+
+// Text is the file: one KEY=VALUE per line.
+func (b BuildInfo) Text() []byte {
+	return []byte(fmt.Sprintf("module=mfgraph\nversion=%s\ncommit=%s\ngo=%s\nsource_date_epoch=%d\n", b.Version, b.Commit,
+		b.GoVersion, b.Epoch.Unix()))
+}
+
+var commitRe = regexp.MustCompile(`^[0-9a-f]{40}(-dirty)?$`)
+
+// buildInfo collects the build information: the commit (from git unless
+// given) and the Go version, which must be the toolchain go.mod pins.
+func buildInfo(version, commit string, epoch time.Time) (BuildInfo, error) {
+	if commit == "" {
+		head, err := exec.Command("git", "rev-parse", "HEAD").Output()
+		if err != nil {
+			return BuildInfo{}, fmt.Errorf("cannot read the commit with git (%v); pass -commit", err)
+		}
+		commit = strings.TrimSpace(string(head))
+		changed, err := exec.Command("git", "status", "--porcelain", "--untracked-files=no").Output()
+		if err != nil {
+			return BuildInfo{}, fmt.Errorf("git status: %v", err)
+		}
+		if len(bytes.TrimSpace(changed)) > 0 {
+			commit += "-dirty"
+		}
+	}
+	if !commitRe.MatchString(commit) {
+		return BuildInfo{}, fmt.Errorf("commit %q is not 40 hex digits", commit)
+	}
+	goVersion, err := exec.Command("go", "env", "GOVERSION").Output()
+	if err != nil {
+		return BuildInfo{}, fmt.Errorf("go env GOVERSION: %v", err)
+	}
+	pinned, err := pinnedToolchain("go.mod")
+	if err != nil {
+		return BuildInfo{}, err
+	}
+	have := strings.TrimSpace(string(goVersion))
+	if have != pinned {
+		return BuildInfo{}, fmt.Errorf("the build would use %s, but go.mod pins %s (toolchain): bundles are reproducible only "+
+			"with that version; unset GOTOOLCHAIN or install it", have, pinned)
+	}
+	return BuildInfo{Version: version, Commit: commit, GoVersion: have, Epoch: epoch}, nil
+}
+
+// pinnedToolchain returns the toolchain line of a go.mod, for example
+// go1.26.1.
+func pinnedToolchain(gomod string) (string, error) {
+	b, err := os.ReadFile(gomod)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "toolchain "); ok && strings.HasPrefix(v, "go") {
+			return strings.TrimSpace(v), nil
+		}
+	}
+	return "", errors.New("go.mod has no toolchain line: the bundles need a pinned Go version")
 }
 
 // archive is one built bundle.
@@ -128,27 +212,27 @@ type archive struct {
 
 // buildAll builds the bundle of every platform, sorted by file name. A
 // non-empty gocache is the Go build cache to build with.
-func buildAll(version, platforms string, epoch time.Time, gocache string) ([]archive, error) {
+func buildAll(info BuildInfo, platforms string, gocache string) ([]archive, error) {
 	var out []archive
 	for _, p := range strings.Split(platforms, ",") {
 		goos, goarch, ok := strings.Cut(strings.TrimSpace(p), "/")
 		if !ok {
 			return nil, fmt.Errorf("platform %q is not GOOS/GOARCH", p)
 		}
-		bin, err := buildServer(version, goos, goarch, gocache)
+		bin, err := buildServer(info.Version, goos, goarch, gocache)
 		if err != nil {
 			return nil, err
 		}
-		entries, err := Entries(".", version, bin)
+		entries, err := Entries(".", info, bin)
 		if err != nil {
 			return nil, err
 		}
-		data, err := Pack(entries, epoch)
+		data, err := Pack(entries, info.Epoch)
 		if err != nil {
 			return nil, err
 		}
 		sum := sha256.Sum256(data)
-		out = append(out, archive{name: fmt.Sprintf("mfgraph-%s-%s-%s.tar.zst", version, goos, goarch),
+		out = append(out, archive{name: fmt.Sprintf("mfgraph-%s-%s-%s.tar.zst", info.Version, goos, goarch),
 			sum: hex.EncodeToString(sum[:]), data: data})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
@@ -157,14 +241,21 @@ func buildAll(version, platforms string, epoch time.Time, gocache string) ([]arc
 
 // verifyBundles builds the bundles again from an empty Go build cache (in
 // a temporary directory it removes afterwards) and compares them with the
-// files in dir and their lines in dir/sha256sums.txt.
-func verifyBundles(version, platforms, dir string, epoch time.Time) error {
+// files in dir, their lines in dir/sha256sums.txt and dir/BUILDINFO.txt.
+func verifyBundles(info BuildInfo, platforms, dir string) error {
+	have, err := os.ReadFile(filepath.Join(dir, "BUILDINFO.txt"))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(have, info.Text()) {
+		return fmt.Errorf("%s/BUILDINFO.txt is of another build:\n%s\nthis build:\n%s", dir, have, info.Text())
+	}
 	tmp, err := os.MkdirTemp("", "mfgraph-bundle-verify-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	again, err := buildAll(version, platforms, epoch, filepath.Join(tmp, "gocache"))
+	again, err := buildAll(info, platforms, filepath.Join(tmp, "gocache"))
 	if err != nil {
 		return err
 	}
@@ -235,19 +326,20 @@ type Entry struct {
 	Data []byte
 }
 
-// Entries returns the files of a bundle: the server binary bin and the
-// files of the repository at root.
-func Entries(root, version string, bin []byte) ([]Entry, error) {
+// Entries returns the files of a bundle: the server binary bin, BUILDINFO
+// and the files of the repository at root.
+func Entries(root string, info BuildInfo, bin []byte) ([]Entry, error) {
 	read := func(p string) ([]byte, error) { return os.ReadFile(filepath.Join(root, filepath.FromSlash(p))) }
 	tmpl, err := read(packaging + "/manifest.json.tmpl")
 	if err != nil {
 		return nil, err
 	}
-	manifest, err := RenderManifest(tmpl, version)
+	manifest, err := RenderManifest(tmpl, info.Version)
 	if err != nil {
 		return nil, err
 	}
-	entries := []Entry{{Name: "bin/mfgraph-server", Mode: 0o755, Data: bin}, {Name: "manifest.json", Mode: 0o644, Data: manifest}}
+	entries := []Entry{{Name: "bin/mfgraph-server", Mode: 0o755, Data: bin}, {Name: "manifest.json", Mode: 0o644, Data: manifest},
+		{Name: "BUILDINFO", Mode: 0o644, Data: info.Text()}}
 	for _, f := range []struct {
 		name, src string
 		mode      int64
