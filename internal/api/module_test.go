@@ -158,3 +158,85 @@ func TestModuleHTTP(t *testing.T) {
 		t.Fatalf("401 message: %s", b)
 	}
 }
+
+// TestNonCanonicalPaths: below the business prefix, a path that is not in
+// its clean form ("//", "/./", "/../", a trailing '/', also percent-encoded)
+// is a JSON 404 without a redirect, in module mode (the review's two
+// examples) and in standalone mode; /healthz and /readyz are not affected.
+func TestNonCanonicalPaths(t *testing.T) {
+	noRedirect := func(srv *httptest.Server) *http.Client {
+		c := *srv.Client()
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		return &c
+	}
+	get := func(t *testing.T, c *http.Client, url string, hdr map[string]string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, b
+	}
+	check := func(t *testing.T, srv *httptest.Server, prefix, ws string, hdr map[string]string) {
+		t.Helper()
+		c := noRedirect(srv)
+		if resp, b := get(t, c, srv.URL+prefix+"/workspaces/"+ws, hdr); resp.StatusCode != 200 {
+			t.Fatalf("the clean path: %d %s", resp.StatusCode, b)
+		}
+		for _, p := range []string{
+			"//projects",               // the review's first example
+			"/x/../workspaces/" + ws,   // the review's second example
+			"/workspaces/" + ws + "/",  // a trailing '/'
+			"/./workspaces/" + ws,      // "."
+			"/workspaces//" + ws,       // an empty segment
+			"/workspaces/" + ws + "/.", // a trailing "."
+			"/workspaces/%2E%2E/workspaces/" + ws,
+			"/workspaces/" + ws + "%2F",
+			"/",
+		} {
+			resp, b := get(t, c, srv.URL+prefix+p, hdr)
+			e := decodeEnvelope(t, resp, b)
+			if resp.StatusCode != 404 || e.Code != api.CodeNotFound || e.Message != "no such endpoint" || resp.Header.Get("Location") != "" {
+				t.Errorf("%s%s: %d %s (Location %q)", prefix, p, resp.StatusCode, b, resp.Header.Get("Location"))
+			}
+		}
+		for _, p := range []string{"/healthz", "/readyz"} {
+			if resp, b := get(t, c, srv.URL+p, nil); resp.StatusCode != 200 {
+				t.Errorf("%s: %d %s", p, resp.StatusCode, b)
+			}
+		}
+	}
+	t.Run("module", func(t *testing.T) {
+		srv := newModuleServer(t)
+		resp, b := moduleCall(t, srv, projectT, "POST", "/workspaces", `{"project_id":"`+projectT+`"}`)
+		var ws struct {
+			ID string `json:"workspace_id"`
+		}
+		if resp.StatusCode != 201 || json.Unmarshal(b, &ws) != nil {
+			t.Fatalf("workspace: %d %s", resp.StatusCode, b)
+		}
+		check(t, srv, modulePrefix, ws.ID, claimsT(prefixT+"Project", projectT))
+	})
+	t.Run("standalone", func(t *testing.T) {
+		srv := newServiceServer(t, "", core.Config{})
+		c := caller{t: t, srv: srv, prefix: "/api/v1", token: token}
+		var p struct {
+			ID string `json:"project_id"`
+		}
+		c.json("POST", "/projects", `{"name":"p"}`, 201, &p)
+		var ws struct {
+			ID string `json:"workspace_id"`
+		}
+		c.json("POST", "/workspaces", `{"project_id":"`+p.ID+`"}`, 201, &ws)
+		check(t, srv, "/api/v1", ws.ID, map[string]string{"Authorization": "Bearer " + token})
+	})
+}

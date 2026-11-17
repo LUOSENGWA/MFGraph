@@ -28,7 +28,7 @@ POST   /api/v1/snapshots/{snapshot_id}/restore
 ```
 
 - **必须连数据库。** 没有数据库（未设置 `MFGRAPH_DB_DSN` 或连不上）时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；没有"无数据库模式"。
-- **路径前缀。** 业务接口的默认前缀是 `/api/v1`；`MFGRAPH_API_PREFIX` 可以改到别处（例如 `/files/v1`，这时 `/files/v1/projects` 就是契约里的 `POST /api/v1/projects`），`/healthz` 和 `/readyz` 始终在根路径。其他路径一律返回 JSON 格式的 404。
+- **路径前缀。** 业务接口的默认前缀是 `/api/v1`；`MFGRAPH_API_PREFIX` 可以改到别处（例如 `/files/v1`，这时 `/files/v1/projects` 就是契约里的 `POST /api/v1/projects`），`/healthz` 和 `/readyz` 始终在根路径。其他路径一律返回 JSON 格式的 404；前缀下不规范的路径（`//`、`/./`、`/../`、末尾多出的 `/`）也返回 404，不会重定向。
 - **谁能做什么（独立部署）。** 任何已认证的调用者都可以创建项目；创建者是这个项目及其下所有工作区的唯一拥有者，其他人访问一律 `404 not_found`。角色以后再做；嵌入宿主平台时由宿主平台的访问控制判定。
 - **模块模式。** 作为宿主平台的模块进程运行时（`MFGRAPH_MODE=module`，见[模块模式](../module-mode.md)），服务监听 Unix domain socket，业务路径在 `/internal/v1/mfgraph` 下；由宿主的代理认证调用者，并通过身份头（操作者、操作者类型、项目，以及可选的"代表谁操作"）连同内部 token 传进来，不再使用 `Authorization: Bearer`。一个请求只能看到它所属项目的资源：其他项目的资源和不存在的 ID 一样返回 `404 not_found`，工作区只能建在请求所属的项目里，`/projects` 返回 404。模块不返回 403。
 - **模块模式的就绪检查。** `/readyz` 还检查宿主的 outbox 表能否访问（不能访问时返回 503），并报告事件投递的状态：`checks.outbox` 为 `ok`；队首的事件连续失败 5 次或持续失败 5 分钟时为 `stalled`。卡住时服务仍然就绪（200），因为重启或减少流量都解决不了问题；字段 `outbox` 给出 `pending` 和 `oldest_pending_at`，卡住时还有 `stalled_since` 和 `last_error`。见[模块模式](../module-mode.md)。

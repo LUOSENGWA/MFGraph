@@ -612,6 +612,24 @@ func TestModuleModePrefixAndIdentity(t *testing.T) {
 	if r.status != 404 || r.code() != "not_found" {
 		t.Fatalf("/api/v1 in module mode: %d %s", r.status, r.code())
 	}
+	// Paths below the prefix that are not in their clean form (the review's
+	// examples): 404, never a redirect to /api/v1/...
+	noRedirect := *s.http
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	for _, p := range []string{"//projects", "/x/../workspaces/" + ws, "/workspaces/" + ws + "/"} {
+		req, _ := http.NewRequest("GET", modBase+p, nil)
+		for k, v := range c.headers() {
+			req.Header.Set(k, v)
+		}
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 404 || resp.Header.Get("Location") != "" {
+			t.Fatalf("%s: %d, Location %q", p, resp.StatusCode, resp.Header.Get("Location"))
+		}
+	}
 	// The request ID of the host's proxy.
 	r = s.do(c, "GET", modBase+"/workspaces/"+ws, nil, map[string]string{modPrefix + "Request-Id": "host-request-1"})
 	if r.status != 200 || r.header.Get("X-Request-Id") != "host-request-1" {

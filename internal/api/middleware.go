@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -235,14 +236,28 @@ const apiBase = "/api/v1"
 // Prefix serves the business endpoints below prefix instead of /api/v1: a
 // request to <prefix>/<rest> is routed as /api/v1/<rest>, and any other
 // path except the public ones gives a JSON 404. The access log keeps the
-// path as requested. With prefix /api/v1 it changes nothing.
+// path as requested.
+//
+// A path that is not in its clean form (an empty, "." or ".." segment, a
+// trailing '/', also when percent-encoded) gives the same 404, in both
+// modes and with any prefix: the router would otherwise redirect it to its
+// clean form below /api/v1, a path that behind a proxy with another prefix
+// leads elsewhere. The public paths (/healthz, /readyz) are not affected.
 func Prefix(prefix string, public map[string]bool) func(http.Handler) http.Handler {
+	if prefix == "" {
+		prefix = apiBase
+	}
 	return func(next http.Handler) http.Handler {
-		if prefix == "" || prefix == apiBase {
-			return next
-		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if public[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if p := r.URL.Path; p != path.Clean(p) {
+				WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
+				return
+			}
+			if prefix == apiBase {
 				next.ServeHTTP(w, r)
 				return
 			}
