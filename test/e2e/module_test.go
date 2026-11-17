@@ -819,6 +819,10 @@ func TestModuleModeEvents(t *testing.T) {
 		if !slices.Contains(registered, row.kind) {
 			t.Errorf("event kind %s is not in docs/events.md", row.kind)
 		}
+		// The tenant is internal to the module: never in an envelope.
+		if strings.Contains(row.payload, modTenant) || strings.Contains(strings.ToLower(row.payload), "tenant") {
+			t.Errorf("%s: the envelope carries the tenant: %s", row.kind, row.payload)
+		}
 	}
 	var kinds []string
 	for k := range emitted {

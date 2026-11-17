@@ -238,3 +238,86 @@ func sortedList(s string) []string {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestEnvelopeWithoutTenant: the tenant is internal to the module (it
+// isolates the data and the storage paths); no envelope carries it, neither
+// as a value nor as a key, for any emitted kind. The tenant is the fixed
+// value the host platform assigned.
+func TestEnvelopeWithoutTenant(t *testing.T) {
+	const hostTenant = "01M7MT9K23WZC95EECHGDBSYH7"
+	store := memory.NewStore()
+	objs := memory.NewBlobStore()
+	trees, err := treestore.New(objs, func(ctx context.Context, ws string) (string, error) {
+		w, err := store.GetWorkspace(ctx, nil, ws)
+		return w.StoragePrefix, err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := memory.NewClock(time.Date(2026, 11, 17, 8, 0, 0, 0, time.UTC))
+	svc, err := core.New(core.Config{TenantID: hostTenant, HostOwnsProjects: true}, core.Deps{Store: store, Objects: objs,
+		Trees: trees, Authz: authz.ProjectScope{}, Clock: clock, IDs: memory.NewIDGen(clock),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := svc.CreateWorkspace(ctx, workerP, core.CreateWorkspaceRequest{ProjectID: projP}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ws.Workspace.StoragePrefix, hostTenant) {
+		t.Fatalf("the tenant is not in the storage prefix %q", ws.Workspace.StoragePrefix)
+	}
+	b, _, err := svc.PutObject(ctx, workerP, core.PutObjectRequest{WorkspaceID: ws.Workspace.ID, Body: strings.NewReader("t"), ContentLength: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1, err := svc.Commit(ctx, managerP, ws.Workspace.ID, core.CommitRequest{BranchID: ws.MainBranchID, ExpectedGeneration: 1,
+		Changes: []core.Change{put("t.txt", b.Hash.String())}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Commit(ctx, managerP, ws.Workspace.ID, core.CommitRequest{BranchID: ws.MainBranchID, ExpectedGeneration: 2,
+		Changes: []core.Change{del("t.txt")}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Restore(ctx, workerP, c1.SnapshotID, core.RestoreRequest{BranchID: ws.MainBranchID, ExpectedGeneration: 3}, ""); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := store.Events(ctx)
+	kinds := map[string]bool{}
+	var walk func(path string, v any)
+	walk = func(path string, v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			for k, x := range v {
+				if strings.Contains(strings.ToLower(k), "tenant") {
+					t.Errorf("key %s.%s", path, k)
+				}
+				walk(path+"."+k, x)
+			}
+		case []any:
+			for _, x := range v {
+				walk(path, x)
+			}
+		case string:
+			if strings.Contains(v, hostTenant) {
+				t.Errorf("%s holds the tenant: %q", path, v)
+			}
+		}
+	}
+	for _, ev := range rows {
+		kinds[ev.Type] = true
+		if strings.Contains(string(ev.Payload), hostTenant) {
+			t.Errorf("%s: the envelope holds the tenant: %s", ev.Type, ev.Payload)
+		}
+		var env any
+		if err := json.Unmarshal(ev.Payload, &env); err != nil {
+			t.Fatal(err)
+		}
+		walk(ev.Type, env)
+	}
+	if len(kinds) != len(ports.EmittedEventKinds) {
+		t.Fatalf("emitted %v, want every kind of %v", kinds, ports.EmittedEventKinds)
+	}
+}
