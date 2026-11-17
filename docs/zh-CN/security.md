@@ -55,7 +55,7 @@
 - 上传病毒扫描；
 - 按 `tenant_id` + 存储前缀做租户隔离；
 - 受监管场景支持 retention/legal hold/WORM；
-- 审计 append-only；日志不放 token/文件内容。
+- 审计 append-only；日志不放 token/文件内容；错误和日志里不出现 DSN 或密码（MySQL 驱动解析不了的 DSN 只报变量名，因为驱动的原文可能带出一段密码；转发器写进日志和 `/readyz` 的错误是数据库返回的原文）。
 - 身份引用属于个人信息：info 及以上级别的日志只用 `actor` 标识调用者，值为 HMAC-SHA256(密钥, 身份引用) 的前 16 位 hex，密钥由部署提供（`MFGRAPH_LOG_PSEUDONYM_KEY`，至少 16 字节）。同一操作者的日志仍能关联，但看不出是谁，没有密钥也无法算出已知名字的假名来比对。没有配置密钥时，服务每次启动随机生成一个（并打印警告）：重启前后的假名无法关联；更换密钥也是一样。原始身份引用（以及独立部署时与之相同的 principal UID）只出现在 debug 级别的日志里。模块请求"代表谁操作"的那个操作者（`on_behalf_of`）也一样；操作者类型、项目和 trace ID 原样记录。
 - **第一个核心切片的请求与响应：** 上传以外的请求体最多 `MFGRAPH_MAX_JSON_BODY_BYTES`（16 MiB），超出上限的部分不会被读取；JSON 请求体必须以 `application/json` 发送，并且是单个 JSON 值。上传受 `MFGRAPH_MAX_UPLOAD_BYTES` 限制；针对慢速上传的限制（最低速率、总时长、每个调用者的连接数）随 M1.0b 提供。下载使用 `application/octet-stream`，带 `Content-Disposition: attachment` 和 `X-Content-Type-Options: nosniff`（错误响应也带 nosniff），浏览器不会把存储的内容当作网页渲染。项目名和工作区显示名与文件名一样，不能含控制字符、双向控制字符和不可见字符。
 
