@@ -63,6 +63,26 @@ version. Two builds of the same commit give the same `sha256sums.txt`;
 the archives and `BUILDINFO.txt`. MFGraph's CI builds both architectures
 with the pinned version, checks `go version`, and uploads them unsigned.
 
+## Releases
+
+A tag `module-v<version>` (with the version of `VERSION`) makes the
+workflow `.github/workflows/release-module.yml` build the bundles with the
+pinned Go version, check that a second build from an empty build cache is
+identical, and publish them unsigned as the assets of the GitHub release of
+that tag. A tag that does not match `VERSION` fails the workflow. The
+assets have fixed addresses that need no login and do not expire:
+
+```text
+https://github.com/<owner>/<repo>/releases/download/module-v<version>/<file>
+```
+
+for example
+`https://github.com/LUOSENGWA/MFGraph/releases/download/module-v0.1.0/mfgraph-0.1.0-linux-amd64.tar.zst`,
+with the files `mfgraph-<version>-linux-amd64.tar.zst`,
+`mfgraph-<version>-linux-arm64.tar.zst`, `sha256sums.txt` and
+`BUILDINFO.txt`. The commit of a release is the one the tag points to, as
+`BUILDINFO.txt` records.
+
 `migrations/` holds the module's own migrations (never the kernel's) for
 audit. The host does not execute them: `migrations.command` runs the
 migrations embedded in the binary, which are the same files (a test checks

@@ -255,3 +255,46 @@ func TestPinnedToolchain(t *testing.T) {
 		t.Fatalf("BUILDINFO: %q", got)
 	}
 }
+
+// TestReleaseWorkflow: the release of a module version publishes the two
+// bundles, sha256sums.txt and BUILDINFO.txt as release assets for a tag
+// module-v<VERSION> only, with the pinned Go version and the
+// reproducibility check, and with the one permission it needs.
+func TestReleaseWorkflow(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-module.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := string(b)
+	for _, want := range []string{
+		"on:\n  push:\n    tags:\n      - 'module-v*'\n",
+		"permissions:\n  contents: write\n",
+		`version="${tag#module-v}"`,
+		"packaging/host-module/VERSION",
+		`if [ "$version" != "$want" ]; then`,
+		"go-version: ${{ steps.toolchain.outputs.version }}",
+		`test "$(go env GOVERSION)" = "go${{ steps.toolchain.outputs.version }}"`,
+		"- run: make bundle\n",
+		"run: make bundle-check\n",
+		`grep -qx "commit=$(git rev-parse HEAD)" dist/BUILDINFO.txt`,
+		`gh release create "$GITHUB_REF_NAME" --verify-tag`,
+		`"dist/mfgraph-$VERSION-linux-amd64.tar.zst" "dist/mfgraph-$VERSION-linux-arm64.tar.zst"`,
+		"dist/sha256sums.txt dist/BUILDINFO.txt\n",
+	} {
+		if !strings.Contains(w, want) {
+			t.Errorf("release-module.yml lacks %q", want)
+		}
+	}
+	if strings.Count(w, "permissions:") != 1 || strings.Contains(w, "pull_request") || strings.Contains(w, "branches:") {
+		t.Error("release-module.yml runs on more than tags or asks for more permissions")
+	}
+	ci, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every CI job that builds a bundle uses the pinned Go version.
+	if n := strings.Count(string(ci), "go-version: ${{ steps.toolchain.outputs.version }}"); n != 2 ||
+		strings.Count(string(ci), "make bundle") < 2 {
+		t.Errorf("ci.yml: %d jobs with the pinned Go version, want the bundle and e2e-mysql jobs", n)
+	}
+}

@@ -1,0 +1,80 @@
+name: release-module
+
+# Publishes the module bundles of packaging/host-module as the assets of a
+# GitHub release, so that they have a fixed address that needs no login and
+# does not expire (CI artifacts do both):
+#
+#   https://github.com/<owner>/<repo>/releases/download/module-v<version>/<file>
+#
+# with the files mfgraph-<version>-linux-amd64.tar.zst,
+# mfgraph-<version>-linux-arm64.tar.zst, sha256sums.txt and BUILDINFO.txt.
+# It runs when a tag module-v<version> is pushed; <version> must be the
+# content of packaging/host-module/VERSION. The bundles are built with the
+# Go version that go.mod pins, built a second time from an empty build
+# cache and compared, and published unsigned (the host platform signs).
+
+on:
+  push:
+    tags:
+      - 'module-v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-module-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build and publish the module bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: the tag names the version of packaging/host-module/VERSION
+        id: version
+        run: |
+          tag="$GITHUB_REF_NAME"
+          version="${tag#module-v}"
+          want="$(tr -d '[:space:]' < packaging/host-module/VERSION)"
+          echo "tag $tag; packaging/host-module/VERSION $want"
+          if [ "$version" != "$want" ]; then
+            echo "::error::the tag $tag does not name the version $want of packaging/host-module/VERSION"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: the pinned Go version
+        id: toolchain
+        run: echo "version=$(sed -n 's/^toolchain go//p' go.mod)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.toolchain.outputs.version }}
+      - name: check the Go version
+        run: |
+          echo "go.mod pins go${{ steps.toolchain.outputs.version }}; go is $(go env GOVERSION)"
+          test "$(go env GOVERSION)" = "go${{ steps.toolchain.outputs.version }}"
+      - run: make bundle
+      - name: build again from an empty Go build cache and compare
+        run: make bundle-check
+      - name: check BUILDINFO.txt
+        run: |
+          cat dist/BUILDINFO.txt
+          grep -qx "version=${{ steps.version.outputs.version }}" dist/BUILDINFO.txt
+          grep -qx "commit=$(git rev-parse HEAD)" dist/BUILDINFO.txt
+          grep -qx "go=go${{ steps.toolchain.outputs.version }}" dist/BUILDINFO.txt
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "Module bundles of MFGraph $VERSION (unsigned), built reproducibly from commit $(git rev-parse HEAD)"
+            echo "with $(go env GOVERSION); BUILDINFO.txt records the build and sha256sums.txt the checksums:"
+            echo
+            echo '```text'
+            cat dist/sha256sums.txt
+            echo '```'
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "MFGraph module $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+            "dist/mfgraph-$VERSION-linux-amd64.tar.zst" "dist/mfgraph-$VERSION-linux-arm64.tar.zst" \
+            dist/sha256sums.txt dist/BUILDINFO.txt
