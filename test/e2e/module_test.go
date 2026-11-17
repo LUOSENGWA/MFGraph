@@ -1,0 +1,910 @@
+//go:build e2e
+
+package e2e
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/go-sql-driver/mysql"
+)
+
+// Module mode: the server runs as a module process of a host platform, on a
+// Unix domain socket, behind identity headers, writing its events to the
+// host's outbox table. The tests use a generic header prefix; the host's own
+// settings are tested by the acceptance script of its packaging.
+const (
+	modPrefix  = "X-E2E-"
+	modToken   = "e2e-internal-token-0123456789"
+	modTenant  = "01JD3X5Q8Z9W2V4T6R8P0N2T00"
+	projP      = "01JD3X5Q8Z9W2V4T6R8P0N2P01"
+	projQ      = "01JD3X5Q8Z9W2V4T6R8P0N2P02"
+	modRoot    = "http://module"
+	modBase    = modRoot + "/internal/v1/mfgraph"
+	hostOutbox = `CREATE TABLE IF NOT EXISTS module_outbox (
+  id BIGINT AUTO_INCREMENT NOT NULL PRIMARY KEY,
+  event_id VARCHAR(64) NOT NULL,
+  module VARCHAR(64) NOT NULL,
+  event_kind VARCHAR(64) NOT NULL,
+  scope_kind VARCHAR(16) NOT NULL,
+  scope_id VARCHAR(191) NOT NULL,
+  actor_type VARCHAR(16) NULL,
+  actor_id VARCHAR(255) NULL,
+  payload_json JSON NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  attempts INT NOT NULL DEFAULT 0,
+  available_at DATETIME(6) NOT NULL,
+  published_at DATETIME(6) NULL,
+  last_error VARCHAR(1024) NULL,
+  created_at DATETIME(6) NOT NULL,
+  updated_at DATETIME(6) NOT NULL,
+  UNIQUE KEY uk_module_outbox_event (event_id),
+  KEY idx_module_outbox_pending (status, available_at),
+  KEY idx_module_outbox_scope (scope_kind, scope_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+)
+
+// moduleEnv is one module deployment: its schema, the host's ops schema
+// with the outbox table, a configuration file, a socket and the
+// environment the host would inject.
+type moduleEnv struct {
+	t       *testing.T
+	env     env
+	config  string
+	sock    string
+	db, ops *sql.DB
+	opsName string
+}
+
+func newModuleEnv(t *testing.T) *moduleEnv {
+	t.Helper()
+	e := newEnv(t) // a fresh schema (and the skip without a database)
+	cfg, err := mysql.ParseDSN(e["MFGRAPH_DB_DSN"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &moduleEnv{t: t, opsName: cfg.DBName + "_ops"}
+	admin := cfg.Clone()
+	admin.DBName = ""
+	adb, err := sql.Open("mysql", admin.FormatDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { adb.Exec("DROP DATABASE IF EXISTS " + m.opsName); adb.Close() })
+	if _, err := adb.Exec("CREATE DATABASE " + m.opsName); err != nil {
+		t.Fatal(err)
+	}
+	open := func(name string) *sql.DB {
+		c := cfg.Clone()
+		c.DBName = name
+		d, err := sql.Open("mysql", c.FormatDSN())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { d.Close() })
+		return d
+	}
+	m.db, m.ops = open(cfg.DBName), open(m.opsName)
+	if _, err := m.ops.Exec(hostOutbox); err != nil {
+		t.Fatalf("host outbox table: %v", err)
+	}
+	ops := cfg.Clone()
+	ops.DBName = m.opsName
+	// Socket paths are limited to about 100 bytes.
+	dir, err := os.MkdirTemp("", "mfgm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m.sock = filepath.Join(dir, "m.sock")
+	m.config = filepath.Join(t.TempDir(), "module.env")
+	writeFile(t, m.config, "# module settings of the e2e tests\n"+
+		"MFGRAPH_MODE=module\n"+
+		"MFGRAPH_TRUSTED_HEADER_PREFIX="+modPrefix+"\n"+
+		"MFGRAPH_INTERNAL_TOKEN_HEADER="+modPrefix+"Internal-Token\n"+
+		"MFGRAPH_ROUTE_PREFIX=/internal/v1/mfgraph\n"+
+		"MFGRAPH_OUTBOX_TABLE="+m.opsName+".module_outbox\n"+
+		"MFGRAPH_KERNEL_MIGRATIONS=false\n"+
+		"MFGRAPH_LOG_LEVEL=info\n")
+	m.env = env{
+		"MODULE_ID":                 "mfgraph",
+		"MODULE_SOCKET":             m.sock,
+		"MODULE_INTERNAL_TOKEN":     modToken,
+		"MFGRAPH_DSN":               e["MFGRAPH_DB_DSN"],
+		"MFGRAPH_OPS_DSN":           ops.FormatDSN(),
+		"MFGRAPH_DATA_DIR":          e["MFGRAPH_STORAGE_ROOT"],
+		"MFGRAPH_TENANT_ID":         modTenant,
+		"MFGRAPH_LOG_PSEUDONYM_KEY": "e2e-pseudonym-key-0123456789",
+	}
+	return m
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// command returns the server command with the module environment, changed
+// by override (an empty value removes a variable).
+func (m *moduleEnv) command(override env, args ...string) *exec.Cmd {
+	return m.commandContext(context.Background(), override, args...)
+}
+
+func (m *moduleEnv) commandContext(ctx context.Context, override env, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, serverBin, args...)
+	vars := env{}
+	for k, v := range m.env {
+		vars[k] = v
+	}
+	for k, v := range override {
+		if v == "" {
+			delete(vars, k)
+		} else {
+			vars[k] = v
+		}
+	}
+	cmd.Env = os.Environ()
+	for k, v := range vars {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	return cmd
+}
+
+// migrate runs "mfgraph-server --config FILE migrate".
+func (m *moduleEnv) migrate() string {
+	m.t.Helper()
+	out, err := m.command(nil, "--config", m.config, "migrate").CombinedOutput()
+	if err != nil {
+		m.t.Fatalf("migrate: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+type moduleServer struct {
+	t      *testing.T
+	m      *moduleEnv
+	cmd    *exec.Cmd
+	logs   *syncBuffer
+	done   chan error
+	http   *http.Client
+	exited bool
+	err    error
+}
+
+// start migrates (the host runs the migration command first) and starts
+// "mfgraph-server serve --config FILE --socket PATH"; it returns once
+// /readyz answers 200.
+func (m *moduleEnv) start(override env) *moduleServer {
+	m.t.Helper()
+	s := &moduleServer{t: m.t, m: m, logs: &syncBuffer{}, done: make(chan error, 1)}
+	s.cmd = m.command(override, "serve", "--config", m.config, "--socket", m.sock)
+	s.cmd.Stdout, s.cmd.Stderr = s.logs, s.logs
+	s.http = &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", m.sock)
+	}}}
+	if err := s.cmd.Start(); err != nil {
+		m.t.Fatal(err)
+	}
+	go func() { s.done <- s.cmd.Wait() }()
+	m.t.Cleanup(func() {
+		s.stop()
+		if m.t.Failed() {
+			m.t.Logf("module server log:\n%s", s.logs.String())
+		}
+	})
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		select {
+		case err := <-s.done:
+			m.t.Fatalf("module server exited during startup: %v\n%s", err, s.logs.String())
+		default:
+		}
+		if r, err := s.http.Get(modRoot + "/readyz"); err == nil {
+			r.Body.Close()
+			if r.StatusCode == http.StatusOK {
+				return s
+			}
+		}
+	}
+	m.t.Fatalf("module server did not become ready\n%s", s.logs.String())
+	return nil
+}
+
+// stop sends SIGTERM and returns how long the process took to exit.
+func (s *moduleServer) stop() time.Duration {
+	if s.exited {
+		return 0
+	}
+	s.exited = true
+	start := time.Now()
+	_ = s.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case s.err = <-s.done:
+	case <-time.After(15 * time.Second):
+		_ = s.cmd.Process.Kill()
+		s.err = <-s.done
+		s.err = errors.Join(errors.New("killed after 15 s"), s.err)
+	}
+	return time.Since(start)
+}
+
+// claims are the identity headers of a request.
+type claims struct {
+	token, actor, actorType, project, obo, oboType string
+}
+
+func defaultClaims(project string) claims {
+	return claims{token: modToken, actor: "manager", actorType: "human", project: project}
+}
+
+func (c claims) headers() map[string]string {
+	h := map[string]string{}
+	for k, v := range map[string]string{"Internal-Token": c.token, "Actor": c.actor, "Actor-Type": c.actorType, "Project": c.project,
+		"On-Behalf-Of": c.obo, "On-Behalf-Of-Type": c.oboType} {
+		if v != "" {
+			h[modPrefix+k] = v
+		}
+	}
+	return h
+}
+
+// do sends a request with the identity headers of c.
+func (s *moduleServer) do(c claims, method, url string, body io.Reader, hdr map[string]string) response {
+	s.t.Helper()
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	for k, v := range c.headers() {
+		req.Header.Set(k, v)
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		s.t.Fatalf("%s %s: %v", method, url, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return response{status: resp.StatusCode, header: resp.Header, body: b}
+}
+
+func (s *moduleServer) json(c claims, method, path string, in any) response {
+	s.t.Helper()
+	var body io.Reader
+	hdr := map[string]string{}
+	if in != nil {
+		b, _ := json.Marshal(in)
+		body, hdr["Content-Type"] = bytes.NewReader(b), "application/json"
+	}
+	return s.do(c, method, modBase+path, body, hdr)
+}
+
+func (s *moduleServer) expect(r response, what string, want int, out any) {
+	s.t.Helper()
+	if r.status != want {
+		s.t.Fatalf("%s: got %d %s, want %d; body: %s", what, r.status, r.code(), want, truncate(r.body))
+	}
+	if out != nil {
+		if err := json.Unmarshal(r.body, out); err != nil {
+			s.t.Fatalf("%s: %v", what, err)
+		}
+	}
+}
+
+// workspace creates a workspace in the project of c: its ID and main branch.
+func (s *moduleServer) workspace(c claims) (string, string) {
+	s.t.Helper()
+	var ws struct {
+		ID   string `json:"workspace_id"`
+		Main string `json:"main_branch_id"`
+	}
+	s.expect(s.json(c, "POST", "/workspaces", map[string]string{"project_id": c.project, "display_name": "e2e"}), "POST workspaces", 201, &ws)
+	return ws.ID, ws.Main
+}
+
+// upload stores content through the upload path /objects/{workspace_id}.
+func (s *moduleServer) upload(c claims, ws, content string) string {
+	s.t.Helper()
+	var o struct {
+		Hash string `json:"hash"`
+	}
+	r := s.do(c, "PUT", modBase+"/objects/"+ws, strings.NewReader(content), map[string]string{"Content-Type": "application/octet-stream"})
+	if r.status != 200 && r.status != 201 {
+		s.t.Fatalf("PUT /objects/%s: %d %s", ws, r.status, truncate(r.body))
+	}
+	_ = json.Unmarshal(r.body, &o)
+	return o.Hash
+}
+
+func (s *moduleServer) commit(c claims, ws, branch string, generation int, key string, changes ...map[string]any) (response, string) {
+	s.t.Helper()
+	hdr := map[string]string{"Content-Type": "application/json"}
+	if key != "" {
+		hdr["Idempotency-Key"] = key
+	}
+	b, _ := json.Marshal(map[string]any{"branch_id": branch, "expected_generation": generation, "changes": changes})
+	r := s.do(c, "POST", modBase+"/workspaces/"+ws+"/commits", bytes.NewReader(b), hdr)
+	var res struct {
+		ID string `json:"snapshot_id"`
+	}
+	_ = json.Unmarshal(r.body, &res)
+	return r, res.ID
+}
+
+func putChange(path, hash string) map[string]any { return map[string]any{"path": path, "hash": hash} }
+
+// hostRow is a row of the host's outbox table.
+type hostRow struct {
+	eventID, module, kind, scopeKind, scopeID string
+	actorType, actorID                        sql.NullString
+	payload, status                           string
+	attempts                                  int
+	createdAt, availableAt                    string
+	env                                       map[string]any
+}
+
+// hostRows returns the rows of one workspace (all rows for ws ""), in the
+// order of the table's ID.
+func (m *moduleEnv) hostRows(ws string) []hostRow {
+	m.t.Helper()
+	rows, err := m.ops.Query(`SELECT event_id, module, event_kind, scope_kind, scope_id, actor_type, actor_id, payload_json, status,
+		attempts, CAST(created_at AS CHAR), CAST(available_at AS CHAR) FROM module_outbox ORDER BY id`)
+	if err != nil {
+		m.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []hostRow
+	for rows.Next() {
+		var r hostRow
+		if err := rows.Scan(&r.eventID, &r.module, &r.kind, &r.scopeKind, &r.scopeID, &r.actorType, &r.actorID, &r.payload, &r.status,
+			&r.attempts, &r.createdAt, &r.availableAt); err != nil {
+			m.t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(r.payload), &r.env); err != nil {
+			m.t.Fatalf("payload_json %s: %v", r.payload, err)
+		}
+		if data, _ := r.env["data"].(map[string]any); ws == "" || data["workspace_id"] == ws {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// waitHostRows waits until the host table has n rows of the workspace.
+func (m *moduleEnv) waitHostRows(ws string, n int, within time.Duration) []hostRow {
+	m.t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		rows := m.hostRows(ws)
+		if len(rows) >= n || time.Now().After(deadline) {
+			if len(rows) != n {
+				m.t.Fatalf("host table: %d rows of workspace %s after %v, want %d: %v", len(rows), ws, within, n, kindsOf(rows))
+			}
+			return rows
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func kindsOf(rows []hostRow) []string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, strings.TrimPrefix(r.kind, "mfgraph."))
+	}
+	return out
+}
+
+// registeredKinds reads the event kinds of docs/events.md.
+func registeredKinds(t *testing.T) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "events.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, m := range regexp.MustCompile("(?m)^\\| `(mfgraph\\.[a-z_]+)` \\|").FindAllStringSubmatch(string(b), -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// tcpListeners counts the listening TCP sockets of a process: lsof, or
+// /proc on Linux; -1 when neither can tell.
+func tcpListeners(pid int) int {
+	if path, err := exec.LookPath("lsof"); err == nil {
+		out, _ := exec.Command(path, "-nP", "-a", "-p", strconv.Itoa(pid), "-iTCP", "-sTCP:LISTEN").Output()
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if strings.TrimSpace(string(out)) == "" {
+			return 0
+		}
+		return len(lines) - 1 // header
+	}
+	if runtime.GOOS != "linux" {
+		return -1
+	}
+	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+	if err != nil {
+		return -1
+	}
+	inodes := map[string]bool{}
+	for _, fd := range fds {
+		if l, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, fd.Name())); err == nil && strings.HasPrefix(l, "socket:[") {
+			inodes[strings.TrimSuffix(strings.TrimPrefix(l, "socket:["), "]")] = true
+		}
+	}
+	n := 0
+	for _, table := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		b, err := os.ReadFile(table)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n")[1:] {
+			if f := strings.Fields(line); len(f) > 9 && f[3] == "0A" && inodes[f[9]] {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// ---- appendix B rows -------------------------------------------------------
+
+// Row 6: migrate (with --config before the command) runs twice; the module's
+// versions are recorded; the kernel tables are not created.
+func TestModuleModeMigrate(t *testing.T) {
+	m := newModuleEnv(t)
+	first, second := m.migrate(), m.migrate()
+	if !strings.Contains(first, `"component":"mfgraph"`) || strings.Contains(first+second, `"component":"kernel"`) ||
+		!strings.Contains(second, `"applied":null,"skipped":7`) {
+		t.Fatalf("migrate logs:\n%s\n%s", first, second)
+	}
+	var versions []string
+	rows, err := m.db.Query("SELECT component, version FROM schema_migrations ORDER BY version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var c, v string
+		_ = rows.Scan(&c, &v)
+		versions = append(versions, c+"/"+v)
+	}
+	rows.Close()
+	want := []string{"mfgraph/0001_workspaces", "mfgraph/0002_workstreams_branches", "mfgraph/0003_snapshots", "mfgraph/0004_blobs",
+		"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types"}
+	if strings.Join(versions, ",") != strings.Join(want, ",") {
+		t.Fatalf("recorded versions %v", versions)
+	}
+	var kernel int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()
+		AND table_name IN ('projects', 'principals')`).Scan(&kernel); err != nil || kernel != 0 {
+		t.Fatalf("kernel tables: %d %v", kernel, err)
+	}
+	// The order of the options does not matter.
+	if out, err := m.command(nil, "migrate", "--config", m.config).CombinedOutput(); err != nil || strings.Contains(string(out), "kernel") {
+		t.Fatalf("migrate --config after the command: %v\n%s", err, out)
+	}
+}
+
+// Row 1: readyz, the socket (mode 0600, a stale one replaced), no TCP port.
+func TestModuleModeStartup(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	stale, err := net.Listen("unix", m.sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	stale.Close()
+	s := m.start(nil)
+	r, err := s.http.Get(modRoot + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ready struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&ready)
+	r.Body.Close()
+	if ready.Status != "ready" || ready.Checks["db"] != "ok" || ready.Checks["storage"] != "ok" || ready.Checks["outbox"] != "ok" {
+		t.Fatalf("readyz: %+v", ready)
+	}
+	fi, err := os.Stat(m.sock)
+	if err != nil || fi.Mode().Perm() != 0o600 || fi.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("socket: %v %v", fi.Mode(), err)
+	}
+	if !strings.Contains(s.logs.String(), `"msg":"listening","addr":"`+m.sock+`"`) {
+		t.Fatalf("listening line:\n%s", s.logs.String())
+	}
+	switch n := tcpListeners(s.cmd.Process.Pid); n {
+	case 0:
+	case -1:
+		t.Log("TCP listeners not measured (no lsof and no /proc)")
+	default:
+		t.Fatalf("the module process listens on %d TCP sockets", n)
+	}
+	// The host's outbox table gone: not ready.
+	if _, err := m.ops.Exec("RENAME TABLE module_outbox TO module_outbox_away"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.http.Get(modRoot + "/readyz")
+	b, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	if r.StatusCode != 503 || !strings.Contains(string(b), `"check":"outbox"`) {
+		t.Fatalf("readyz without the host table: %d %s", r.StatusCode, b)
+	}
+	if _, err := m.ops.Exec("RENAME TABLE module_outbox_away TO module_outbox"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Rows 2 and 3: the module prefix, /api/v1 404, the upload path, and the
+// identity headers: 401 without them, the actor recorded with them.
+func TestModuleModePrefixAndIdentity(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	s := m.start(nil)
+	actor := "worker-" + strings.Repeat("w", 253-len("worker-")) // the longest canonical reference
+	c := claims{token: modToken, actor: actor, actorType: "worker", project: projP, obo: "manager", oboType: "human"}
+	ws, main := s.workspace(c)
+	h := s.upload(c, ws, "hello")
+	r, snap := s.commit(c, ws, main, 1, "", putChange("f.txt", h))
+	s.expect(r, "commit", 201, nil)
+	var raw map[string]any
+	s.expect(s.json(c, "GET", "/snapshots/"+snap, nil), "GET snapshot", 200, &raw)
+	if raw["author_ref"] != actor || raw["author_type"] != "worker" || raw["on_behalf_of_ref"] != "manager" ||
+		raw["on_behalf_of_type"] != "human" || raw["author_principal_uid"] != nil {
+		t.Fatalf("snapshot actors: %v", raw)
+	}
+	r = s.do(c, "GET", modRoot+"/api/v1/snapshots/"+snap, nil, nil)
+	if r.status != 404 || r.code() != "not_found" {
+		t.Fatalf("/api/v1 in module mode: %d %s", r.status, r.code())
+	}
+	// The request ID of the host's proxy.
+	r = s.do(c, "GET", modBase+"/workspaces/"+ws, nil, map[string]string{modPrefix + "Request-Id": "host-request-1"})
+	if r.status != 200 || r.header.Get("X-Request-Id") != "host-request-1" {
+		t.Fatalf("request ID: %d %q", r.status, r.header.Get("X-Request-Id"))
+	}
+	ok := defaultClaims(projP)
+	for name, cl := range map[string]claims{
+		"no token":         {actor: "manager", actorType: "human", project: projP},
+		"wrong token":      {token: modToken + "x", actor: "manager", actorType: "human", project: projP},
+		"no actor":         {token: modToken, actorType: "human", project: projP},
+		"no actor type":    {token: modToken, actor: "manager", project: projP},
+		"no project":       {token: modToken, actor: "manager", actorType: "human"},
+		"actor not UTF-8":  {token: modToken, actor: "man\xffager", actorType: "human", project: projP},
+		"actor 256 bytes":  {token: modToken, actor: strings.Repeat("a", 256), actorType: "human", project: projP},
+		"bad actor type":   {token: modToken, actor: "manager", actorType: "Human", project: projP},
+		"project not ULID": {token: modToken, actor: "manager", actorType: "human", project: "project-1"},
+	} {
+		r := s.do(cl, "GET", modBase+"/workspaces/"+ws, nil, nil)
+		if r.status != 401 || r.code() != "unauthenticated" || r.header.Get("WWW-Authenticate") != "" {
+			t.Errorf("%s: %d %s", name, r.status, truncate(r.body))
+		}
+	}
+	// A bearer token is no substitute for the identity headers.
+	r = s.do(claims{}, "GET", modBase+"/workspaces/"+ws, nil, map[string]string{"Authorization": "Bearer " + modToken})
+	if r.status != 401 {
+		t.Fatalf("bearer token in module mode: %d", r.status)
+	}
+	if r := s.do(ok, "GET", modBase+"/workspaces/"+ws, nil, nil); r.status != 200 {
+		t.Fatalf("valid headers: %d", r.status)
+	}
+	if strings.Contains(s.logs.String(), modToken) {
+		t.Fatal("the log contains the internal token")
+	}
+}
+
+// Row 4: resources of another project are 404, exactly like unknown IDs;
+// /projects does not exist.
+func TestModuleModeACL(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	s := m.start(nil)
+	cp, cq := defaultClaims(projP), defaultClaims(projQ)
+	ws, main := s.workspace(cp)
+	h := s.upload(cp, ws, "hello")
+	r, snap := s.commit(cp, ws, main, 1, "", putChange("f.txt", h))
+	s.expect(r, "commit", 201, nil)
+	const unknown = "01JD3X5Q8Z9W2V4T6R8P0N2MZZ"
+	type req struct{ method, path, body string }
+	reqs := func(ws, snap string) []req {
+		return []req{
+			{"GET", "/workspaces/" + ws, ""}, {"GET", "/workspaces/" + ws + "/branches", ""},
+			{"GET", "/workspaces/" + ws + "/timeline", ""}, {"PUT", "/workspaces/" + ws + "/objects", "x"},
+			{"PUT", "/objects/" + ws, "x"},
+			{"POST", "/workspaces/" + ws + "/commits", `{"branch_id":"` + main + `","expected_generation":2,"changes":[{"path":"f.txt","delete":true}]}`},
+			{"GET", "/snapshots/" + snap, ""}, {"GET", "/snapshots/" + snap + "/tree", ""},
+			{"GET", "/snapshots/" + snap + "/file?path=f.txt", ""}, {"GET", "/snapshots/" + snap + "/diff", ""},
+			{"POST", "/snapshots/" + snap + "/restore", `{"branch_id":"` + main + `","expected_generation":2}`},
+		}
+	}
+	send := func(c claims, q req) response {
+		hdr := map[string]string{"Content-Type": "application/json"}
+		if q.method == "PUT" {
+			hdr["Content-Type"] = "application/octet-stream"
+		}
+		var body io.Reader
+		if q.body != "" {
+			body = strings.NewReader(q.body)
+		}
+		return s.do(c, q.method, modBase+q.path, body, hdr)
+	}
+	strip := func(b []byte) string {
+		var e map[string]any
+		_ = json.Unmarshal(b, &e)
+		delete(e, "request_id")
+		out, _ := json.Marshal(e)
+		return string(out)
+	}
+	real, missing := reqs(ws, snap), reqs(unknown, unknown)
+	for i := range real {
+		a, b := send(cq, real[i]), send(cq, missing[i])
+		if a.status != 404 || a.code() != "not_found" || b.status != 404 || strip(a.body) != strip(b.body) {
+			t.Errorf("%s %s from another project: %d %s; unknown ID: %d %s", real[i].method, real[i].path, a.status, a.body,
+				b.status, b.body)
+		}
+	}
+	if r := s.json(cq, "POST", "/workspaces", map[string]string{"project_id": projP}); r.status != 404 {
+		t.Fatalf("workspace in another project: %d", r.status)
+	}
+	for _, q := range []req{{"GET", "/projects/" + projP, ""}, {"POST", "/projects", `{"name":"p"}`}, {"GET", "/projects", ""}} {
+		if r := send(cp, q); r.status != 404 || r.code() != "not_found" {
+			t.Errorf("%s %s: %d %s", q.method, q.path, r.status, truncate(r.body))
+		}
+	}
+}
+
+// Row 7 and the checks of the host table: kinds, columns, envelopes,
+// reasons, order, a 255-byte actor, rollback, replay, redelivery, a table
+// that is gone for a while; the drift check against docs/events.md.
+func TestModuleModeEvents(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	s := m.start(nil)
+	actor := "@" + strings.Repeat("u", 255-len("@:example.com")) + ":example.com" // 255 bytes
+	c := claims{token: modToken, actor: actor, actorType: "worker", project: projP}
+	ws, main := s.workspace(c)
+	h1 := s.upload(c, ws, "one")
+	r, s1 := s.commit(c, ws, main, 1, "k-1", putChange("a.txt", h1))
+	s.expect(r, "commit 1", 201, nil)
+	// Rolled back: a stale generation and content that was never uploaded.
+	if r, _ := s.commit(c, ws, main, 1, "", putChange("b.txt", h1)); r.status != 409 {
+		t.Fatalf("stale commit: %d", r.status)
+	}
+	if r, _ := s.commit(c, ws, main, 2, "", putChange("b.txt", sha("never uploaded"))); r.status != 410 {
+		t.Fatalf("commit of content not uploaded: %d", r.status)
+	}
+	h2 := s.upload(c, ws, "two")
+	r, s2 := s.commit(c, ws, main, 2, "", putChange("b.txt", h2))
+	s.expect(r, "commit 2", 201, nil)
+	var restored struct {
+		ID string `json:"snapshot_id"`
+	}
+	s.expect(s.json(c, "POST", "/snapshots/"+s1+"/restore", map[string]any{"branch_id": main, "expected_generation": 3}), "restore", 201, &restored)
+	rows := m.waitHostRows(ws, 8, 10*time.Second)
+	want := []string{"workspace_created", "branch_created", "commit_created", "branch_updated", "commit_created", "branch_updated",
+		"snapshot_restored", "branch_updated"}
+	if strings.Join(kindsOf(rows), ",") != strings.Join(want, ",") {
+		t.Fatalf("host rows in order: %v", kindsOf(rows))
+	}
+	keys := []string{ws, main, s1, main, s2, main, restored.ID, main}
+	versions := []int{1, 1, 1, 2, 1, 3, 1, 4}
+	reasons := map[int]string{3: "commit", 5: "commit", 7: "restore"}
+	for i, row := range rows {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("mfgraph\n%s\n%s\n%s\n%d", row.kind, projP, keys[i], versions[i])))
+		actorObj, _ := row.env["actor"].(map[string]any)
+		data, _ := row.env["data"].(map[string]any)
+		occurred, _ := row.env["occurred_at"].(string)
+		at, err := time.Parse(time.RFC3339Nano, occurred)
+		created, cerr := time.ParseInLocation("2006-01-02 15:04:05.000000", row.createdAt, time.UTC)
+		if row.eventID != hex.EncodeToString(sum[:]) || row.env["event_id"] != row.eventID || row.env["v"] != float64(1) ||
+			row.module != "mfgraph" || row.scopeKind != "project" || row.scopeID != projP || row.env["project_id"] != projP ||
+			row.actorType.String != "worker" || row.actorID.String != actor || actorObj["id"] != actor || actorObj["type"] != "worker" ||
+			row.status != "pending" || row.attempts != 0 || err != nil || cerr != nil || !created.Equal(at) {
+			t.Errorf("row %d (%s): %+v", i, row.kind, row)
+		}
+		if reason, ok := reasons[i]; ok && data["reason"] != reason {
+			t.Errorf("row %d: reason %v, want %s", i, data["reason"], reason)
+		}
+	}
+	// Drift check: every kind the host table holds is registered in
+	// docs/events.md, and this version emits exactly the five kinds.
+	registered := registeredKinds(t)
+	emitted := map[string]bool{}
+	for _, row := range m.hostRows("") {
+		emitted[row.kind] = true
+		if !slices.Contains(registered, row.kind) {
+			t.Errorf("event kind %s is not in docs/events.md", row.kind)
+		}
+	}
+	var kinds []string
+	for k := range emitted {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	if strings.Join(kinds, ",") != "mfgraph.branch_created,mfgraph.branch_updated,mfgraph.commit_created,mfgraph.snapshot_restored,"+
+		"mfgraph.workspace_created" || len(registered) != 6 || !slices.Contains(registered, "mfgraph.snapshot_created") {
+		t.Fatalf("emitted %v, registered %v", kinds, registered)
+	}
+
+	// A replayed commit emits nothing; redelivered events are absorbed.
+	if r, id := s.commit(c, ws, main, 1, "k-1", putChange("a.txt", h1)); r.status != 201 || id != s1 {
+		t.Fatalf("replay: %d %s", r.status, id)
+	}
+	if _, err := m.db.Exec("UPDATE outbox_events SET status = 'pending', published_at_us = NULL"); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		var pending int
+		_ = m.db.QueryRow("SELECT COUNT(*) FROM outbox_events WHERE status = 'pending'").Scan(&pending)
+		if pending == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d events not redelivered", pending)
+		}
+	}
+	if n := len(m.hostRows(ws)); n != 8 {
+		t.Fatalf("after replay and redelivery: %d host rows", n)
+	}
+
+	// The host table is gone for a while: the events wait in order and
+	// arrive once it is back.
+	if _, err := m.ops.Exec("RENAME TABLE module_outbox TO module_outbox_away"); err != nil {
+		t.Fatal(err)
+	}
+	h3 := s.upload(c, ws, "three")
+	r, s3 := s.commit(c, ws, main, 4, "", putChange("c.txt", h3))
+	s.expect(r, "commit 3", 201, nil)
+	time.Sleep(1500 * time.Millisecond)
+	var retries int
+	if err := m.db.QueryRow(`SELECT retry_count FROM outbox_events WHERE status = 'pending' AND aggregate_id = ?`, s3).Scan(&retries); err != nil ||
+		retries < 1 {
+		t.Fatalf("retries of the undeliverable event: %d %v", retries, err)
+	}
+	if _, err := m.ops.Exec("RENAME TABLE module_outbox_away TO module_outbox"); err != nil {
+		t.Fatal(err)
+	}
+	rows = m.waitHostRows(ws, 10, 20*time.Second)
+	if got := strings.Join(kindsOf(rows[8:]), ","); got != "commit_created,branch_updated" {
+		t.Fatalf("late rows: %s", got)
+	}
+	if d, _ := rows[8].env["data"].(map[string]any); d["snapshot_id"] != s3 {
+		t.Fatalf("late commit row: %v", rows[8].env)
+	}
+}
+
+// Row 8: SIGTERM ends the process within 8 s and removes the socket; the
+// data is there after a restart, and events that could not be delivered
+// before the stop are delivered after it.
+func TestModuleModeSIGTERM(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	s := m.start(nil)
+	c := defaultClaims(projP)
+	ws, main := s.workspace(c)
+	h := s.upload(c, ws, "kept")
+	r, snap := s.commit(c, ws, main, 1, "", putChange("k.txt", h))
+	s.expect(r, "commit", 201, nil)
+	m.waitHostRows(ws, 4, 10*time.Second)
+	// Undeliverable at the stop.
+	if _, err := m.ops.Exec("RENAME TABLE module_outbox TO module_outbox_away"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.commit(c, ws, main, 2, "", map[string]any{"path": "k.txt", "delete": true})
+	s.expect(r, "commit 2", 201, nil)
+	took := s.stop()
+	if s.err != nil || took > 8*time.Second {
+		t.Fatalf("SIGTERM: exit %v after %v", s.err, took)
+	}
+	if _, err := os.Lstat(m.sock); !os.IsNotExist(err) {
+		t.Fatalf("socket after the stop: %v", err)
+	}
+	var pending int
+	if err := m.db.QueryRow("SELECT COUNT(*) FROM outbox_events WHERE status = 'pending'").Scan(&pending); err != nil || pending != 2 {
+		t.Fatalf("pending after the stop: %d %v", pending, err)
+	}
+	if _, err := m.ops.Exec("RENAME TABLE module_outbox_away TO module_outbox"); err != nil {
+		t.Fatal(err)
+	}
+	s2 := m.start(nil)
+	var tree struct {
+		Items []struct {
+			Path string `json:"path"`
+		} `json:"items"`
+	}
+	s2.expect(s2.json(c, "GET", "/snapshots/"+snap+"/tree", nil), "tree after the restart", 200, &tree)
+	if len(tree.Items) != 1 || tree.Items[0].Path != "k.txt" {
+		t.Fatalf("tree after the restart: %+v", tree)
+	}
+	rows := m.waitHostRows(ws, 6, 10*time.Second)
+	if got := strings.Join(kindsOf(rows[4:]), ","); got != "commit_created,branch_updated" {
+		t.Fatalf("events delivered after the restart: %s", got)
+	}
+	t.Logf("measured: exit after %v; %d events delivered after the restart", took.Round(time.Millisecond), 2)
+}
+
+// Row 9 (configuration): settings that stop the start, and a short token
+// that is only a warning.
+func TestModuleModeConfig(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	const leak = "u:leakcheck-password@tcp(127.0.0.1:1)/x"
+	type tc struct {
+		override env
+		args     []string
+		says     string
+	}
+	serve := []string{"serve", "--config", m.config, "--socket", m.sock}
+	noSocket := []string{"serve", "--config", m.config}
+	exp := filepath.Join(t.TempDir(), "expansion.env")
+	writeFile(t, exp, "MFGRAPH_MODE=module\nMFGRAPH_DSN=${DSN}\n")
+	cases := map[string]tc{
+		"TCP address":        {env{"MODULE_SOCKET": "", "MFGRAPH_HTTP_ADDR": "127.0.0.1:0"}, noSocket, "Unix domain socket"},
+		"no socket":          {env{"MODULE_SOCKET": ""}, noSocket, "socket"},
+		"no token":           {env{"MODULE_INTERNAL_TOKEN": ""}, serve, "MODULE_INTERNAL_TOKEN"},
+		"no DSN":             {env{"MFGRAPH_DSN": ""}, serve, "MFGRAPH_DSN"},
+		"no data directory":  {env{"MFGRAPH_DATA_DIR": ""}, serve, "MFGRAPH_DATA_DIR"},
+		"no tenant":          {env{"MFGRAPH_TENANT_ID": ""}, serve, "MFGRAPH_TENANT_ID"},
+		"all-zero tenant":    {env{"MFGRAPH_TENANT_ID": "00000000000000000000000000"}, serve, "all-zero"},
+		"wrong MODULE_ID":    {env{"MODULE_ID": "files"}, serve, "MODULE_ID"},
+		"aliases disagree":   {env{"MFGRAPH_DB_DSN": leak}, serve, "MFGRAPH_DB_DSN and MFGRAPH_DSN"},
+		"kernel migrations":  {env{"MFGRAPH_KERNEL_MIGRATIONS": "true"}, serve, "MFGRAPH_KERNEL_MIGRATIONS"},
+		"expansion in file":  {nil, []string{"serve", "--config", exp, "--socket", m.sock}, "line 2"},
+		"socket of the host": {env{"MFGRAPH_HTTP_ADDR": "unix:/elsewhere.sock"}, serve, "MODULE_SOCKET and MFGRAPH_HTTP_ADDR"},
+	}
+	for name, c := range cases {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		out, err := m.commandContext(ctx, c.override, c.args...).CombinedOutput()
+		cancel()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 2 {
+			t.Errorf("%s: %v, want exit code 2\n%s", name, err, out)
+			continue
+		}
+		if !strings.Contains(string(out), c.says) || strings.Contains(string(out), "listening") {
+			t.Errorf("%s: the message does not name %q:\n%s", name, c.says, out)
+		}
+		if strings.Contains(string(out), modToken) || strings.Contains(string(out), "leakcheck-password") {
+			t.Errorf("%s: the output leaks a secret:\n%s", name, out)
+		}
+	}
+	// A short token: a warning, and the server starts.
+	s := m.start(env{"MODULE_INTERNAL_TOKEN": "dev-token"})
+	if !strings.Contains(s.logs.String(), "MODULE_INTERNAL_TOKEN has fewer than 16 characters") || strings.Contains(s.logs.String(), "dev-token") {
+		t.Fatalf("short token warning:\n%s", s.logs.String())
+	}
+	short := defaultClaims(projP)
+	short.token = "dev-token"
+	if r := s.do(short, "GET", modBase+"/workspaces/01JD3X5Q8Z9W2V4T6R8P0N2MZZ", nil, nil); r.status != 404 {
+		t.Fatalf("a request with the short token: %d", r.status)
+	}
+}
