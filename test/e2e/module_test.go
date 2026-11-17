@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -197,10 +198,24 @@ type moduleServer struct {
 	err    error
 }
 
-// start migrates (the host runs the migration command first) and starts
-// "mfgraph-server serve --config FILE --socket PATH"; it returns once
+// start starts "mfgraph-server serve --config FILE --socket PATH" (the
+// tests run the migration command first, as the host does); it returns once
 // /readyz answers 200.
 func (m *moduleEnv) start(override env) *moduleServer {
+	m.t.Helper()
+	return m.startUntil(override, http.StatusOK)
+}
+
+// startAnswering is start without the wait for readiness: it returns once
+// /readyz answers at all.
+func (m *moduleEnv) startAnswering(override env) *moduleServer {
+	m.t.Helper()
+	return m.startUntil(override, 0)
+}
+
+// startUntil starts the server and waits until /readyz answers with status
+// want (any status for 0).
+func (m *moduleEnv) startUntil(override env, want int) *moduleServer {
 	m.t.Helper()
 	s := &moduleServer{t: m.t, m: m, logs: &syncBuffer{}, done: make(chan error, 1)}
 	s.cmd = m.command(override, "serve", "--config", m.config, "--socket", m.sock)
@@ -226,7 +241,7 @@ func (m *moduleEnv) start(override env) *moduleServer {
 		}
 		if r, err := s.http.Get(modRoot + "/readyz"); err == nil {
 			r.Body.Close()
-			if r.StatusCode == http.StatusOK {
+			if want == 0 || r.StatusCode == want {
 				return s
 			}
 		}
@@ -1003,6 +1018,155 @@ func TestModuleModeSIGTERM(t *testing.T) {
 		t.Fatalf("events delivered after the restart: %s", got)
 	}
 	t.Logf("measured: exit after %v; %d events delivered after the restart", took.Round(time.Millisecond), 2)
+}
+
+// silentPort accepts TCP connections and never answers, like a database
+// that is stuck (or a port that is not a database at all).
+func silentPort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	return ln.Addr().String()
+}
+
+// freezableProxy forwards TCP connections to target until freeze is called;
+// from then on it forwards nothing and keeps the connections open, like a
+// database that stopped answering (docker pause).
+func freezableProxy(t *testing.T, target string) (addr string, freeze func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	frozen := make(chan struct{})
+	var conns []net.Conn
+	pump := func(dst, src net.Conn) {
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := src.Read(buf)
+			if n > 0 {
+				select {
+				case <-frozen:
+					<-make(chan struct{}) // hold the data and the connection
+				default:
+				}
+				if _, werr := dst.Write(buf[:n]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			up, err := net.Dial("tcp", target)
+			if err != nil {
+				c.Close()
+				continue
+			}
+			mu.Lock()
+			conns = append(conns, c, up)
+			mu.Unlock()
+			go pump(up, c)
+			go pump(c, up)
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	var once sync.Once
+	return ln.Addr().String(), func() { once.Do(func() { close(frozen) }) }
+}
+
+// SIGTERM ends a module within 8 s even when a database does not answer:
+// the forwarder's connection to the host table hangs (the review measured
+// 8.01 s), or the module's own database stops answering while a request
+// waits for it. Module mode finishes within 7 s and leaves 1 s for the
+// exit.
+func TestModuleModeSIGTERMUnresponsive(t *testing.T) {
+	t.Run("ops database silent", func(t *testing.T) {
+		m := newModuleEnv(t)
+		m.migrate()
+		s := m.startAnswering(env{"MFGRAPH_OPS_DSN": "ops:ops-pass@tcp(" + silentPort(t) + ")/ops"})
+		c := defaultClaims(projP)
+		ws, main := s.workspace(c)
+		r, _ := s.commit(c, ws, main, 1, "", putChange("s.txt", s.upload(c, ws, "silent")))
+		s.expect(r, "commit", 201, nil)
+		time.Sleep(time.Second) // the forwarder waits for the silent database
+		took := s.stop()
+		if took > 8*time.Second || s.err != nil && strings.Contains(s.err.Error(), "killed") {
+			t.Fatalf("SIGTERM with a silent ops database: exit %v after %v\n%s", s.err, took, s.logs.String())
+		}
+		var pending int
+		if err := m.db.QueryRow("SELECT COUNT(*) FROM outbox_events WHERE status = 'pending'").Scan(&pending); err != nil || pending != 4 {
+			t.Fatalf("pending after the stop: %d %v", pending, err)
+		}
+		t.Logf("measured: exit %v after %v with a silent ops database", s.err, took.Round(time.Millisecond))
+	})
+	t.Run("database frozen during a request", func(t *testing.T) {
+		m := newModuleEnv(t)
+		m.migrate()
+		cfg, err := mysql.ParseDSN(m.env["MFGRAPH_DSN"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		proxy, freeze := freezableProxy(t, cfg.Addr)
+		cfg.Addr = proxy
+		s := m.start(env{"MFGRAPH_DSN": cfg.FormatDSN()})
+		c := defaultClaims(projP)
+		ws, _ := s.workspace(c)
+		freeze()
+		go func() { // waits for the frozen database until the process ends
+			req, _ := http.NewRequest("GET", modBase+"/workspaces/"+ws, nil)
+			for k, v := range c.headers() {
+				req.Header.Set(k, v)
+			}
+			if resp, err := s.http.Do(req); err == nil {
+				resp.Body.Close()
+			}
+		}()
+		time.Sleep(500 * time.Millisecond)
+		took := s.stop()
+		if took > 8*time.Second || s.err != nil && strings.Contains(s.err.Error(), "killed") {
+			t.Fatalf("SIGTERM with a frozen database: exit %v after %v\n%s", s.err, took, s.logs.String())
+		}
+		t.Logf("measured: exit %v after %v with a request waiting for a frozen database", s.err, took.Round(time.Millisecond))
+	})
 }
 
 // Row 9 (configuration): settings that stop the start, and a short token

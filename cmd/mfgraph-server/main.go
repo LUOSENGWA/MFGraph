@@ -383,12 +383,15 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 			fwd = outbox.New(store, sink, outbox.Options{Logger: logger})
 			deps.EventsCommitted = fwd.Notify
 			// The unique index on event_id, logged at the start (and by
-			// /readyz); the table may not be reachable yet.
-			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			if err := fwd.CheckSink(cctx); err != nil {
-				logger.Warn("outbox: the host's outbox table cannot be reached yet; the forwarder retries", "err", err.Error())
-			}
-			cancel()
+			// /readyz), without delaying it; the table may not be reachable
+			// yet.
+			go func() {
+				cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				if err := fwd.CheckSink(cctx); err != nil {
+					logger.Warn("outbox: the host's outbox table cannot be reached yet; the forwarder retries", "err", err.Error())
+				}
+			}()
 			// Ready only when the host's outbox table can be written.
 			readiness = append(readiness, api.ReadinessCheck{Name: "outbox", Code: api.CodeDBUnavailable, Required: true,
 				Check: fwd.CheckSink})
@@ -457,21 +460,29 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	}
 	// Shutdown: stop accepting requests and finish the running ones, then
 	// deliver what the forwarder can in the time that is left; all of it
-	// within ShutdownTimeout. Events not delivered stay in the local outbox
-	// and go out after the next start.
-	logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String())
-	sctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	// within the shutdown budget (module mode: 1 s less than
+	// ShutdownTimeout, which the host's 8 s caps). Events not delivered
+	// stay in the local outbox and go out after the next start. The
+	// database calls of the forwarder end when their context does, so an
+	// unresponsive database does not hold the process.
+	budget := cfg.ShutdownBudget()
+	logger.Info("shutting down", "timeout", cfg.ShutdownTimeout.String(), "budget", budget.String())
+	sctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	shutdownErr := srv.Shutdown(sctx)
 	stopForwarder()
-	<-forwarderDone
-	if fwd != nil {
-		n, err := fwd.Flush(sctx)
-		attrs := []any{"delivered", n}
-		if err != nil {
-			attrs = append(attrs, "err", err.Error())
+	select {
+	case <-forwarderDone:
+		if fwd != nil {
+			n, err := fwd.Flush(sctx)
+			attrs := []any{"delivered", n}
+			if err != nil {
+				attrs = append(attrs, "err", err.Error())
+			}
+			logger.Info("outbox: last delivery before the stop", attrs...)
 		}
-		logger.Info("outbox: last delivery before the stop", attrs...)
+	case <-sctx.Done():
+		logger.Warn("outbox: the forwarder did not stop within the shutdown budget; the pending events go out after the next start")
 	}
 	if shutdownErr != nil {
 		return shutdownErr

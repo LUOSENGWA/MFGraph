@@ -35,7 +35,7 @@
 | `MFGRAPH_AUTH_TOKENS` | — | 静态 bearer token：`token=ACTOR_REF[,token=ACTOR_REF...]`（token 至少 16 个字符） |
 | `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog 设置（给人看用 `text`） |
 | `MFGRAPH_LOG_PSEUDONYM_KEY` | 每次启动随机生成 | 日志中 actor 假名的密钥（至少 16 字节；见[安全](security.md)） |
-| `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | 收到 SIGTERM 或 SIGINT 后的优雅退出时间 |
+| `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | 收到 SIGTERM 或 SIGINT 后的优雅退出时间；模块模式最多 `8s`，并提前 1 秒收尾 |
 | `MFGRAPH_IDEMPOTENCY_LEASE` | `60s` | 一个请求持有其 `Idempotency-Key` 的时间（1s 到 24h）；超过后重复请求会重新执行，第一个请求如果还在执行，会以 `409 conflict` 失败且不做任何改动。应大于最长请求的耗时 |
 
 - **必须连数据库。** 没有 `MFGRAPH_DB_DSN` 时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；数据库连不上时也一样。用 `mfgraph-server migrate`（或 `MFGRAPH_MIGRATE_ON_START=true`）执行迁移；迁移只需要 `MFGRAPH_DB_DSN`。
@@ -44,7 +44,7 @@
 - **Unix domain socket。** `MFGRAPH_HTTP_ADDR=unix:/run/mfgraph/api.sock` 监听一个只有服务进程的用户能使用的 socket（权限 0600，创建时 umask 为 0177）。启动时如果这个路径上残留着已停止的服务留下的 socket，就删掉；如果是普通文件、目录或仍在应答的服务的 socket，就拒绝启动。退出时删除 socket。
 - **路径前缀。** 设置 `MFGRAPH_API_PREFIX=/files/v1` 后，契约中的 `/api/v1/...` 接口改由 `/files/v1/...` 提供（`/api/v1/...` 返回 404），反向代理可以把模块路径原样转发过来。前缀以 `/` 开头，不以 `/` 结尾，最长 128 字节，每段只用 `A–Z a–z 0–9 . _ ~ -`。
 - **存储。** POSIX BlobStore 把每个对象存成文件 `<MFGRAPH_STORAGE_ROOT>/<存储前缀>/<key>`（见[存储](storage.md)）。根目录必须存在且可写；临时文件（`.tmp-*.part`）建在对象旁边，最后 rename 到位。
-- **退出。** 收到 SIGTERM 后，服务停止接受新连接，并最多等待 `MFGRAPH_SHUTDOWN_TIMEOUT`（8 秒，低于守护进程常用的 10 秒强杀时限）让进行中的请求完成；模块模式下还在同一时间内再转发一批事件。
+- **退出。** 收到 SIGTERM 后，服务停止接受新连接，并最多等待 `MFGRAPH_SHUTDOWN_TIMEOUT`（8 秒，低于守护进程常用的 10 秒强杀时限）让进行中的请求完成；模块模式下还在同一时间内再转发一批事件。模块模式下这个值超过 8 秒会拒绝启动（宿主在 SIGTERM 之后 8 秒强杀模块），并且内部提前 1 秒收尾：即使数据库没有响应，7 秒后也会退出；那时还没结束的请求会被中断（退出码 1）。
 - **事件。** 每次改动都在自己的事务里把[事件](../events.md)（英文）写进 outbox。独立部署留在 outbox 里（暂时没有发布者）；模块模式会把它们转发到宿主的 outbox 表。
 - **Bundle。** `make bundle` 构建模块形态的可复现 bundle（每个平台一个 `tar.zst`，加上 `sha256sums.txt`，都在 `dist/`）；`make bundle-check` 用空的构建缓存再构建一遍并比较。见[模块模式](../module-mode.md#bundles)。
 

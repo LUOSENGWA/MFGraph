@@ -3,6 +3,7 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/config"
 )
@@ -276,6 +277,33 @@ func TestForwarderDSN(t *testing.T) {
 	c, err := config.Load(env(map[string]string{config.EnvDBDSN: dsnM + "?charset=utf8", config.EnvStorageRoot: "/data"}))
 	if err != nil || c.CheckServe() != nil {
 		t.Fatalf("standalone with charset=utf8: %v %v", err, c.CheckServe())
+	}
+}
+
+// TestModuleShutdown: module mode refuses a shutdown timeout above 8 s (the
+// host kills a module 8 s after SIGTERM) and keeps 1 s of it for the exit;
+// standalone mode keeps its timeout as it is.
+func TestModuleShutdown(t *testing.T) {
+	for v, budget := range map[string]time.Duration{"": 7 * time.Second, "8s": 7 * time.Second, "4s": 3 * time.Second,
+		"1s": 500 * time.Millisecond, "1500ms": 750 * time.Millisecond} {
+		c, err := config.Load(env(with(moduleEnv(), config.EnvShutdownTimeout, v)))
+		if err != nil || c.CheckServe() != nil || c.ShutdownBudget() != budget {
+			t.Errorf("%q: budget %v, want %v; %v %v", v, c.ShutdownBudget(), budget, err, c.CheckServe())
+		}
+	}
+	for _, v := range []string{"8001ms", "9s", "30s"} {
+		c, err := config.Load(env(with(moduleEnv(), config.EnvShutdownTimeout, v)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.CheckServe(); err == nil || !strings.Contains(err.Error(), config.EnvShutdownTimeout) ||
+			!strings.Contains(err.Error(), "8s") {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+	c, err := config.Load(env(map[string]string{config.EnvShutdownTimeout: "30s"}))
+	if err != nil || c.CheckServe() != nil || c.ShutdownBudget() != 30*time.Second {
+		t.Fatalf("standalone 30s: %v %v %v", c.ShutdownBudget(), err, c.CheckServe())
 	}
 }
 

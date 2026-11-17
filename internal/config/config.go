@@ -102,6 +102,11 @@ const (
 	MaxJSONBodyLimit   = 1 << 30
 	DefaultMaxChanges  = 10_000
 	DefaultShutdown    = 8 * time.Second
+	// MaxModuleShutdown is the largest MFGRAPH_SHUTDOWN_TIMEOUT of module
+	// mode: the host platform kills a module 8 s after SIGTERM.
+	// ModuleShutdownMargin of it is left for the exit itself (ShutdownBudget).
+	MaxModuleShutdown    = 8 * time.Second
+	ModuleShutdownMargin = time.Second
 	// DefaultIdempotencyLease is the default of MFGRAPH_IDEMPOTENCY_LEASE;
 	// MinIdempotencyLease and MaxIdempotencyLease bound it (the upper bound
 	// is the 24 hours an idempotency record is kept).
@@ -198,7 +203,8 @@ type Config struct {
 	// the same effect.
 	LogPseudonymKey string
 	// ShutdownTimeout bounds graceful shutdown (default 8s, below the 10 s
-	// after which a supervisor typically kills a process it sent SIGTERM).
+	// after which a supervisor typically kills a process it sent SIGTERM;
+	// in module mode at most 8s, see ShutdownBudget).
 	ShutdownTimeout time.Duration
 	// IdempotencyLease is how long a request holds the in-progress record
 	// of its Idempotency-Key; afterwards a request with the same key takes
@@ -256,8 +262,9 @@ func (c *Config) SetSocket(path string) error {
 // CheckServe reports settings that the server needs in addition to what
 // Load checks (the migrate command needs fewer). Standalone mode: with a
 // database, a storage root. Module mode: a socket, the internal token, a
-// database, a storage root, a tenant other than the all-zero default, and a
-// forwarder connection with the character set utf8mb4 (ForwarderDSN).
+// database, a storage root, a tenant other than the all-zero default, a
+// shutdown timeout of at most 8 s, and a forwarder connection with the
+// character set utf8mb4 (ForwarderDSN).
 func (c Config) CheckServe() error {
 	if !c.Module() {
 		if c.DBDSN != "" && c.StorageRoot == "" {
@@ -287,10 +294,26 @@ func (c Config) CheckServe() error {
 	if c.TenantID == DefaultTenantID {
 		return fmt.Errorf("config: module mode requires a fixed tenant ULID in %s, not the all-zero default", EnvTenantID)
 	}
+	if c.ShutdownTimeout > MaxModuleShutdown {
+		return fmt.Errorf("config: module mode allows %s of at most %s: the host platform kills a module %s after SIGTERM",
+			EnvShutdownTimeout, MaxModuleShutdown, MaxModuleShutdown)
+	}
 	if _, err := c.ForwarderDSN(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// ShutdownBudget is the time the server gives itself after SIGTERM to finish
+// the running requests and the last delivery of events. Standalone mode:
+// ShutdownTimeout. Module mode: ShutdownTimeout less ModuleShutdownMargin
+// (at least half of it), so that the process has exited when the host kills
+// it.
+func (c Config) ShutdownBudget() time.Duration {
+	if !c.Module() {
+		return c.ShutdownTimeout
+	}
+	return max(c.ShutdownTimeout-ModuleShutdownMargin, c.ShutdownTimeout/2)
 }
 
 // UnixSocket returns the socket path of a "unix:<path>" HTTPAddr.
