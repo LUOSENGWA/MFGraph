@@ -260,10 +260,12 @@ func listenUnix(path string) (net.Listener, error) {
 	return ln, nil
 }
 
+// openDB opens and pings the database of dsn, which config.Load has parsed
+// already; an error never repeats the DSN.
 func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("the database DSN is not valid")
 	}
 	db.SetMaxOpenConns(32)
 	db.SetMaxIdleConns(32)
@@ -477,7 +479,7 @@ func hostOutbox(cfg config.Config) (*sql.DB, *outbox.SQLSink, error) {
 	}
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", config.EnvOpsDSN, err)
+		return nil, nil, fmt.Errorf("%s is not a valid DSN", config.EnvOpsDSN)
 	}
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)

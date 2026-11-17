@@ -880,6 +880,12 @@ func TestModuleModeConfig(t *testing.T) {
 		"kernel migrations":  {env{"MFGRAPH_KERNEL_MIGRATIONS": "true"}, serve, "MFGRAPH_KERNEL_MIGRATIONS"},
 		"expansion in file":  {nil, []string{"serve", "--config", exp, "--socket", m.sock}, "line 2"},
 		"socket of the host": {env{"MFGRAPH_HTTP_ADDR": "unix:/elsewhere.sock"}, serve, "MODULE_SOCKET and MFGRAPH_HTTP_ADDR"},
+		// No database name and '/' in the password: the driver's message
+		// would quote "zzops:ZzOps".
+		"malformed ops DSN": {env{"MFGRAPH_OPS_DSN": "zzops:ZzOps/Pw-77gg@tcp(127.0.0.1:33406)"}, serve,
+			"MFGRAPH_OPS_DSN is not a valid DSN"},
+		"malformed DSN": {env{"MFGRAPH_DSN": "zzops:ZzOps/Pw-77gg@tcp(127.0.0.1:33406)"}, []string{"--config", m.config, "migrate"},
+			"MFGRAPH_DSN is not a valid DSN"},
 	}
 	for name, c := range cases {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -893,7 +899,8 @@ func TestModuleModeConfig(t *testing.T) {
 		if !strings.Contains(string(out), c.says) || strings.Contains(string(out), "listening") {
 			t.Errorf("%s: the message does not name %q:\n%s", name, c.says, out)
 		}
-		if strings.Contains(string(out), modToken) || strings.Contains(string(out), "leakcheck-password") {
+		if strings.Contains(string(out), modToken) || strings.Contains(string(out), "leakcheck-password") ||
+			strings.Contains(string(out), "ZzOps") || strings.Contains(string(out), "Pw-77gg") {
 			t.Errorf("%s: the output leaks a secret:\n%s", name, out)
 		}
 	}

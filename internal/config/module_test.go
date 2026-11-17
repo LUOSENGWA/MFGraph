@@ -147,7 +147,11 @@ func TestModuleRefusals(t *testing.T) {
 // same value are fine.
 func TestAliases(t *testing.T) {
 	for _, pair := range config.Aliases {
-		for _, m := range []map[string]string{{pair[0]: "/x/y"}, {pair[1]: "/x/y"}, {pair[0]: "/x/y", pair[1]: "/x/y"}} {
+		value := "/x/y"
+		if pair[0] == config.EnvDBDSN {
+			value = "u:p@tcp(h:1)/y"
+		}
+		for _, m := range []map[string]string{{pair[0]: value}, {pair[1]: value}, {pair[0]: value, pair[1]: value}} {
 			c, err := config.Load(env(m))
 			if err != nil {
 				t.Fatalf("%v: %v", m, err)
@@ -161,7 +165,7 @@ func TestAliases(t *testing.T) {
 			case config.EnvAPIPrefix:
 				got = c.APIPrefix
 			}
-			if got != "/x/y" {
+			if got != value {
 				t.Errorf("%v: got %q", m, got)
 			}
 		}
@@ -173,6 +177,40 @@ func TestAliases(t *testing.T) {
 		c, err := config.Load(env(m))
 		if sock, ok := c.UnixSocket(); err != nil || !ok || sock != "/s.sock" {
 			t.Errorf("%v: %q %v", m, c.HTTPAddr, err)
+		}
+	}
+}
+
+// TestMalformedDSN: a DSN the driver cannot parse stops the start with a
+// message that names the variable and repeats nothing of the DSN; the
+// example of the review lacks the database name and has '/' in the
+// password, which the driver's own message would quote in part.
+func TestMalformedDSN(t *testing.T) {
+	const bad = "zzops:ZzOps/Pw-77gg@tcp(127.0.0.1:33406)"
+	for _, name := range []string{config.EnvDBDSN, config.EnvDSN, config.EnvOpsDSN} {
+		for _, m := range []map[string]string{{name: bad}, with(moduleEnv(), config.EnvDSN, "", name, bad)} {
+			if name == config.EnvOpsDSN && m[config.EnvMode] != "" {
+				m[config.EnvDSN] = dsnM
+			}
+			_, err := config.Load(env(m))
+			if err == nil {
+				t.Errorf("%s=%s: accepted", name, bad)
+				continue
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, name+" is not a valid DSN") {
+				t.Errorf("%s: %v", name, err)
+			}
+			for _, part := range []string{"zzops", "ZzOps", "Pw-77gg", "33406"} {
+				if strings.Contains(msg, part) {
+					t.Errorf("%s: the error repeats %q: %v", name, part, err)
+				}
+			}
+		}
+	}
+	for _, dsn := range []string{"u:p@tcp(h:1)/", "u:p/q@tcp(h:1)/db?x=1", "u@unix(/run/mysqld.sock)/db", "/db"} {
+		if _, err := config.Load(env(map[string]string{config.EnvDBDSN: dsn, config.EnvOpsDSN: dsn})); err != nil {
+			t.Errorf("%s: %v", dsn, err)
 		}
 	}
 }

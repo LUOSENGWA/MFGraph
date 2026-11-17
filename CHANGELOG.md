@@ -14,6 +14,10 @@ All notable changes will be documented here.
 - A change of a branch is recorded at least two microseconds after the previous one (it used to be one after the parent), so that the outbox keeps the order of a branch's events whatever the clock does.
 - `make bundle` builds reproducible module bundles (linux/amd64, linux/arm64; tar.zst and sha256sums.txt) from `packaging/host-module/`, the only directory that names the host platform; CI builds them, checks that they are reproducible and runs their acceptance script.
 
+#### Fixes after review (M1.0a module)
+
+- A DSN the MySQL driver cannot parse stops the start with "`<variable>` is not a valid DSN"; the driver's own message, which could quote a part of the password, is no longer printed.
+
 ### M1.0a: the first core slice
 
 - Every endpoint of the contract works: projects (owned by their creator), workspaces with their main branch, whole-file uploads, commits, timeline, directory listings, downloads (ETag, If-None-Match, single ranges), diffs and restores (a whole snapshot or one path), with `Idempotency-Key` on every POST.

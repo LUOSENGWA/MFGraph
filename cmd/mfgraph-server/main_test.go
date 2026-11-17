@@ -338,6 +338,9 @@ func TestModuleModeRefusesToStart(t *testing.T) {
 		"no token":          {config.EnvModuleInternalToken, ""},
 		"no data dir":       {config.EnvDataDir, ""},
 		"no DSN":            {config.EnvDSN, ""},
+		// The review's example: no database name, '/' in the password.
+		"malformed DSN":     {config.EnvDSN, "zzops:ZzOps/Pw-77gg@tcp(127.0.0.1:33406)"},
+		"malformed ops DSN": {config.EnvOpsDSN, "zzops:ZzOps/Pw-77gg@tcp(127.0.0.1:33406)"},
 	}
 	for name, kv := range cases {
 		m := map[string]string{}
@@ -355,7 +358,8 @@ func TestModuleModeRefusesToStart(t *testing.T) {
 		if code != 2 || strings.Contains(log, "listening") {
 			t.Errorf("%s: exit %d\n%s", name, code, log)
 		}
-		if strings.Contains(log, token) || strings.Contains(log, "dbsecret") || strings.Contains(log, "u:other") {
+		if strings.Contains(log, token) || strings.Contains(log, "dbsecret") || strings.Contains(log, "u:other") ||
+			strings.Contains(log, "ZzOps") || strings.Contains(log, "Pw-77gg") {
 			t.Errorf("%s: the log leaks a secret:\n%s", name, log)
 		}
 	}

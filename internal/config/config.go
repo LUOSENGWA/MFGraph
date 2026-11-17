@@ -222,6 +222,17 @@ type Config struct {
 	OutboxTable string
 
 	warnings []string
+	// dbDSNName is the variable DBDSN came from (MFGRAPH_DB_DSN or its alias
+	// MFGRAPH_DSN), for messages.
+	dbDSNName string
+}
+
+// dbDSNVar names the variable of DBDSN in messages.
+func (c Config) dbDSNVar() string {
+	if c.dbDSNName != "" {
+		return c.dbDSNName
+	}
+	return EnvDSN
 }
 
 // Module reports module mode.
@@ -376,7 +387,20 @@ func Load(getenv func(string) string) (Config, error) {
 	if c.DBDSN, err = alias(getenv, EnvDBDSN, EnvDSN); err != nil {
 		return Config{}, err
 	}
+	c.dbDSNName = EnvDBDSN
+	if getenv(EnvDBDSN) == "" {
+		c.dbDSNName = EnvDSN
+	}
 	c.OpsDSN = getenv(EnvOpsDSN)
+	// A DSN the driver cannot parse stops here, before its message (which
+	// may quote a part of the password) could reach a log.
+	for _, d := range [][2]string{{c.dbDSNName, c.DBDSN}, {EnvOpsDSN, c.OpsDSN}} {
+		if d[1] != "" {
+			if _, err := parseDSN(d[0], d[1]); err != nil {
+				return Config{}, err
+			}
+		}
+	}
 	if c.StorageRoot, err = alias(getenv, EnvStorageRoot, EnvDataDir); err != nil {
 		return Config{}, err
 	}
