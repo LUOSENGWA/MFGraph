@@ -822,6 +822,71 @@ func TestModuleModeUnicodeActor(t *testing.T) {
 	}
 }
 
+// A stalled forwarder is visible: the host table is too narrow for the
+// actor (the first DDL of the host's table had actor_id VARCHAR(191)), the
+// event at the head of the queue fails again and again, and after 5
+// failures /readyz still answers 200 but reports checks.outbox "stalled"
+// with the backlog and the error, and the log has an ERROR line. Repairing
+// the table lets the events through (here with the last delivery of the
+// shutdown), with an INFO line.
+func TestModuleModeStalledForwarder(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	if _, err := m.ops.Exec("ALTER TABLE module_outbox MODIFY actor_id VARCHAR(32) NULL"); err != nil {
+		t.Fatal(err)
+	}
+	s := m.start(nil)
+	c := claims{token: modToken, actor: "agent-" + strings.Repeat("x", 34), actorType: "worker", project: projP} // 40 bytes
+	ws, _ := s.workspace(c)
+	type readiness struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+		Outbox map[string]any    `json:"outbox"`
+	}
+	var ready readiness
+	var code int
+	for deadline := time.Now().Add(45 * time.Second); ; time.Sleep(500 * time.Millisecond) {
+		r := s.do(claims{}, "GET", modRoot+"/readyz", nil, nil)
+		code = r.status
+		_ = json.Unmarshal(r.body, &ready)
+		if ready.Checks["outbox"] == "stalled" || time.Now().After(deadline) {
+			break
+		}
+	}
+	lastErr, _ := ready.Outbox["last_error"].(string)
+	if code != 200 || ready.Status != "ready" || ready.Checks["outbox"] != "stalled" || ready.Outbox["pending"] != float64(2) ||
+		ready.Outbox["stalled_since"] == nil || ready.Outbox["oldest_pending_at"] == nil || !strings.Contains(lastErr, "1406") {
+		t.Fatalf("readyz while stalled: %d %+v", code, ready)
+	}
+	var stalledLine string
+	for _, line := range strings.Split(s.logs.String(), "\n") {
+		if strings.Contains(line, `"level":"ERROR"`) && strings.Contains(line, "is stalled") {
+			stalledLine = line
+		}
+	}
+	for _, want := range []string{`"pending":2`, `"oldest_pending_at":`, `"event_id":"`, `"event_kind":"mfgraph.workspace_created"`,
+		`"failures":5`, "1406"} {
+		if !strings.Contains(stalledLine, want) {
+			t.Fatalf("the ERROR line lacks %s:\n%s", want, s.logs.String())
+		}
+	}
+	if strings.Contains(s.logs.String(), "mfgraph:") || strings.Contains(s.logs.String(), "@tcp(") {
+		t.Fatalf("the log shows a DSN:\n%s", s.logs.String())
+	}
+	if _, err := m.ops.Exec("ALTER TABLE module_outbox MODIFY actor_id VARCHAR(255) NULL"); err != nil {
+		t.Fatal(err)
+	}
+	if took := s.stop(); s.err != nil || took > 8*time.Second {
+		t.Fatalf("stop: %v after %v", s.err, took)
+	}
+	if rows := m.hostRows(ws); len(rows) != 2 || rows[0].actorID.String != c.actor {
+		t.Fatalf("host rows after the repair: %v", kindsOf(rows))
+	}
+	if !strings.Contains(s.logs.String(), "delivery to the host's outbox table resumed") {
+		t.Fatalf("no INFO line on recovery:\n%s", s.logs.String())
+	}
+}
+
 // Row 8: SIGTERM ends the process within 8 s and removes the socket; the
 // data is there after a restart, and events that could not be delivered
 // before the stop are delivered after it.

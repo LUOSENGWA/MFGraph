@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/LUOSENGWA/MFGraph/internal/outbox"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
@@ -375,5 +376,145 @@ func TestCallTimeout(t *testing.T) {
 	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "no answer within 300ms") ||
 		strings.Contains(logs.String(), "ops-pass") {
 		t.Fatalf("log:\n%s", logs.String())
+	}
+}
+
+// clock is a time source the tests move by hand.
+type clock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *clock) now() time.Time      { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+func (c *clock) add(d time.Duration) { c.mu.Lock(); c.t = c.t.Add(d); c.mu.Unlock() }
+func countOf(s, sub string) int      { return strings.Count(s, sub) }
+func lastLine(s, sub string) (l string) {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, sub) {
+			l = line
+		}
+	}
+	return l
+}
+
+// TestStallReport: an event that keeps failing stalls delivery. After the
+// configured number of failures in a row (or time) the forwarder logs one
+// ERROR line with the backlog, the event and the error, again only after
+// the report interval; Status reports the stall; once delivery moves on, an
+// INFO line ends it. The time rule and a skipped event are covered too.
+func TestStallReport(t *testing.T) {
+	store, sink := memory.NewStore(), newSink()
+	logs := &syncBuffer{}
+	clk := &clock{t: time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)}
+	f := outbox.New(store, sink, outbox.Options{Logger: slog.New(slog.NewTextHandler(logs, nil)), Now: clk.now,
+		StallFailures: 3, StallAfter: time.Hour, StallReportEvery: 10 * time.Minute})
+	appendEvents(t, store, ev(1, ports.EventWorkspaceCreated, 1_000_000), ev(2, ports.EventBranchCreated, 1_000_001))
+	appendEvents(t, store, ev(3, ports.EventCommitCreated, 2_000_000))
+	tooLong := errors.New("Error 1406 (22001): Data too long for column 'actor_id' at row 1")
+	sink.setFail(func(id string) error {
+		if id == fmt.Sprintf("%064x", 1) {
+			return tooLong
+		}
+		return nil
+	})
+	first := clk.now()
+	for i := 1; i <= 2; i++ {
+		if n, err := f.Flush(ctx); n != 0 || err == nil {
+			t.Fatalf("flush %d: %d %v", i, n, err)
+		}
+		clk.add(time.Second)
+	}
+	if st, err := f.Status(ctx); err != nil || st.Stalled || st.Pending != 3 || !st.OldestPendingAt.Equal(time.UnixMicro(1_000_000).UTC()) {
+		t.Fatalf("status after 2 failures: %+v %v", st, err)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("ERROR before the threshold:\n%s", logs.String())
+	}
+	_, _ = f.Flush(ctx) // the third failure in a row: stalled
+	st, err := f.Status(ctx)
+	if err != nil || !st.Stalled || !st.StalledSince.Equal(first) || st.LastError == "" || !strings.Contains(st.LastError, "Data too long") ||
+		st.Pending != 3 {
+		t.Fatalf("status when stalled: %+v %v", st, err)
+	}
+	line := lastLine(logs.String(), "level=ERROR")
+	for _, want := range []string{"is stalled", "event=" + ev(1, "", 0).ID, "event_id=" + fmt.Sprintf("%064x", 1),
+		"event_kind=mfgraph.workspace_created", "failures=3", "pending=3", "oldest_pending_at=1970-01-01T00:00:01Z",
+		"stalled_since=2026-11-17T09:00:00Z", "Data too long"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("ERROR line lacks %q:\n%s", want, line)
+		}
+	}
+	// More failures within the report interval: no further ERROR.
+	for i := 0; i < 5; i++ {
+		clk.add(time.Minute)
+		_, _ = f.Flush(ctx)
+	}
+	if n := countOf(logs.String(), "level=ERROR"); n != 1 {
+		t.Fatalf("%d ERROR lines within the report interval", n)
+	}
+	clk.add(5 * time.Minute) // 10 minutes after the first ERROR
+	_, _ = f.Flush(ctx)
+	if n := countOf(logs.String(), "level=ERROR"); n != 2 {
+		t.Fatalf("%d ERROR lines after the report interval, want 2", n)
+	}
+	// Repaired: delivery resumes with one INFO line.
+	sink.setFail(nil)
+	if n, err := f.Flush(ctx); n != 3 || err != nil {
+		t.Fatalf("after the repair: %d %v", n, err)
+	}
+	if st, _ := f.Status(ctx); st.Stalled || st.Pending != 0 || !st.OldestPendingAt.IsZero() {
+		t.Fatalf("status after the repair: %+v", st)
+	}
+	if n := countOf(logs.String(), "delivery to the host's outbox table resumed"); n != 1 ||
+		!strings.Contains(lastLine(logs.String(), "resumed"), "level=INFO") {
+		t.Fatalf("recovery lines:\n%s", logs.String())
+	}
+
+	// The time rule: one failure that lasts longer than StallAfter.
+	f2 := outbox.New(store, sink, outbox.Options{Logger: quiet(), Now: clk.now, StallFailures: 100, StallAfter: time.Minute})
+	appendEvents(t, store, ev(4, ports.EventBranchUpdated, 3_000_000), ev(5, ports.EventBranchUpdated, 3_000_001))
+	sink.setFail(func(id string) error {
+		if id == fmt.Sprintf("%064x", 4) {
+			return errors.New("down")
+		}
+		return nil
+	})
+	_, _ = f2.Flush(ctx)
+	if st, _ := f2.Status(ctx); st.Stalled {
+		t.Fatalf("stalled after one failure: %+v", st)
+	}
+	clk.add(61 * time.Second)
+	if st, _ := f2.Status(ctx); !st.Stalled || st.LastError == "" {
+		t.Fatalf("not stalled after a minute of failures: %+v", st)
+	}
+	// The operator skips the event: the next one is delivered, the skipped
+	// one stays in the outbox and is never delivered.
+	store.SetEventStatus(ev(4, "", 0).ID, ports.EventSkipped)
+	if n, err := f2.Flush(ctx); n != 1 || err != nil {
+		t.Fatalf("after the skip: %d %v", n, err)
+	}
+	if d, _ := store.EventDelivery(ctx, ev(4, "", 0).ID); d.Status != ports.EventSkipped {
+		t.Fatalf("skipped event: %+v", d)
+	}
+	if st, _ := f2.Status(ctx); st.Stalled || st.Pending != 0 {
+		t.Fatalf("status after the skip: %+v", st)
+	}
+	if strings.Contains(sink.kinds(), "branch_updated,branch_updated") {
+		t.Fatalf("the skipped event was delivered: %s", sink.kinds())
+	}
+}
+
+// TestStallErrorIsClipped: the error that Status reports is valid UTF-8 of
+// at most MaxErrorBytes bytes.
+func TestStallErrorIsClipped(t *testing.T) {
+	store, sink := memory.NewStore(), newSink()
+	f := outbox.New(store, sink, outbox.Options{Logger: quiet(), StallFailures: 1})
+	appendEvents(t, store, ev(1, ports.EventWorkspaceCreated, 1))
+	sink.setFail(func(string) error { return errors.New(strings.Repeat("\u00e9", 400) + "\xff") })
+	_, _ = f.Flush(ctx)
+	st, _ := f.Status(ctx)
+	if !st.Stalled || len(st.LastError) > outbox.MaxErrorBytes || len(st.LastError) < outbox.MaxErrorBytes-3 ||
+		!utf8.ValidString(st.LastError) {
+		t.Fatalf("last error of %d bytes, valid %v", len(st.LastError), utf8.ValidString(st.LastError))
 	}
 }

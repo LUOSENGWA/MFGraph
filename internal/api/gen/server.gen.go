@@ -471,9 +471,21 @@ type Project struct {
 
 // Readiness defines model for Readiness.
 type Readiness struct {
-	// Checks Result per dependency, for example {"db": "ok"}; not_configured when unused.
+	// Checks Result per dependency, for example {"db": "ok"}; not_configured
+	// when unused. In module mode, "outbox" is `ok`, or `stalled` when
+	// the delivery of events to the host platform's outbox table is
+	// stalled: the server stays ready (a restart or less traffic would
+	// not help, and writes keep working), and the field `outbox` has
+	// the details.
 	Checks map[string]string `json:"checks"`
-	Status ReadinessStatus   `json:"status"`
+
+	// Outbox Module mode only: the delivery of events from the local outbox to the
+	// host platform's outbox table. Events are delivered strictly in order,
+	// so one event that cannot be delivered stops every later one; delivery
+	// is stalled when the event at the head of the queue failed 5 times in
+	// a row or for 5 minutes.
+	Outbox *ReadinessOutbox `json:"outbox,omitempty"`
+	Status ReadinessStatus  `json:"status"`
 
 	// UnicodeVersion The Unicode version V of the write-time path rules this server
 	// applies (docs/spec/content-format.md, section 2.4), for example
@@ -491,6 +503,30 @@ type Readiness struct {
 
 // ReadinessStatus defines model for Readiness.Status.
 type ReadinessStatus string
+
+// ReadinessOutbox Module mode only: the delivery of events from the local outbox to the
+// host platform's outbox table. Events are delivered strictly in order,
+// so one event that cannot be delivered stops every later one; delivery
+// is stalled when the event at the head of the queue failed 5 times in
+// a row or for 5 minutes.
+type ReadinessOutbox struct {
+	// LastError When stalled: the last error of the event at the head of the
+	// queue (never a DSN), cut to 512 bytes.
+	LastError *string `json:"last_error,omitempty"`
+
+	// OldestPendingAt RFC 3339, UTC (`Z`), up to microsecond precision.
+	//
+	// Example: 2026-11-13T08:30:00.123456Z
+	OldestPendingAt *Timestamp `json:"oldest_pending_at,omitempty"`
+
+	// Pending Events in the local outbox that are not delivered yet.
+	Pending *int64 `json:"pending,omitempty"`
+
+	// StalledSince RFC 3339, UTC (`Z`), up to microsecond precision.
+	//
+	// Example: 2026-11-13T08:30:00.123456Z
+	StalledSince *Timestamp `json:"stalled_since,omitempty"`
+}
 
 // RestoreRequest defines model for RestoreRequest.
 type RestoreRequest struct {

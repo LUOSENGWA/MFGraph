@@ -719,6 +719,13 @@ func (s *Store) PendingEvents(ctx context.Context, limit int) ([]ports.Event, er
 	return out, wrap(rows.Err())
 }
 
+// PendingCount implements ports.OutboxQueue.
+func (s *Store) PendingCount(ctx context.Context) (n, oldestAtUs int64, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(created_at_us), 0) FROM outbox_events
+		WHERE status = 'pending' AND event_type LIKE ?`, ports.EventPrefix+"%").Scan(&n, &oldestAtUs)
+	return n, oldestAtUs, wrap(err)
+}
+
 // MarkPublished implements ports.OutboxQueue.
 func (s *Store) MarkPublished(ctx context.Context, id string, publishedAtUs int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE outbox_events SET status = 'published', published_at_us = ?

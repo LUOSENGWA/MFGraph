@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/api"
@@ -121,6 +122,59 @@ func TestReadyz(t *testing.T) {
 	if resp, b = do(t, srv, "GET", "/readyz", "", nil); resp.StatusCode != 200 || !strings.Contains(string(b), `"db":"ok"`) ||
 		!strings.Contains(string(b), `"unicode_version":"15.0.0"`) || !strings.Contains(string(b), `"version":"test-build"`) {
 		t.Fatalf("readyz ok: %d %s", resp.StatusCode, b)
+	}
+}
+
+// TestReadyzOutbox: in module mode /readyz reports the forwarder: the
+// backlog in the field outbox and checks.outbox "ok"; a stalled delivery is
+// checks.outbox "stalled" with stalled_since and last_error, and the server
+// stays ready (200); a failing count leaves the backlog out.
+func TestReadyzOutbox(t *testing.T) {
+	var state api.OutboxState
+	var countErr error
+	authn, _ := api.NewStaticTokens(map[string]string{token: uidA})
+	srv := httptest.NewServer(api.NewHandler(api.Options{Authenticator: authn, IDGen: ids.NewGenerator(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Readiness: []api.ReadinessCheck{{Name: "outbox", Code: api.CodeDBUnavailable, Required: true,
+			Check: func(context.Context) error { return nil }}},
+		Outbox: func(context.Context) (api.OutboxState, error) { return state, countErr }}))
+	t.Cleanup(srv.Close)
+	type body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+		Outbox map[string]any    `json:"outbox"`
+	}
+	get := func() (int, body) {
+		t.Helper()
+		resp, b := do(t, srv, "GET", "/readyz", "", nil)
+		var out body
+		if err := json.Unmarshal(b, &out); err != nil {
+			t.Fatalf("%s: %v", b, err)
+		}
+		return resp.StatusCode, out
+	}
+	code, b := get()
+	if code != 200 || b.Checks["outbox"] != "ok" || b.Outbox["pending"] != float64(0) || len(b.Outbox) != 1 {
+		t.Fatalf("idle: %d %+v", code, b)
+	}
+	oldest := time.Date(2026, 11, 17, 9, 0, 0, 123456000, time.UTC)
+	state = api.OutboxState{Pending: 4, OldestPendingAt: oldest}
+	if code, b = get(); code != 200 || b.Checks["outbox"] != "ok" || b.Outbox["pending"] != float64(4) ||
+		b.Outbox["oldest_pending_at"] != "2026-11-17T09:00:00.123456Z" || b.Outbox["stalled_since"] != nil {
+		t.Fatalf("backlog: %d %+v", code, b)
+	}
+	state.Stalled, state.StalledSince, state.LastError = true, oldest.Add(time.Second), "Error 1406 (22001): Data too long"
+	if code, b = get(); code != 200 || b.Status != "ready" || b.Checks["outbox"] != "stalled" || b.Outbox["pending"] != float64(4) ||
+		b.Outbox["stalled_since"] != "2026-11-17T09:00:01.123456Z" || b.Outbox["last_error"] != "Error 1406 (22001): Data too long" {
+		t.Fatalf("stalled: %d %+v", code, b)
+	}
+	countErr = errors.New("count failed")
+	if code, b = get(); code != 200 || b.Checks["outbox"] != "stalled" || b.Outbox["pending"] != nil || b.Outbox["last_error"] == nil {
+		t.Fatalf("stalled, count failed: %d %+v", code, b)
+	}
+	state = api.OutboxState{}
+	if code, b = get(); code != 200 || b.Checks["outbox"] != "ok" || b.Outbox != nil {
+		t.Fatalf("count failed: %d %+v", code, b)
 	}
 }
 

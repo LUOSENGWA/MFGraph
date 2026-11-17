@@ -555,7 +555,7 @@ func (s *Store) PendingEvents(_ context.Context, limit int) ([]ports.Event, erro
 	defer s.mu.RUnlock()
 	var out []ports.Event
 	for _, ev := range s.cur.events {
-		if s.cur.delivery[ev.ID].Status != ports.EventPublished && strings.HasPrefix(ev.Type, ports.EventPrefix) {
+		if s.pendingLocked(ev) {
 			out = append(out, ev)
 		}
 	}
@@ -571,10 +571,38 @@ func (s *Store) PendingEvents(_ context.Context, limit int) ([]ports.Event, erro
 	return out, nil
 }
 
+// PendingCount implements ports.OutboxQueue.
+func (s *Store) PendingCount(_ context.Context) (n, oldestAtUs int64, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ev := range s.cur.events {
+		if s.pendingLocked(ev) {
+			if n == 0 || ev.CreatedAtUs < oldestAtUs {
+				oldestAtUs = ev.CreatedAtUs
+			}
+			n++
+		}
+	}
+	return n, oldestAtUs, nil
+}
+
+// pendingLocked reports an event of a current kind that is still to be
+// delivered (s.mu held).
+func (s *Store) pendingLocked(ev ports.Event) bool {
+	st := s.cur.delivery[ev.ID].Status
+	return (st == "" || st == ports.EventPending) && strings.HasPrefix(ev.Type, ports.EventPrefix)
+}
+
+// SetEventStatus sets the status of an event by hand, as an operator may do
+// with SQL (tests).
+func (s *Store) SetEventStatus(id, status string) {
+	s.updateDelivery(id, func(d *ports.EventDelivery) { d.Status = status })
+}
+
 // MarkPublished implements ports.OutboxQueue.
 func (s *Store) MarkPublished(_ context.Context, id string, publishedAtUs int64) error {
 	s.updateDelivery(id, func(d *ports.EventDelivery) {
-		if d.Status != ports.EventPublished {
+		if d.Status == ports.EventPending {
 			d.Status, d.PublishedAtUs = ports.EventPublished, publishedAtUs
 		}
 	})
@@ -584,7 +612,7 @@ func (s *Store) MarkPublished(_ context.Context, id string, publishedAtUs int64)
 // MarkFailed implements ports.OutboxQueue.
 func (s *Store) MarkFailed(_ context.Context, id string, nextRetryAtUs int64) error {
 	s.updateDelivery(id, func(d *ports.EventDelivery) {
-		if d.Status != ports.EventPublished {
+		if d.Status == ports.EventPending {
 			d.RetryCount++
 			d.NextRetryAtUs = nextRetryAtUs
 		}

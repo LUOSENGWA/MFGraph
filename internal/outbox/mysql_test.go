@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -516,6 +517,98 @@ func TestMySQLForwarderCharset(t *testing.T) {
 		t.Logf("measured: charset=%s without the check: insert error %v; stored actor %q (want %q)", cs, err, stored, actor)
 		db.Close()
 	}
+}
+
+// TestMySQLStalledForwarder: the review's second reproduction on the real
+// servers. The host table still has the first DDL (actor_id VARCHAR(191))
+// and an actor of 200 bytes cannot be written (1406): delivery stalls, the
+// forwarder logs an ERROR line with the backlog and Status reports it.
+// Widening the column repairs it. Then the documented way out for an event
+// that can never be delivered: UPDATE outbox_events SET status='skipped';
+// the skipped row stays in the local outbox and is never delivered.
+func TestMySQLStalledForwarder(t *testing.T) {
+	e := newMySQLEnv(t)
+	if _, err := e.ops.Exec("ALTER TABLE module_outbox MODIFY actor_id VARCHAR(191) NULL"); err != nil {
+		t.Fatal(err)
+	}
+	logs := &syncBuffer{}
+	f := outbox.New(e.store, e.sink, outbox.Options{Logger: slog.New(slog.NewTextHandler(logs, nil)), StallFailures: 3})
+	long := ports.Principal{Ref: "agent-" + strings.Repeat("a", 194), ActorType: "worker", ProjectScope: projectM} // 200 bytes
+	if _, err := e.svc.CreateWorkspace(ctx, long, core.CreateWorkspaceRequest{ProjectID: projectM}, ""); err != nil {
+		t.Fatal(err)
+	}
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		if n, err := f.Flush(ctx); n != 0 || err == nil {
+			t.Fatalf("flush %d with a narrow column: %d %v", i, n, err)
+		} else {
+			lastErr = err
+		}
+	}
+	st, err := f.Status(ctx)
+	if err != nil || !st.Stalled || st.Pending != 2 || st.OldestPendingAt.IsZero() || !strings.Contains(st.LastError, "1406") {
+		t.Fatalf("status: %+v %v (last error %v)", st, err, lastErr)
+	}
+	line := lastLine(logs.String(), "level=ERROR")
+	if !strings.Contains(line, "is stalled") || !strings.Contains(line, "pending=2") || !strings.Contains(line, "event_kind=mfgraph.workspace_created") ||
+		!strings.Contains(line, "1406") {
+		t.Fatalf("ERROR line: %s", line)
+	}
+	var retries int
+	if err := e.db.QueryRow("SELECT MAX(retry_count) FROM outbox_events WHERE status = 'pending'").Scan(&retries); err != nil || retries != 3 {
+		t.Fatalf("retry count %d %v", retries, err)
+	}
+	// Repair the host table: delivery resumes.
+	if _, err := e.ops.Exec("ALTER TABLE module_outbox MODIFY actor_id VARCHAR(255) NULL"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.Flush(ctx); n != 2 || err != nil {
+		t.Fatalf("after widening the column: %d %v", n, err)
+	}
+	if st, _ := f.Status(ctx); st.Stalled || st.Pending != 0 || !strings.Contains(logs.String(), "resumed") {
+		t.Fatalf("after the repair: %+v\n%s", st, logs.String())
+	}
+	if rows := e.hostRows(); len(rows) != 2 || rows[0].actorID.String != long.Ref {
+		t.Fatalf("host rows after the repair: %d", len(rows))
+	}
+
+	// An event that can never be delivered (here: its payload is not an
+	// envelope) is skipped by hand; the next event goes out.
+	short := ports.Principal{Ref: "manager", ActorType: "human", ProjectScope: projectM}
+	if _, err := e.svc.CreateWorkspace(ctx, short, core.CreateWorkspaceRequest{ProjectID: projectM}, ""); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := e.store.PendingEvents(ctx, 10)
+	if len(pending) != 2 {
+		t.Fatalf("pending: %d", len(pending))
+	}
+	if _, err := e.db.Exec("UPDATE outbox_events SET payload_json = '{}' WHERE event_id = ?", pending[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.Flush(ctx); n != 0 || !errors.Is(err, outbox.ErrBadEnvelope) {
+		t.Fatalf("flush of a broken row: %d %v", n, err)
+	}
+	res, err := e.db.Exec("UPDATE outbox_events SET status='skipped' WHERE event_id=? AND status='pending'", pending[0].ID)
+	if n, _ := res.RowsAffected(); err != nil || n != 1 {
+		t.Fatalf("skip: %d %v", n, err)
+	}
+	if n, err := f.Flush(ctx); n != 1 || err != nil {
+		t.Fatalf("after the skip: %d %v", n, err)
+	}
+	var skipped string
+	if err := e.db.QueryRow("SELECT event_type FROM outbox_events WHERE status = 'skipped'").Scan(&skipped); err != nil ||
+		skipped != ports.EventWorkspaceCreated {
+		t.Fatalf("the skipped row: %q %v", skipped, err)
+	}
+	rows := e.hostRows()
+	if got := kindsOf(rows); got != "workspace_created,branch_created,branch_created" {
+		t.Fatalf("host rows: %s", got)
+	}
+	if n, _, _ := e.store.PendingCount(ctx); n != 0 {
+		t.Fatalf("pending after the skip: %d", n)
+	}
+	t.Logf("measured: actor of 200 bytes, actor_id VARCHAR(191): stalled after 3 failures (%v); delivered after widening; "+
+		"a skipped row stays in outbox_events", lastErr)
 }
 
 func strPtr(s string) *string { return &s }

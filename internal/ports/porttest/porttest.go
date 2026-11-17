@@ -633,6 +633,9 @@ func testOutboxQueue(t *testing.T, s Store) {
 	if err != nil || ids(got) != "02,07,09,05" {
 		t.Fatalf("pending = %s, %v; want 02,07,09,05", ids(got), err)
 	}
+	if n, oldest, err := s.PendingCount(ctx); err != nil || n != 4 || oldest != 10 {
+		t.Fatalf("pending count = %d, oldest %d, %v; want 4, 10", n, oldest, err)
+	}
 	if got, _ := s.PendingEvents(ctx, 2); ids(got) != "02,07" {
 		t.Fatalf("pending with limit 2 = %s", ids(got))
 	}
@@ -669,6 +672,9 @@ func testOutboxQueue(t *testing.T, s Store) {
 	}
 	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "09,05" {
 		t.Fatalf("pending after publishing = %s", ids(got))
+	}
+	if n, oldest, err := s.PendingCount(ctx); err != nil || n != 2 || oldest != 20 {
+		t.Fatalf("pending count after publishing = %d, oldest %d, %v; want 2, 20", n, oldest, err)
 	}
 	if d, err := s.EventDelivery(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E01"); err != nil || d.Status != ports.EventPending {
 		t.Fatalf("old kind: %+v %v", d, err)

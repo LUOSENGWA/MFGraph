@@ -89,16 +89,24 @@ type OutboxQueue interface {
 	// retry count grows by one and nextRetryAtUs says when the publisher
 	// tries again.
 	MarkFailed(ctx context.Context, id string, nextRetryAtUs int64) error
+	// PendingCount returns how many events PendingEvents would return
+	// without a limit, and the CreatedAtUs of the first of them (0 when
+	// there is none): the backlog, for readiness and logs.
+	PendingCount(ctx context.Context) (n, oldestAtUs int64, err error)
 }
 
 // EventPrefix starts every current event kind; PendingEvents leaves out
 // rows of other kinds (written by an earlier version).
 const EventPrefix = "mfgraph."
 
-// Outbox row states.
+// Outbox row states. MFGraph writes only the first two; an operator may
+// set EventSkipped by hand on an event that can never be delivered (see
+// docs/module-mode.md): the publisher reads only pending events, so a
+// skipped one stays in the table, visible, and is never delivered.
 const (
 	EventPending   = "pending"
 	EventPublished = "published"
+	EventSkipped   = "skipped"
 )
 
 // EventDelivery is the delivery state of an outbox row.

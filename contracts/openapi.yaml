@@ -1142,7 +1142,13 @@ components:
           enum: [ready]
         checks:
           type: object
-          description: 'Result per dependency, for example {"db": "ok"}; not_configured when unused.'
+          description: |
+            Result per dependency, for example {"db": "ok"}; not_configured
+            when unused. In module mode, "outbox" is `ok`, or `stalled` when
+            the delivery of events to the host platform's outbox table is
+            stalled: the server stays ready (a restart or less traffic would
+            not help, and writes keep working), and the field `outbox` has
+            the details.
           additionalProperties:
             type: string
         unicode_version:
@@ -1156,6 +1162,32 @@ components:
           type: string
           description: Version of the server build.
           example: v1.0.0
+        outbox:
+          $ref: '#/components/schemas/ReadinessOutbox'
+    ReadinessOutbox:
+      type: object
+      description: |
+        Module mode only: the delivery of events from the local outbox to the
+        host platform's outbox table. Events are delivered strictly in order,
+        so one event that cannot be delivered stops every later one; delivery
+        is stalled when the event at the head of the queue failed 5 times in
+        a row or for 5 minutes.
+      properties:
+        pending:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Events in the local outbox that are not delivered yet.
+        oldest_pending_at:
+          $ref: '#/components/schemas/Timestamp'
+        stalled_since:
+          $ref: '#/components/schemas/Timestamp'
+        last_error:
+          type: string
+          maxLength: 512
+          description: |
+            When stalled: the last error of the event at the head of the
+            queue (never a DSN), cut to 512 bytes.
     Project:
       type: object
       required: [project_id, tenant_id, name, status, created_at, updated_at]

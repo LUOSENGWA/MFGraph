@@ -417,6 +417,13 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	if cfg.Module() {
 		opts.TrustedHeaderPrefix, opts.NoProjects = cfg.TrustedHeaderPrefix, true
 	}
+	if fwd != nil {
+		opts.Outbox = func(ctx context.Context) (api.OutboxState, error) {
+			st, err := fwd.Status(ctx)
+			return api.OutboxState{Pending: st.Pending, OldestPendingAt: st.OldestPendingAt, Stalled: st.Stalled,
+				StalledSince: st.StalledSince, LastError: st.LastError}, err
+		}
+	}
 	srv := &http.Server{
 		Handler:           api.NewHandler(opts),
 		ReadHeaderTimeout: 10 * time.Second,

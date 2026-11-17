@@ -21,7 +21,14 @@
 //     that gets no answer is a failure like any other (logged, counted as a
 //     retry of the event, followed by the backoff);
 //   - events that were not delivered stay pending in the local outbox and
-//     are delivered after a restart.
+//     are delivered after a restart;
+//   - an event that keeps failing stalls delivery: when it failed 5 times in
+//     a row or for 5 minutes, the forwarder logs an ERROR line (the backlog,
+//     the event's local ID and event_id, the error), again at most every 5
+//     minutes, and an INFO line once delivery moves on; Status reports the
+//     state for /readyz. An operator can repair the host table, or mark the
+//     event skipped (status 'skipped' in outbox_events): only pending events
+//     are delivered.
 package outbox
 
 import (
@@ -31,6 +38,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
@@ -81,6 +89,11 @@ type Options struct {
 	MaxBackoff time.Duration
 	// CallTimeout bounds every database call of the forwarder.
 	CallTimeout time.Duration
+	// StallFailures, StallAfter and StallReportEvery: see
+	// DefaultStallFailures.
+	StallFailures    int
+	StallAfter       time.Duration
+	StallReportEvery time.Duration
 }
 
 // Forwarder copies the local outbox to a Sink (see the package
@@ -94,6 +107,8 @@ type Forwarder struct {
 	// backoff is the current wait after failures (0 after a success);
 	// only the goroutine of Run changes it.
 	backoff time.Duration
+	mu      sync.Mutex
+	st      stall // the failures of the event at the head of the queue
 }
 
 // New returns a Forwarder from queue to sink.
@@ -118,6 +133,15 @@ func New(queue ports.OutboxQueue, sink Sink, o Options) *Forwarder {
 	}
 	if o.CallTimeout <= 0 {
 		o.CallTimeout = DefaultCallTimeout
+	}
+	if o.StallFailures <= 0 {
+		o.StallFailures = DefaultStallFailures
+	}
+	if o.StallAfter <= 0 {
+		o.StallAfter = DefaultStallAfter
+	}
+	if o.StallReportEvery <= 0 {
+		o.StallReportEvery = DefaultStallReportEvery
 	}
 	return &Forwarder{queue: queue, sink: sink, o: o, wake: make(chan struct{}, 1)}
 }
@@ -203,7 +227,13 @@ func (f *Forwarder) Flush(ctx context.Context) (int, error) {
 		evs, err = f.queue.PendingEvents(ctx, f.o.Batch)
 		return err
 	}); err != nil {
+		if ctx.Err() == nil {
+			f.failed(ctx, nil, "", err)
+		}
 		return 0, err
+	}
+	if len(evs) == 0 {
+		f.progress()
 	}
 	for i, ev := range evs {
 		now := f.o.Now().UTC()
@@ -220,15 +250,24 @@ func (f *Forwarder) Flush(ctx context.Context) (int, error) {
 					f.o.Logger.Warn("outbox: could not record a failed delivery", "event", ev.ID, "err", merr.Error())
 				}
 			}
-			return i, fmt.Errorf("event %s (%s): %w", ev.ID, ev.Type, err)
+			err = fmt.Errorf("event %s (%s): %w", ev.ID, ev.Type, err)
+			if ctx.Err() == nil {
+				f.failed(ctx, &ev, row.EventID, err)
+			}
+			return i, err
 		}
 		if err := f.call(ctx, "mark the event published", func(ctx context.Context) error {
 			return f.queue.MarkPublished(ctx, ev.ID, now.UnixMicro())
 		}); err != nil {
 			// Delivered but not marked: it is delivered again later, which
 			// the host's unique key absorbs.
-			return i, fmt.Errorf("event %s (%s): %w", ev.ID, ev.Type, err)
+			err = fmt.Errorf("event %s (%s): %w", ev.ID, ev.Type, err)
+			if ctx.Err() == nil {
+				f.failed(ctx, &ev, row.EventID, err)
+			}
+			return i, err
 		}
+		f.progress()
 	}
 	return len(evs), nil
 }

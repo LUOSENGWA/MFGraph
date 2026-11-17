@@ -54,6 +54,21 @@ type Options struct {
 	// platform owns the projects): /projects and /projects/{project_id}
 	// answer 404 as unknown paths, whatever the method and the body.
 	NoProjects bool
+	// Outbox reports the delivery of events to the host platform's outbox
+	// table (module mode; nil without a forwarder): /readyz shows it in the
+	// field outbox and, when delivery is stalled, as checks.outbox
+	// "stalled". A stall does not make the server unready.
+	Outbox func(ctx context.Context) (OutboxState, error)
+}
+
+// OutboxState is the delivery state Options.Outbox reports. When the
+// backlog cannot be read, Outbox returns an error with the rest.
+type OutboxState struct {
+	Pending         int64
+	OldestPendingAt time.Time // zero: nothing pending
+	Stalled         bool
+	StalledSince    time.Time
+	LastError       string
 }
 
 // publicPaths are served without authentication.
@@ -73,7 +88,7 @@ func NewHandler(o Options) http.Handler {
 		p, _ := actorref.NewPseudonymizer(key)
 		o.Pseudonym = p.Pseudonym
 	}
-	h := &handlers{svc: o.Service, readiness: o.Readiness, version: o.Version}
+	h := &handlers{svc: o.Service, readiness: o.Readiness, version: o.Version, outbox: o.Outbox, logger: o.Logger}
 	strict := gen.NewStrictHandlerWithOptions(h, []gen.StrictMiddlewareFunc{contentLength}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			WriteError(w, r, NewError(CodeInvalidRequest, err.Error(), nil))
@@ -137,6 +152,8 @@ type handlers struct {
 	svc       *core.Service
 	readiness []ReadinessCheck
 	version   string
+	outbox    func(ctx context.Context) (OutboxState, error)
+	logger    *slog.Logger
 }
 
 var _ gen.StrictServerInterface = (*handlers)(nil)
@@ -174,5 +191,39 @@ func (h *handlers) GetReadyz(ctx context.Context, _ gen.GetReadyzRequestObject) 
 	if v != "" {
 		resp.Version = &v
 	}
+	if h.outbox != nil {
+		resp.Outbox = h.outboxReport(ctx, checks)
+	}
 	return resp, nil
+}
+
+// outboxReport returns the field outbox of /readyz and sets checks.outbox
+// to "stalled" when delivery is stalled (the server stays ready).
+func (h *handlers) outboxReport(ctx context.Context, checks map[string]string) *gen.ReadinessOutbox {
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	st, err := h.outbox(cctx)
+	cancel()
+	if st.Stalled {
+		checks["outbox"] = "stalled"
+	} else if _, ok := checks["outbox"]; !ok {
+		checks["outbox"] = "ok"
+	}
+	var out gen.ReadinessOutbox
+	if err == nil {
+		out.Pending = &st.Pending
+		if !st.OldestPendingAt.IsZero() {
+			t := st.OldestPendingAt.UTC()
+			out.OldestPendingAt = &t
+		}
+	} else {
+		h.logger.Warn("readyz: cannot count the pending events of the outbox", "request_id", RequestIDFrom(ctx), "err", err.Error())
+	}
+	if st.Stalled {
+		since, last := st.StalledSince.UTC(), st.LastError
+		out.StalledSince, out.LastError = &since, &last
+	}
+	if out == (gen.ReadinessOutbox{}) {
+		return nil
+	}
+	return &out
 }

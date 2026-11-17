@@ -10,7 +10,7 @@ REST/JSON，版本化在 `/api/v1` 下。MCP 与 CLI 都是同一 API 的薄适�
 
 ```text
 GET    /healthz                                   存活检查（免鉴权）
-GET    /readyz                                    就绪检查：db、storage；unicode_version、version
+GET    /readyz                                    就绪检查：db、storage（模块模式另有 outbox）；unicode_version、version
 POST   /api/v1/projects                           创建项目（创建者是拥有者）
 GET    /api/v1/projects/{project_id}
 POST   /api/v1/workspaces                         创建工作区及其 main 分支
@@ -31,6 +31,7 @@ POST   /api/v1/snapshots/{snapshot_id}/restore
 - **路径前缀。** 业务接口的默认前缀是 `/api/v1`；`MFGRAPH_API_PREFIX` 可以改到别处（例如 `/files/v1`，这时 `/files/v1/projects` 就是契约里的 `POST /api/v1/projects`），`/healthz` 和 `/readyz` 始终在根路径。其他路径一律返回 JSON 格式的 404。
 - **谁能做什么（独立部署）。** 任何已认证的调用者都可以创建项目；创建者是这个项目及其下所有工作区的唯一拥有者，其他人访问一律 `404 not_found`。角色以后再做；嵌入宿主平台时由宿主平台的访问控制判定。
 - **模块模式。** 作为宿主平台的模块进程运行时（`MFGRAPH_MODE=module`，见[模块模式](../module-mode.md)），服务监听 Unix domain socket，业务路径在 `/internal/v1/mfgraph` 下；由宿主的代理认证调用者，并通过身份头（操作者、操作者类型、项目，以及可选的"代表谁操作"）连同内部 token 传进来，不再使用 `Authorization: Bearer`。一个请求只能看到它所属项目的资源：其他项目的资源和不存在的 ID 一样返回 `404 not_found`，工作区只能建在请求所属的项目里，`/projects` 返回 404。模块不返回 403。
+- **模块模式的就绪检查。** `/readyz` 还检查宿主的 outbox 表能否访问（不能访问时返回 503），并报告事件投递的状态：`checks.outbox` 为 `ok`；队首的事件连续失败 5 次或持续失败 5 分钟时为 `stalled`。卡住时服务仍然就绪（200），因为重启或减少流量都解决不了问题；字段 `outbox` 给出 `pending` 和 `oldest_pending_at`，卡住时还有 `stalled_since` 和 `last_error`。见[模块模式](../module-mode.md)。
 - **上传路径。** `PUT /api/v1/objects/{workspace_id}` 就是 `PUT /api/v1/workspaces/{workspace_id}/objects` 的上传（响应和错误完全相同），只是路径以 `/objects/` 开头，便于代理按路径前缀给上传单独的大小和时长限制；以后的分片上传放在 `/uploads/` 下。
 - **事件。** 每次改动都在自己的事务里记录[事件](../events.md)（英文）：`mfgraph.workspace_created`、`mfgraph.branch_created`、`mfgraph.commit_created`、`mfgraph.snapshot_restored`、`mfgraph.branch_updated`，带有版本化的 envelope 和由内容派生的 `event_id`。
 - **限制。** 单次上传最多 `MFGRAPH_MAX_UPLOAD_BYTES`（1 GiB；超过返回 `413 file_too_large`，带 `details.max_bytes`，读取请求体之前先按 `Content-Length` 检查）；其他请求的请求体最多 `MFGRAPH_MAX_JSON_BODY_BYTES`（16 MiB；超过返回 `413 request_too_large`，带 `details.max_bytes`，先按 `Content-Length` 检查，超出上限的部分不会被读取）；一次提交最多 `MFGRAPH_MAX_COMMIT_CHANGES` 条改动（10000）；列表每页最多 500 条（默认 50）。读取接口的文件路径放在 `path` 查询参数里（编码前最多 4096 字节；百分号编码后的中文路径可达约 12 KB，超过部分代理的上限）。
