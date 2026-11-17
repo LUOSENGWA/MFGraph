@@ -11,8 +11,10 @@
 //     deliver, without skipping it; the next attempt starts with that event
 //     again;
 //   - at least once: an event whose event_id the host table already has
-//     counts as delivered (the host's unique key deduplicates), so an event
-//     that was written but not marked published is simply written again;
+//     counts as delivered (the host's unique index on event_id rejects the
+//     row, and the duplicate value of the error is the event_id), so an
+//     event that was written but not marked published is simply written
+//     again; CheckSink logs an ERROR when the table has no such index;
 //   - every 500 ms, and at once when a change committed events (Notify);
 //     after a failure the whole forwarder waits, 1 s at first and twice as
 //     long after every further failure, up to 60 s;
@@ -77,6 +79,9 @@ type Sink interface {
 	Insert(ctx context.Context, row Row) error
 	// Check reports whether the table can be reached (readiness).
 	Check(ctx context.Context) error
+	// UniqueEventIDIndex reports whether the table has a unique index on
+	// event_id, which deduplicates redelivered events.
+	UniqueEventIDIndex(ctx context.Context) (IndexState, error)
 }
 
 // Options configure a Forwarder; zero values get the defaults.
@@ -109,6 +114,10 @@ type Forwarder struct {
 	backoff time.Duration
 	mu      sync.Mutex
 	st      stall // the failures of the event at the head of the queue
+	// index and indexLogged: the last state of the host table's unique
+	// index on event_id that CheckSink logged, and when.
+	index       IndexState
+	indexLogged time.Time
 }
 
 // New returns a Forwarder from queue to sink.
@@ -144,6 +153,41 @@ func New(queue ports.OutboxQueue, sink Sink, o Options) *Forwarder {
 		o.StallReportEvery = DefaultStallReportEvery
 	}
 	return &Forwarder{queue: queue, sink: sink, o: o, wake: make(chan struct{}, 1)}
+}
+
+// CheckSink is the readiness check of the host table: an error when it
+// cannot be reached. It also checks that the table has a unique index on
+// event_id, and logs an ERROR when it has none (a redelivered event would
+// be written twice) or a WARN when the forwarder's account cannot see the
+// indexes; neither stops the module. A state is logged when it changes and
+// otherwise at most every StallReportEvery.
+func (f *Forwarder) CheckSink(ctx context.Context) error {
+	if err := f.sink.Check(ctx); err != nil {
+		return err
+	}
+	state, err := f.sink.UniqueEventIDIndex(ctx)
+	if err != nil {
+		state = IndexUnknown
+	}
+	now := f.o.Now()
+	f.mu.Lock()
+	log := state != IndexUnique && (state != f.index || f.indexLogged.IsZero() || now.Sub(f.indexLogged) >= f.o.StallReportEvery)
+	if log || state != f.index {
+		f.index, f.indexLogged = state, now
+	}
+	f.mu.Unlock()
+	switch {
+	case !log:
+	case state == IndexMissing:
+		f.o.Logger.Error("outbox: the host's outbox table has no unique index on event_id: an event that is delivered again " +
+			"(after a crash between writing it and marking it) is written twice; add UNIQUE KEY (event_id)")
+	case err != nil:
+		f.o.Logger.Warn("outbox: cannot check the unique index on event_id of the host's outbox table", "err", err.Error())
+	default:
+		f.o.Logger.Warn("outbox: the forwarder's account cannot see the indexes of the host's outbox table; it must have a " +
+			"unique index on event_id, or a redelivered event is written twice")
+	}
+	return nil
 }
 
 // Notify wakes the forwarder: a change committed events. It never blocks.

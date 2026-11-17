@@ -371,7 +371,7 @@ func TestMySQLForwarder(t *testing.T) {
 	if strings.Join(tail, "|") != strings.Join(want, "|") {
 		t.Fatalf("order of the late events:\n%v\nwant\n%v", tail, want)
 	}
-	t.Logf("measured: %d host rows in outbox order; a duplicate event_id is absorbed by %s", len(rows), outbox.UniqueKey)
+	t.Logf("measured: %d host rows in outbox order; a duplicate event_id is absorbed", len(rows))
 }
 
 // TestMySQLInsertOnlyAccount: the forwarder's account may have INSERT on
@@ -427,6 +427,12 @@ func TestMySQLInsertOnlyAccount(t *testing.T) {
 	if err := other.Check(ctx); err == nil {
 		t.Fatal("readiness of a missing table")
 	}
+	// The unique index on event_id, as the INSERT-only account sees it.
+	st, err := sink.UniqueEventIDIndex(ctx)
+	if err != nil || st == outbox.IndexMissing {
+		t.Fatalf("unique index seen by the INSERT-only account: %v %v", st, err)
+	}
+	t.Logf("measured: the INSERT-only account sees the unique index on event_id as %s", st)
 	t.Log("measured: an account with INSERT on the host table only writes rows, absorbs duplicates and passes the readiness check")
 }
 
@@ -609,6 +615,73 @@ func TestMySQLStalledForwarder(t *testing.T) {
 	}
 	t.Logf("measured: actor of 200 bytes, actor_id VARCHAR(191): stalled after 3 failures (%v); delivered after widening; "+
 		"a skipped row stays in outbox_events", lastErr)
+}
+
+// TestMySQLDuplicateUnderAnyKeyName: the review's P2-1 on the real
+// servers. The host's unique key on event_id has another name; events that
+// were written but not marked published (a crash between the two) are
+// delivered again and recognized as delivered by the duplicate value, so
+// delivery goes on and no row is added. UniqueEventIDIndex finds the key
+// under any name and reports a table without one.
+func TestMySQLDuplicateUnderAnyKeyName(t *testing.T) {
+	e := newMySQLEnv(t)
+	renameKey := func(from, to string) {
+		t.Helper()
+		if _, err := e.ops.Exec("ALTER TABLE module_outbox RENAME INDEX " + from + " TO " + to); err != nil {
+			// Not every server renames an index: drop it and add it again.
+			for _, stmt := range []string{"ALTER TABLE module_outbox DROP INDEX " + from,
+				"ALTER TABLE module_outbox ADD UNIQUE KEY " + to + " (event_id)"} {
+				if _, err := e.ops.Exec(stmt); err != nil {
+					t.Fatalf("%s: %v", stmt, err)
+				}
+			}
+		}
+	}
+	renameKey("uk_module_outbox_event", "uk_event_id")
+	if st, err := e.sink.UniqueEventIDIndex(ctx); err != nil || st != outbox.IndexUnique {
+		t.Fatalf("index under another name: %v %v", st, err)
+	}
+	p := ports.Principal{Ref: "manager", ActorType: "human", ProjectScope: projectM}
+	if _, err := e.svc.CreateWorkspace(ctx, p, core.CreateWorkspaceRequest{ProjectID: projectM}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.flush(); n != 2 {
+		t.Fatalf("delivered %d", n)
+	}
+	// Written to the host table, not marked locally.
+	if _, err := e.db.Exec("UPDATE outbox_events SET status = 'pending', published_at_us = NULL"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := e.fwd.Flush(ctx); n != 2 || err != nil {
+		t.Fatalf("redelivery with the key uk_event_id: %d %v", n, err)
+	}
+	if rows := e.hostRows(); len(rows) != 2 {
+		t.Fatalf("%d host rows after the redelivery", len(rows))
+	}
+	if n, _, _ := e.store.PendingCount(ctx); n != 0 {
+		t.Fatalf("%d events still pending", n)
+	}
+	// A unique key of two columns does not make event_id unique.
+	for _, stmt := range []string{"ALTER TABLE module_outbox DROP INDEX uk_event_id",
+		"ALTER TABLE module_outbox ADD UNIQUE KEY uk_module_event (module, event_id)"} {
+		if _, err := e.ops.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if st, err := e.sink.UniqueEventIDIndex(ctx); err != nil || st != outbox.IndexMissing {
+		t.Fatalf("index of two columns: %v %v", st, err)
+	}
+	if _, err := e.ops.Exec("ALTER TABLE module_outbox DROP INDEX uk_module_event"); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := e.sink.UniqueEventIDIndex(ctx); err != nil || st != outbox.IndexMissing {
+		t.Fatalf("no unique index: %v %v", st, err)
+	}
+	logs := &syncBuffer{}
+	f := outbox.New(e.store, e.sink, outbox.Options{Logger: slog.New(slog.NewTextHandler(logs, nil))})
+	if err := f.CheckSink(ctx); err != nil || !strings.Contains(logs.String(), "no unique index on event_id") {
+		t.Fatalf("CheckSink without the index: %v\n%s", err, logs.String())
+	}
 }
 
 func strPtr(s string) *string { return &s }

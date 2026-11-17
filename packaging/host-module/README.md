@@ -78,7 +78,14 @@ shorter than 16 characters is accepted with a warning.
   0600; a stale one is removed);
 - `ops.module_outbox` on the same database instance as the `mfgraph` schema
   (the host's migration `ops/0029-module-outbox.sql`, `actor_id
-  VARCHAR(255)`);
+  VARCHAR(255)`), with a **unique index on `event_id` alone** (0029 has
+  `UNIQUE KEY uk_module_outbox_event (event_id)`; the name does not
+  matter). The forwarder delivers at least once: after a crash between
+  writing an event and marking it, it writes the event again, and only the
+  unique index turns that into a duplicate-key error, which the forwarder
+  recognizes by the duplicate `event_id`. Without the index the event is
+  written twice; the module logs an ERROR at the start and in `/readyz`
+  (at most every 5 minutes) but keeps running;
 - an ops account (`MFGRAPH_OPS_DSN`) with INSERT on `ops.module_outbox`
   (nothing else is needed; without `MFGRAPH_OPS_DSN` the forwarder uses
   `MFGRAPH_DSN`, whose account then needs that INSERT), and an mfgraph

@@ -253,6 +253,16 @@ func (s *moduleServer) stop() time.Duration {
 	return time.Since(start)
 }
 
+// kill ends the process with SIGKILL, as a crash would.
+func (s *moduleServer) kill() {
+	if s.exited {
+		return
+	}
+	s.exited = true
+	_ = s.cmd.Process.Kill()
+	s.err = <-s.done
+}
+
 // claims are the identity headers of a request.
 type claims struct {
 	token, actor, actorType, project, obo, oboType string
@@ -884,6 +894,64 @@ func TestModuleModeStalledForwarder(t *testing.T) {
 	}
 	if !strings.Contains(s.logs.String(), "delivery to the host's outbox table resumed") {
 		t.Fatalf("no INFO line on recovery:\n%s", s.logs.String())
+	}
+}
+
+// The host's unique key on event_id has another name than in its
+// migration. The process is killed (SIGKILL) after the events were written
+// to the host table, and the local outbox is set back to pending, as if the
+// marks had been lost with the process. After the restart the events are
+// delivered again and recognized as delivered by the duplicate event_id:
+// nothing is added, nothing stays pending. A table without a unique index
+// on event_id gives an ERROR line at the start, and the module still runs.
+func TestModuleModeRedeliveryAnyKeyName(t *testing.T) {
+	m := newModuleEnv(t)
+	m.migrate()
+	for _, stmt := range []string{"ALTER TABLE module_outbox DROP INDEX uk_module_outbox_event",
+		"ALTER TABLE module_outbox ADD UNIQUE KEY uk_event_id (event_id)"} {
+		if _, err := m.ops.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	s := m.start(nil)
+	c := defaultClaims(projP)
+	ws, main := s.workspace(c)
+	r, _ := s.commit(c, ws, main, 1, "", putChange("r.txt", s.upload(c, ws, "redelivered")))
+	s.expect(r, "commit", 201, nil)
+	m.waitHostRows(ws, 4, 10*time.Second)
+	s.kill()
+	if _, err := m.db.Exec("UPDATE outbox_events SET status = 'pending', published_at_us = NULL"); err != nil {
+		t.Fatal(err)
+	}
+	s2 := m.start(nil)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		var pending int
+		_ = m.db.QueryRow("SELECT COUNT(*) FROM outbox_events WHERE status = 'pending'").Scan(&pending)
+		if pending == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d events still pending after the restart:\n%s", pending, s2.logs.String())
+		}
+	}
+	if rows := m.hostRows(ws); len(rows) != 4 {
+		t.Fatalf("%d host rows after the redelivery, want 4", len(rows))
+	}
+	if strings.Contains(s2.logs.String(), `"level":"ERROR"`) {
+		t.Fatalf("an ERROR line with the unique key uk_event_id:\n%s", s2.logs.String())
+	}
+	s2.stop()
+
+	// No unique index on event_id: an ERROR line, and the module runs.
+	if _, err := m.ops.Exec("ALTER TABLE module_outbox DROP INDEX uk_event_id"); err != nil {
+		t.Fatal(err)
+	}
+	s3 := m.start(nil)
+	if !strings.Contains(s3.logs.String(), `"level":"ERROR","msg":"outbox: the host's outbox table has no unique index on event_id`) {
+		t.Fatalf("no ERROR line for the missing unique index:\n%s", s3.logs.String())
+	}
+	if r := s3.do(claims{}, "GET", modRoot+"/readyz", nil, nil); r.status != 200 {
+		t.Fatalf("readyz without the unique index: %d %s", r.status, r.body)
 	}
 }
 

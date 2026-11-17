@@ -382,9 +382,16 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 			defer ops.Close()
 			fwd = outbox.New(store, sink, outbox.Options{Logger: logger})
 			deps.EventsCommitted = fwd.Notify
+			// The unique index on event_id, logged at the start (and by
+			// /readyz); the table may not be reachable yet.
+			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := fwd.CheckSink(cctx); err != nil {
+				logger.Warn("outbox: the host's outbox table cannot be reached yet; the forwarder retries", "err", err.Error())
+			}
+			cancel()
 			// Ready only when the host's outbox table can be written.
 			readiness = append(readiness, api.ReadinessCheck{Name: "outbox", Code: api.CodeDBUnavailable, Required: true,
-				Check: sink.Check})
+				Check: fwd.CheckSink})
 		}
 		svc, err = core.New(core.Config{TenantID: cfg.TenantID, MaxUploadBytes: cfg.MaxUploadBytes,
 			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)

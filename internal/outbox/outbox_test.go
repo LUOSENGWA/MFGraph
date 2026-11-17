@@ -30,9 +30,11 @@ type fakeSink struct {
 	byID     map[string]bool
 	attempts []string           // event IDs of every Insert call
 	fail     func(string) error // by event_id; nil = accept
+	index    outbox.IndexState
+	indexErr error
 }
 
-func newSink() *fakeSink { return &fakeSink{byID: map[string]bool{}} }
+func newSink() *fakeSink { return &fakeSink{byID: map[string]bool{}, index: outbox.IndexUnique} }
 
 func (s *fakeSink) Insert(_ context.Context, r outbox.Row) error {
 	s.mu.Lock()
@@ -51,6 +53,12 @@ func (s *fakeSink) Insert(_ context.Context, r outbox.Row) error {
 }
 
 func (s *fakeSink) Check(context.Context) error { return nil }
+
+func (s *fakeSink) UniqueEventIDIndex(context.Context) (outbox.IndexState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.index, s.indexErr
+}
 
 func (s *fakeSink) setFail(f func(string) error) { s.mu.Lock(); s.fail = f; s.mu.Unlock() }
 
@@ -516,5 +524,49 @@ func TestStallErrorIsClipped(t *testing.T) {
 	if !st.Stalled || len(st.LastError) > outbox.MaxErrorBytes || len(st.LastError) < outbox.MaxErrorBytes-3 ||
 		!utf8.ValidString(st.LastError) {
 		t.Fatalf("last error of %d bytes, valid %v", len(st.LastError), utf8.ValidString(st.LastError))
+	}
+}
+
+// TestCheckSinkIndex: CheckSink logs an ERROR when the host table has no
+// unique index on event_id and a WARN when the account cannot see the
+// indexes, without failing the readiness check; a state is logged when it
+// changes and otherwise once per report interval.
+func TestCheckSinkIndex(t *testing.T) {
+	sink := newSink()
+	logs := &syncBuffer{}
+	clk := &clock{t: time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)}
+	f := outbox.New(memory.NewStore(), sink, outbox.Options{Logger: slog.New(slog.NewTextHandler(logs, nil)), Now: clk.now,
+		StallReportEvery: 5 * time.Minute})
+	check := func() {
+		t.Helper()
+		if err := f.CheckSink(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check()
+	if logs.String() != "" {
+		t.Fatalf("logged with a unique index:\n%s", logs.String())
+	}
+	sink.mu.Lock()
+	sink.index = outbox.IndexMissing
+	sink.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		check()
+		clk.add(time.Minute)
+	}
+	if n := countOf(logs.String(), "no unique index on event_id"); n != 1 || !strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("%d lines:\n%s", n, logs.String())
+	}
+	clk.add(3 * time.Minute)
+	check()
+	if n := countOf(logs.String(), "no unique index on event_id"); n != 2 {
+		t.Fatalf("%d lines after the report interval", n)
+	}
+	sink.mu.Lock()
+	sink.index = outbox.IndexUnknown
+	sink.mu.Unlock()
+	check()
+	if !strings.Contains(lastLine(logs.String(), "cannot see the indexes"), "level=WARN") {
+		t.Fatalf("no WARN for invisible indexes:\n%s", logs.String())
 	}
 }

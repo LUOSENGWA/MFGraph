@@ -20,9 +20,6 @@ const datetime6 = "2006-01-02 15:04:05.000000"
 // tableRe is the form of a table name, schema.table.
 var tableRe = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
 
-// UniqueKey is the name of the host table's unique key on event_id.
-const UniqueKey = "uk_module_outbox_event"
-
 const (
 	errDupEntry          = 1062 // ER_DUP_ENTRY
 	errTableAccessDenied = 1142 // ER_TABLEACCESS_DENIED_ERROR
@@ -35,7 +32,11 @@ const (
 //	  payload_json, status, attempts, available_at, created_at, updated_at)
 //	VALUES (?, 'mfgraph', ?, 'project', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
 //
-// A duplicate key on UniqueKey means the event was delivered before.
+// A duplicate key error (1062) whose duplicate value is the row's event_id
+// means the event was delivered before; the name of the unique key does not
+// matter. The table must have a unique index on event_id
+// (UniqueEventIDIndex): without one a delivered event that is delivered
+// again (after a crash between the write and the mark) is written twice.
 type SQLSink struct {
 	db            *sql.DB
 	schema, table string
@@ -67,10 +68,77 @@ func (s *SQLSink) Insert(ctx context.Context, r Row) error {
 	}
 	_, err := s.db.ExecContext(ctx, s.insert, r.EventID, r.EventKind, r.ScopeID, actorType, r.ActorID, string(r.Payload),
 		r.AvailableAt.UTC().Format(datetime6), r.CreatedAt.UTC().Format(datetime6), r.UpdatedAt.UTC().Format(datetime6))
-	if isDuplicateEvent(err) {
+	if isDuplicateOf(err, r.EventID) {
 		return nil
 	}
 	return err
+}
+
+// IndexState says whether the host table has a unique index on event_id.
+type IndexState int
+
+// IndexState values.
+const (
+	// IndexUnknown: information_schema shows no index of the table to the
+	// forwarder's account, so it cannot tell.
+	IndexUnknown IndexState = iota
+	// IndexUnique: a unique index (or the primary key) on exactly event_id.
+	IndexUnique
+	// IndexMissing: the table's indexes are visible and none of them is a
+	// unique index on exactly event_id.
+	IndexMissing
+)
+
+func (s IndexState) String() string {
+	switch s {
+	case IndexUnique:
+		return "unique"
+	case IndexMissing:
+		return "missing"
+	}
+	return "unknown"
+}
+
+// UniqueEventIDIndex looks in information_schema.statistics for a unique
+// index whose only column is event_id. The host table has a primary key, so
+// an account that sees no index at all cannot see them (IndexUnknown).
+func (s *SQLSink) UniqueEventIDIndex(ctx context.Context) (IndexState, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT index_name, non_unique, column_name FROM information_schema.statistics
+		WHERE table_schema = ? AND table_name = ?`, s.schema, s.table)
+	if err != nil {
+		return IndexUnknown, err
+	}
+	defer rows.Close()
+	type index struct {
+		unique  bool
+		columns []string
+	}
+	indexes := map[string]*index{}
+	for rows.Next() {
+		var name, column string
+		var nonUnique int64
+		if err := rows.Scan(&name, &nonUnique, &column); err != nil {
+			return IndexUnknown, err
+		}
+		ix := indexes[name]
+		if ix == nil {
+			ix = &index{unique: nonUnique == 0}
+			indexes[name] = ix
+		}
+		ix.columns = append(ix.columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		return IndexUnknown, err
+	}
+	if len(indexes) == 0 {
+		return IndexUnknown, nil
+	}
+	for _, ix := range indexes {
+		if ix.unique && len(ix.columns) == 1 && strings.EqualFold(ix.columns[0], "event_id") {
+			return IndexUnique, nil
+		}
+	}
+	return IndexMissing, nil
 }
 
 // Check implements Sink: the connection works and the table exists, by
@@ -99,11 +167,14 @@ func (s *SQLSink) Check(ctx context.Context) error {
 	return nil
 }
 
-// isDuplicateEvent reports a duplicate key on the event_id of the host
-// table.
-func isDuplicateEvent(err error) bool {
+// isDuplicateOf reports a duplicate key error (1062) whose duplicate value
+// is exactly eventID: MySQL 8.0 and seekdb quote it, as in
+// "Duplicate entry '<value>' for key '<key>'". An event_id is 64 hex digits,
+// so no other column of the row can have that value, and a key of several
+// columns would quote them joined by '-'.
+func isDuplicateOf(err error, eventID string) bool {
 	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == errDupEntry && strings.Contains(me.Message, UniqueKey)
+	return eventID != "" && errors.As(err, &me) && me.Number == errDupEntry && strings.Contains(me.Message, "'"+eventID+"'")
 }
 
 // Time reads a DATETIME(6) value written by Insert (tests and diagnostics).
