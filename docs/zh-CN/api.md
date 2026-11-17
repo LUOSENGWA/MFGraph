@@ -4,7 +4,7 @@
 
 REST/JSON，版本化在 `/api/v1` 下。MCP 与 CLI 都是同一 API 的薄适配器。
 
-第一个核心切片的契约是 [`contracts/openapi.yaml`](../../contracts/openapi.yaml)（OpenAPI 3.0.3）：健康检查、项目、project 级 workspace、分支、整文件上传进暂存（`PUT /api/v1/workspaces/{id}/objects`）、提交、时间线、目录浏览、文件下载、diff 和恢复，已全部实现（M1.0a）。再往下列出的是规划中的 v1 接口；后续切片只新增接口，不改变已有接口。
+第一个核心切片的契约是 [`contracts/openapi.yaml`](../../contracts/openapi.yaml)（OpenAPI 3.0.3）：健康检查、项目、project 级 workspace、分支、整文件上传进暂存（`PUT /api/v1/workspaces/{id}/objects`，以及上传路径下的同一个上传 `PUT /api/v1/objects/{id}`）、提交、时间线、目录浏览、文件下载、diff 和恢复，已全部实现（M1.0a），两种部署形态都可用：独立部署，以及作为宿主平台的模块进程（[模块模式](../module-mode.md)，英文）。再往下列出的是规划中的 v1 接口；后续切片只新增接口，不改变已有接口。
 
 ## 第一个核心切片（M1.0a）
 
@@ -17,6 +17,7 @@ POST   /api/v1/workspaces                         创建工作区及其 main 分
 GET    /api/v1/workspaces/{workspace_id}          含 main_branch_id
 GET    /api/v1/workspaces/{workspace_id}/branches
 PUT    /api/v1/workspaces/{workspace_id}/objects  上传一个完整文件（暂存）
+PUT    /api/v1/objects/{workspace_id}             同一个上传，放在上传路径 /objects/ 下
 POST   /api/v1/workspaces/{workspace_id}/commits  唯一产生快照的接口
 GET    /api/v1/workspaces/{workspace_id}/timeline?branch_id=
 GET    /api/v1/snapshots/{snapshot_id}
@@ -29,6 +30,9 @@ POST   /api/v1/snapshots/{snapshot_id}/restore
 - **必须连数据库。** 没有数据库（未设置 `MFGRAPH_DB_DSN` 或连不上）时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；没有"无数据库模式"。
 - **路径前缀。** 业务接口的默认前缀是 `/api/v1`；`MFGRAPH_API_PREFIX` 可以改到别处（例如 `/files/v1`，这时 `/files/v1/projects` 就是契约里的 `POST /api/v1/projects`），`/healthz` 和 `/readyz` 始终在根路径。其他路径一律返回 JSON 格式的 404。
 - **谁能做什么（独立部署）。** 任何已认证的调用者都可以创建项目；创建者是这个项目及其下所有工作区的唯一拥有者，其他人访问一律 `404 not_found`。角色以后再做；嵌入宿主平台时由宿主平台的访问控制判定。
+- **模块模式。** 作为宿主平台的模块进程运行时（`MFGRAPH_MODE=module`，见[模块模式](../module-mode.md)），服务监听 Unix domain socket，业务路径在 `/internal/v1/mfgraph` 下；由宿主的代理认证调用者，并通过身份头（操作者、操作者类型、项目，以及可选的"代表谁操作"）连同内部 token 传进来，不再使用 `Authorization: Bearer`。一个请求只能看到它所属项目的资源：其他项目的资源和不存在的 ID 一样返回 `404 not_found`，工作区只能建在请求所属的项目里，`/projects` 返回 404。模块不返回 403。
+- **上传路径。** `PUT /api/v1/objects/{workspace_id}` 就是 `PUT /api/v1/workspaces/{workspace_id}/objects` 的上传（响应和错误完全相同），只是路径以 `/objects/` 开头，便于代理按路径前缀给上传单独的大小和时长限制；以后的分片上传放在 `/uploads/` 下。
+- **事件。** 每次改动都在自己的事务里记录[事件](../events.md)（英文）：`mfgraph.workspace_created`、`mfgraph.branch_created`、`mfgraph.commit_created`、`mfgraph.snapshot_restored`、`mfgraph.branch_updated`，带有版本化的 envelope 和由内容派生的 `event_id`。
 - **限制。** 单次上传最多 `MFGRAPH_MAX_UPLOAD_BYTES`（1 GiB；超过返回 `413 file_too_large`，带 `details.max_bytes`，读取请求体之前先按 `Content-Length` 检查）；其他请求的请求体最多 `MFGRAPH_MAX_JSON_BODY_BYTES`（16 MiB；超过返回 `413 request_too_large`，带 `details.max_bytes`，先按 `Content-Length` 检查，超出上限的部分不会被读取）；一次提交最多 `MFGRAPH_MAX_COMMIT_CHANGES` 条改动（10000）；列表每页最多 500 条（默认 50）。读取接口的文件路径放在 `path` 查询参数里（编码前最多 4096 字节；百分号编码后的中文路径可达约 12 KB，超过部分代理的上限）。
 - **下载。** `GET .../file` 返回 `application/octet-stream`，带 `Content-Disposition: attachment`（文件名以 UTF-8 的 `filename*` 和 ASCII 的 `filename` 后备形式给出）、`X-Content-Type-Options: nosniff`、`ETag`；`If-None-Match` 匹配时返回 304；支持单段 `Range`（206，或 416）。存储对象缺失或损坏时，在发送任何内容之前返回 `410 blob_missing`（`missing_in_storage`）。
 - **名称。** 项目名和工作区显示名是自由文本，最多 255 字节（UTF-8），不能含控制字符、非字符、双向控制字符和不可见字符（即路径规则的禁止清单）；项目名不能为空，也不能只有空白。否则返回 `400 invalid_request`。
@@ -79,14 +83,15 @@ POST   /api/v1/workspaces/{id}/promote
 ## 上传
 
 ```text
-POST   /api/v1/workspaces/{id}/uploads
+POST   /api/v1/uploads                       开始一次分片上传（workspace_id 放在请求体里）
 GET    /api/v1/uploads/{upload_id}
 POST   /api/v1/uploads/{upload_id}/parts
 POST   /api/v1/uploads/{upload_id}/complete
 DELETE /api/v1/uploads/{upload_id}
 ```
 
-大文件使用预签名 multipart URL。API 返回元数据与 URL，不返回文件字节。
+大文件使用预签名 multipart URL。API 返回元数据与 URL，不返回文件字节。这些接口都在 `/uploads/` 下：和整文件上传的
+`/objects/` 一样，代理可以按这个路径前缀放宽上传限制。
 
 ## 锁
 
@@ -111,7 +116,7 @@ POST   /api/v1/merges/{id}/abort
 ## 请求头
 
 ```text
-Authorization: Bearer <token>
+Authorization: Bearer <token>        独立部署；模块模式改用身份头（见 module-mode.md）
 Idempotency-Key: <ulid>
 If-Match: <generation>
 X-Request-Id: <ulid>
@@ -161,3 +166,5 @@ X-Correlation-Id: <optional>
 除此之外没有其他要求：身份引用按原样保存、按字节比较，不做 Unicode 规范化、不做大小写折叠，也不检查是否为 ULID（`a` 与 `a ` 是两个操作者）。宿主平台传入它自己的身份字符串，例如 worker 名、`manager` 这样的用户名，或 `@alice:example.com` 这样的 ID。独立部署时，一个 principal 的身份引用就是其 `principal_uid`（ULID）的字符串形式；`MFGRAPH_AUTH_TOKENS` 的静态 token 映射到身份引用（`token=alice` 与 `token=01J...` 都合法）。
 
 响应里用 `*_ref` 字段携带身份引用（[契约](../../contracts/openapi.yaml)中的 `ActorRef`），另有可选的 `*_principal_uid`，在宿主平台为其操作者提供 ULID 之前保持 `null`。Go 实现在 `internal/actorref`。
+
+宿主平台还会给出每个操作者的**类型**（`[a-z0-9_-]{1,16}`，例如 `human`、`worker`），不同类型的操作者可能同名。MFGraph 把类型和身份引用存在一起：快照有 `author_type`，作者代表别人操作时还有 `on_behalf_of_ref` 和 `on_behalf_of_type`；不适用时这些字段省略（独立部署没有类型）。`Idempotency-Key` 只会对用过它的同一个操作者（同一类型）回放：同名但类型不同时返回 `409 idempotency_key_reuse`。

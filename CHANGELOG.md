@@ -4,6 +4,16 @@ All notable changes will be documented here.
 
 ## [Unreleased]
 
+### M1.0a module: the same binary as a module of a host platform
+
+- `MFGRAPH_MODE=module` runs the server as a module process: a Unix domain socket only, `--config FILE` (KEY=VALUE, no expansion) and `--socket PATH` before or after the command, the host's variable names (`MODULE_ID`, `MODULE_SOCKET`, `MODULE_INTERNAL_TOKEN`, `MFGRAPH_DSN`, `MFGRAPH_OPS_DSN`, `MFGRAPH_DATA_DIR`, `MFGRAPH_ROUTE_PREFIX`, ...) as aliases of the existing ones, and refusals at start for missing or contradictory settings. See [module mode](docs/module-mode.md).
+- Identity headers instead of bearer tokens (`<prefix>Actor`, `Actor-Type`, `Project`, optional `On-Behalf-Of`, ..., authenticated by an internal token; 401 otherwise); the host's request and trace IDs are used; a request sees only its project's resources (404 like an unknown ID, never 403); no `/projects` endpoints; the core never reads a projects table.
+- Events: the same `mfgraph.*` kinds in both modes (`workspace_created`, `branch_created`, `commit_created`, `snapshot_restored`, `branch_updated` with a reason; `snapshot_created` registered, not emitted), a versioned envelope, an `event_id` derived from the content, at most 256 KiB; [docs/events.md](docs/events.md) is the vocabulary. Module mode forwards the local outbox to the host's outbox table strictly in order, at least once, with backoff, and once more on shutdown; `/readyz` checks that table.
+- New migration `mysql/0009_actor_types` (nullable actor type columns); the actor type is recorded with every actor, and an `Idempotency-Key` is replayed only to an actor of the same type. `Snapshot` gains the optional `author_type`, `on_behalf_of_ref`, `on_behalf_of_principal_uid` and `on_behalf_of_type`; existing migration files are unchanged.
+- New upload path `PUT /api/v1/objects/{workspace_id}`, the same operation as `PUT /api/v1/workspaces/{workspace_id}/objects` (additive contract change).
+- A change of a branch is recorded at least two microseconds after the previous one (it used to be one after the parent), so that the outbox keeps the order of a branch's events whatever the clock does.
+- `make bundle` builds reproducible module bundles (linux/amd64, linux/arm64; tar.zst and sha256sums.txt) from `packaging/host-module/`, the only directory that names the host platform; CI builds them, checks that they are reproducible and runs their acceptance script.
+
 ### M1.0a: the first core slice
 
 - Every endpoint of the contract works: projects (owned by their creator), workspaces with their main branch, whole-file uploads, commits, timeline, directory listings, downloads (ETag, If-None-Match, single ranges), diffs and restores (a whole snapshot or one path), with `Idempotency-Key` on every POST.

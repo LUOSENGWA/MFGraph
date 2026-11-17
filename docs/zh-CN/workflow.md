@@ -20,23 +20,16 @@ retention.hold
 
 ## 事件
 
-CloudEvents 风格信封：
+每次改动都在自己的事务里把事件写进 outbox，envelope 如下（事件种类、`data` 字段和 `event_id` 的派生方法见[事件](../events.md)，英文）：
 
 ```json
 {
-  "specversion": "1.0",
-  "id": "01J...",
-  "source": "mfgraph://tenant/t1/project/p1",
-  "type": "mfgraph.snapshot.created.v1",
-  "subject": "workstreams/01J...",
-  "time": "2026-11-11T12:00:00Z",
-  "data": {
-    "tenant_id": "t1",
-    "project_id": "p1",
-    "scope_node_id": "n1",
-    "workstream_id": "w1",
-    "correlation_id": "01J..."
-  }
+  "v": 1,
+  "event_id": "<64 lowercase hex digits, derived from the content>",
+  "occurred_at": "2026-11-16T08:00:00.000000Z",
+  "project_id": "01J...",
+  "actor": {"type": "human", "id": "manager"},
+  "data": {"workspace_id": "01J...", "snapshot_id": "01J...", "branch_id": "01J...", "ref_name": "main", "...": "..."}
 }
 ```
 
@@ -69,7 +62,7 @@ Health() -> ok
 
 ## 不派发
 
-MFGraph **不指派、不派发任务**。`workstream` 只是版本车道（active/archived）；任务指派、派发与任务状态归外部任务/工作流系统。MFGraph 只发领域事件（如 `mfgraph.snapshot.created.v1`），工作流引擎可回写 `workflow_ref`（仅引用）。
+MFGraph **不指派、不派发任务**。`workstream` 只是版本车道（active/archived）；任务指派、派发与任务状态归外部任务/工作流系统。MFGraph 只发领域事件（如 `mfgraph.commit_created`，见[事件](../events.md)），工作流引擎可回写 `workflow_ref`（仅引用）。
 
 ## 安全
 

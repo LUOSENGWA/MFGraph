@@ -13,7 +13,8 @@
 ## M1 — 核心（G1）
 
 - **M1.0a** — **已完成**：单 workspace / 单 branch（`main`）/ POSIX 本地盘 / 整文件对象；`上传 → 提交 → 浏览/下载 → diff → 恢复 → 重启`；REST 与薄 CLI。验收测试（`test/e2e`：9 条验收标准、一个恢复与提交的竞争用例和 CLI 冒烟测试）在 CI 中于 MySQL 8.0 和 seekdb 上通过。
-- **M1.0b**：chunk/pack（不压缩）、断点续传与分片上传、预签名与 S3、锁/fencing、GC、配额、project commit、MCP、outbox 发布器。
+- **M1.0a 模块化** — **已完成**：同一个二进制作为宿主平台的模块进程运行（[模块模式](../module-mode.md)，英文）：Unix domain socket、身份头与项目包含性检查、按顺序把[事件](../events.md)转发到宿主的 outbox 表、身份类型、上传路径 `/objects/`、可复现的 bundle。模块模式的验收测试和独立模式的一起在 MySQL 8.0 和 seekdb 上通过；CI 会用 bundle 跑一遍验收脚本。
+- **M1.0b**：chunk/pack（不压缩）、断点续传与分片上传（放在 `/uploads/` 下）、预签名与 S3、锁/fencing（以及模块的 `lock` 能力）、显式快照和 `mfgraph.snapshot_created`、GC、配额、project commit、MCP、独立部署的 outbox 发布器。
 - **M1.1**：硬化——角色、按名字创建分支、完整 CLI。
 - 门：1 GiB 上传服务端不缓冲；kill -9 后无半成品 snapshot；两并发 commit 只有一个 CAS 成功；锁 fencing；GC 不删已提交快照；POSIX + S3 contract test 全绿。
 
@@ -26,6 +27,7 @@
 - **恢复**整个快照（原样复用其树）或其中一个路径，生成以分支 head 为父快照的新快照。head 对应目录里没有的恢复名字，不能与该目录已有的名字有大小写冲突。
 - **请求。** JSON 请求体必须是 `application/json`、单个 JSON 值，最多 `MFGRAPH_MAX_JSON_BODY_BYTES`（16 MiB）；下载是带 `nosniff` 的附件，开始前先检查存储对象；请求在租约期内持有其 `Idempotency-Key`（`MFGRAPH_IDEMPOTENCY_LEASE`，60 秒），之后重试的请求会接管；数据库的锁等待超时和死锁返回 503 并带 `Retry-After: 1`。
 - **运维。** 必须连数据库（没有数据库时服务返回 503）；监听 TCP 或 Unix domain socket；API 路径前缀可配置；`/readyz` 报告 Unicode 版本 V 和服务版本；8 秒内优雅退出；日志假名使用部署自己的密钥。
+- **模块模式**（M1.0a 模块化）：`MFGRAPH_MODE=module`、`--config` 和 `--socket`、宿主的变量名作为别名、用身份头代替 bearer token、项目包含性检查（404，从不返回 403）、没有项目接口、事件转发到宿主的 outbox 表、每个操作者都记录类型、`PUT /objects/{workspace_id}`、`make bundle`。
 
 ### M1.0a：范围与偏差
 
@@ -33,11 +35,12 @@
 |---|---|---|---|
 | 数据库 | 必须连；不连时所有业务接口返回 503 | 不变 | — |
 | 权限（独立部署） | 项目创建者是唯一拥有者，其他人一律 404 | 角色：reader / editor / reviewer / owner | M1.1 |
-| 权限（嵌入模式） | — | 由宿主平台的访问控制判定；MFGraph 只检查资源归属 | M2 |
+| 权限（嵌入模式） | M1.0a 模块化已完成：宿主的代理把请求限定在一个项目里，MFGraph 检查资源是否属于这个项目（否则 404，从不返回 403） | 身份头签名（HMAC）、由 MFGraph 判定 403、按团队授权 | 以后 |
 | CLI | REST 的薄客户端 | 完整 CLI | M1.1 |
-| 上传 | 整文件，单请求，上限 1 GiB | 分片、断点续传、预签名、S3 | M1.0b |
+| 上传 | 整文件，单请求，上限 1 GiB；也可以走上传路径 `/objects/` | 分片、断点续传、预签名、S3，放在 `/uploads/` 下 | M1.0b |
 | 分支 | 只有 `main` | 按名字创建分支；数据库层面的大小写唯一约束 | M1.0b / M1.1 |
-| 事件 | 写入 `outbox_events`，不发布 | 发布器；嵌入模式写宿主平台的 outbox | M1.0b / M2 |
+| 事件 | 写入 `outbox_events`；模块模式转发到宿主的 outbox 表（M1.0a 模块化）；独立部署不发布 | 独立部署的发布器 | M1.0b |
+| `mfgraph.snapshot_created` | 登记但不发：快照只来自提交和恢复 | 显式快照（checkpoint、恢复前快照）时发 | M1.0b |
 | 用量和配额 | 不维护（只建行） | 配额 | M1.0b |
 | 垃圾回收 | 不做，孤立对象和暂存上传会累积 | GC | M1.0b |
 | 长路径查询 | `GET` 加 `path` 查询参数（最长 4096 字节） | 需要时新增 `POST` 形式的接口 | 以后 |

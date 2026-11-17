@@ -61,7 +61,7 @@ host / server
 
 ## 5. Deployment modes
 
-- embedded module in a host platform;
+- embedded module in a host platform: the same binary in module mode ([module mode](module-mode.md));
 - standalone `mfgraph-server`;
 - single-node or HA;
 - S3-compatible or POSIX/NFS storage.

@@ -20,23 +20,16 @@ retention.hold
 
 ## Events
 
-CloudEvents-style envelope:
+Every change records its events in the outbox of its own transaction, with this envelope (see [events](events.md) for the kinds, the `data` fields and how `event_id` is derived):
 
 ```json
 {
-  "specversion": "1.0",
-  "id": "01J...",
-  "source": "mfgraph://tenant/t1/project/p1",
-  "type": "mfgraph.snapshot.created.v1",
-  "subject": "workstreams/01J...",
-  "time": "2026-11-11T12:00:00Z",
-  "data": {
-    "tenant_id": "t1",
-    "project_id": "p1",
-    "scope_node_id": "n1",
-    "workstream_id": "w1",
-    "correlation_id": "01J..."
-  }
+  "v": 1,
+  "event_id": "<64 lowercase hex digits, derived from the content>",
+  "occurred_at": "2026-11-16T08:00:00.000000Z",
+  "project_id": "01J...",
+  "actor": {"type": "human", "id": "manager"},
+  "data": {"workspace_id": "01J...", "snapshot_id": "01J...", "branch_id": "01J...", "ref_name": "main", "...": "..."}
 }
 ```
 
@@ -69,7 +62,7 @@ Optional:
 
 ## No dispatch
 
-MFGraph does **not** assign or dispatch tasks. A `workstream` is only a version lane (active/archived); task assignment, dispatch and task status belong to the external task/workflow system. MFGraph emits domain events (e.g. `mfgraph.snapshot.created.v1`) and the workflow engine may write back `workflow_ref` (reference only).
+MFGraph does **not** assign or dispatch tasks. A `workstream` is only a version lane (active/archived); task assignment, dispatch and task status belong to the external task/workflow system. MFGraph emits domain events (e.g. `mfgraph.commit_created`, see [events](events.md)) and the workflow engine may write back `workflow_ref` (reference only).
 
 ## Security
 

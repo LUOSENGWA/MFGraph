@@ -15,9 +15,16 @@ info:
 
     * **Authentication.** Every endpoint except `/healthz` and `/readyz`
       requires `Authorization: Bearer <token>`. A missing or unknown token
-      gives `401 unauthenticated`.
+      gives `401 unauthenticated`. Run as a module process of a host
+      platform (module mode, docs/module-mode.md), the server listens on a
+      Unix domain socket below a module prefix (default
+      `/internal/v1/mfgraph`) and takes identity headers set by the host's
+      proxy instead: an internal token, the actor, its type and the project
+      of the request (optionally the actor acted for); `Authorization` is
+      ignored, and a missing or invalid header gives `401 unauthenticated`.
     * **Request IDs.** A valid `X-Request-Id` request header (1–128 visible
-      ASCII characters) is reused; otherwise the server generates a ULID.
+      ASCII characters) is reused (in module mode the request ID header of
+      the host's proxy comes first); otherwise the server generates a ULID.
       Every response, including errors, carries `X-Request-Id`, and error
       bodies repeat it as `request_id`.
     * **Idempotency.** Every POST accepts `Idempotency-Key`. Repeating a
@@ -117,7 +124,13 @@ info:
     * **Ownership.** Every ID is resolved to the workspace (or project) it
       belongs to before authorization. A resource that does not exist and a
       resource of another workspace the caller cannot access give the same
-      `404 not_found`.
+      `404 not_found`. In module mode a request sees exactly the resources
+      of its project; the project endpoints answer `404` there, because the
+      host platform owns the projects.
+    * **Events.** Every change records events in its own transaction
+      (`mfgraph.workspace_created`, `mfgraph.branch_created`,
+      `mfgraph.commit_created`, `mfgraph.snapshot_restored`,
+      `mfgraph.branch_updated`); docs/events.md describes them.
 servers:
   - url: /
 security:
