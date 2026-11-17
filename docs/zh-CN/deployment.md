@@ -6,23 +6,28 @@
 
 | 形态 | 组件 | 用途 |
 |---|---|---|
-| embedded | 宿主 + mfgraph 模块 + DB + 对象存储 | 平台集成 |
+| embedded | 宿主 + mfgraph 模块进程（`MFGRAPH_MODE=module`，见[模块模式](../module-mode.md)） + DB + 对象存储 | 平台集成 |
 | standalone | `mfgraph-server` + DB + 对象存储 | 团队自托管 |
 | HA | 多个 `mfgraph-server` + MySQL HA + S3 | 企业 |
 | dev | compose + MySQL + MinIO/POSIX | 本地/CI |
 
 ## 运行 mfgraph-server（M1.0a）
 
-服务端用环境变量配置：
+服务端用环境变量配置，也可以再加一个配置文件：`mfgraph-server [--config FILE] [--socket PATH] [serve|migrate|version]`，
+两个参数也可以写在子命令后面。配置文件每行一个 `KEY=VALUE`，只能写下表里的变量（`#` 注释，不处理引号，不做 `${...}` 展开）；
+命令行参数优先于环境变量，环境变量优先于配置文件。同一个二进制有两种模式（`MFGRAPH_MODE`）：这里说的 `standalone`，以及作为宿主平台模块进程运行的 `module`，
+后者和它的变量（`MODULE_ID`、`MODULE_SOCKET`、`MODULE_INTERNAL_TOKEN`、`MFGRAPH_OPS_DSN`、`MFGRAPH_TRUSTED_HEADER_PREFIX`、
+`MFGRAPH_INTERNAL_TOKEN_HEADER`、`MFGRAPH_OUTBOX_TABLE`）见[模块模式](../module-mode.md)（英文）。
 
 | 变量 | 默认值 | 含义 |
 |---|---|---|
-| `MFGRAPH_HTTP_ADDR` | `127.0.0.1:8094` | `host:port`，或 `unix:<path>` 表示 Unix domain socket（见下文） |
-| `MFGRAPH_API_PREFIX` | `/api/v1` | 业务接口的路径前缀；`/healthz` 和 `/readyz` 始终在根路径 |
-| `MFGRAPH_DB_DSN` | — | MySQL DSN（go-sql-driver），例如 `mfgraph:<password>@tcp(127.0.0.1:3306)/mfgraph`；服务**必须**连数据库 |
+| `MFGRAPH_MODE` | `standalone` | `standalone` 或 `module` |
+| `MFGRAPH_HTTP_ADDR` | `127.0.0.1:8094` | `host:port`，或 `unix:<path>` 表示 Unix domain socket（见下文）；`--socket PATH` 优先 |
+| `MFGRAPH_API_PREFIX`（别名 `MFGRAPH_ROUTE_PREFIX`） | `/api/v1` | 业务接口的路径前缀；`/healthz` 和 `/readyz` 始终在根路径 |
+| `MFGRAPH_DB_DSN`（别名 `MFGRAPH_DSN`） | — | MySQL DSN（go-sql-driver），例如 `mfgraph:<password>@tcp(127.0.0.1:3306)/mfgraph`；服务**必须**连数据库 |
 | `MFGRAPH_MIGRATE_ON_START` | `false` | 开始服务前执行未执行的迁移 |
 | `MFGRAPH_KERNEL_MIGRATIONS` | `true` | 是否包括 kernel 表（`projects`、`principals`）；只用于独立部署 |
-| `MFGRAPH_STORAGE_ROOT` | — | POSIX BlobStore 的根目录；配置了数据库时必须配置，否则拒绝启动 |
+| `MFGRAPH_STORAGE_ROOT`（别名 `MFGRAPH_DATA_DIR`） | — | POSIX BlobStore 的根目录；配置了数据库时必须配置，否则拒绝启动 |
 | `MFGRAPH_TENANT_ID` | `00000000000000000000000000` | 独立部署的租户（ULID） |
 | `MFGRAPH_MAX_UPLOAD_BYTES` | `1073741824`（1 GiB） | 单次上传上限（1 字节到 5 TiB） |
 | `MFGRAPH_MAX_JSON_BODY_BYTES` | `16777216`（16 MiB） | 其他请求的请求体上限（1 KiB 到 1 GiB）；超过时返回 `413 request_too_large`，超出上限的部分不会被读取。提交请求的大小也受它限制 |
@@ -30,15 +35,18 @@
 | `MFGRAPH_AUTH_TOKENS` | — | 静态 bearer token：`token=ACTOR_REF[,token=ACTOR_REF...]`（token 至少 16 个字符） |
 | `MFGRAPH_LOG_LEVEL` / `MFGRAPH_LOG_FORMAT` | `info` / `json` | log/slog 设置（给人看用 `text`） |
 | `MFGRAPH_LOG_PSEUDONYM_KEY` | 每次启动随机生成 | 日志中 actor 假名的密钥（至少 16 字节；见[安全](security.md)） |
-| `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | 收到 SIGTERM 或 SIGINT 后的优雅退出时间 |
+| `MFGRAPH_SHUTDOWN_TIMEOUT` | `8s` | 收到 SIGTERM 或 SIGINT 后的优雅退出时间；模块模式最多 `8s`，并提前 1 秒收尾 |
 | `MFGRAPH_IDEMPOTENCY_LEASE` | `60s` | 一个请求持有其 `Idempotency-Key` 的时间（1s 到 24h）；超过后重复请求会重新执行，第一个请求如果还在执行，会以 `409 conflict` 失败且不做任何改动。应大于最长请求的耗时 |
 
 - **必须连数据库。** 没有 `MFGRAPH_DB_DSN` 时服务照常启动，但 `/readyz` 返回 503，所有业务接口返回 `503 db_unavailable`；数据库连不上时也一样。用 `mfgraph-server migrate`（或 `MFGRAPH_MIGRATE_ON_START=true`）执行迁移；迁移只需要 `MFGRAPH_DB_DSN`。
-- **就绪检查。** `/readyz` 检查数据库（必需）和存储根目录，并报告 `unicode_version`（路径规则所用的 Unicode 版本 V）和 `version`（服务版本）。
+- **别名。** 同一项设置的两个名字（`MFGRAPH_DB_DSN` 和 `MFGRAPH_DSN`、`MFGRAPH_STORAGE_ROOT` 和 `MFGRAPH_DATA_DIR`、`MFGRAPH_API_PREFIX` 和 `MFGRAPH_ROUTE_PREFIX`，以及 `MFGRAPH_HTTP_ADDR=unix:<path>` 和 `MODULE_SOCKET=<path>`）都设置时值必须相同，否则拒绝启动。
+- **就绪检查。** `/readyz` 检查数据库（必需）和存储根目录（模块模式下还检查宿主的 outbox 表），并报告 `unicode_version`（路径规则所用的 Unicode 版本 V）和 `version`（服务版本）。
 - **Unix domain socket。** `MFGRAPH_HTTP_ADDR=unix:/run/mfgraph/api.sock` 监听一个只有服务进程的用户能使用的 socket（权限 0600，创建时 umask 为 0177）。启动时如果这个路径上残留着已停止的服务留下的 socket，就删掉；如果是普通文件、目录或仍在应答的服务的 socket，就拒绝启动。退出时删除 socket。
 - **路径前缀。** 设置 `MFGRAPH_API_PREFIX=/files/v1` 后，契约中的 `/api/v1/...` 接口改由 `/files/v1/...` 提供（`/api/v1/...` 返回 404），反向代理可以把模块路径原样转发过来。前缀以 `/` 开头，不以 `/` 结尾，最长 128 字节，每段只用 `A–Z a–z 0–9 . _ ~ -`。
 - **存储。** POSIX BlobStore 把每个对象存成文件 `<MFGRAPH_STORAGE_ROOT>/<存储前缀>/<key>`（见[存储](storage.md)）。根目录必须存在且可写；临时文件（`.tmp-*.part`）建在对象旁边，最后 rename 到位。
-- **退出。** 收到 SIGTERM 后，服务停止接受新连接，并最多等待 `MFGRAPH_SHUTDOWN_TIMEOUT`（8 秒，低于守护进程常用的 10 秒强杀时限）让进行中的请求完成。
+- **退出。** 收到 SIGTERM 后，服务停止接受新连接，并最多等待 `MFGRAPH_SHUTDOWN_TIMEOUT`（8 秒，低于守护进程常用的 10 秒强杀时限）让进行中的请求完成；模块模式下还在同一时间内再转发一批事件。模块模式下这个值超过 8 秒会拒绝启动（宿主在 SIGTERM 之后 8 秒强杀模块），并且内部提前 1 秒收尾：即使数据库没有响应，7 秒后也会退出；那时还没结束的请求会被中断（退出码 1）。
+- **事件。** 每次改动都在自己的事务里把[事件](../events.md)（英文）写进 outbox。独立部署留在 outbox 里（暂时没有发布者）；模块模式会把它们转发到宿主的 outbox 表。
+- **Bundle。** `make bundle` 构建模块形态的可复现 bundle（每个平台一个 `tar.zst`，加上 `sha256sums.txt`，都在 `dist/`）；`make bundle-check` 用空的构建缓存再构建一遍并比较。见[模块模式](../module-mode.md#bundles)。
 
 ```bash
 make dev-db-up
@@ -121,6 +129,15 @@ expand 迁移
 ```
 
 N-1 API 兼容；优先旧二进制 + 新 schema，而不是回滚恢复。
+
+迁移只新增表、可为空的列和索引，所以旧二进制在新 schema 上照常工作。
+
+- **升级：先执行迁移。** 启动新版本之前，先用新二进制执行 `mfgraph-server migrate`（或者带
+  `MFGRAPH_MIGRATE_ON_START=true` 启动）：M1.0a 模块化版本新增 `0009_actor_types`（可为空的身份类型列），新二进制会读这些列。
+  内嵌迁移没有全部执行时，新二进制照常启动，但会打 ERROR 日志，`/readyz` 返回 503 `db_unavailable`，
+  `details.reason` 为 `schema_behind`，`details.missing` 列出缺少的迁移，因为这时请求可能出错。
+- **回滚：关闭自动迁移。** 旧二进制只有在 `MFGRAPH_MIGRATE_ON_START=false`（默认值）时才能在新 schema 上运行：
+  它的迁移程序遇到记录了自己不认识的迁移的 schema 会报错（`applied migration missing from source`），所以设成 `true` 时启动不了。
 
 ## 备份
 

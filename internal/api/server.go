@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
@@ -13,6 +15,17 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
+
+// CheckError is an error of a readiness check that says why: /readyz
+// answers 503 with its Message and with details.reason = Reason plus
+// Details (details.check names the check).
+type CheckError struct {
+	Reason  string
+	Message string
+	Details map[string]any
+}
+
+func (e *CheckError) Error() string { return e.Message }
 
 // ReadinessCheck is one dependency checked by /readyz.
 type ReadinessCheck struct {
@@ -45,6 +58,29 @@ type Options struct {
 	// MaxJSONBodyBytes bounds the body of every request but an upload
 	// (0 = DefaultMaxJSONBodyBytes, 16 MiB).
 	MaxJSONBodyBytes int64
+	// TrustedHeaderPrefix is the prefix of the identity headers in module
+	// mode ("" in standalone mode): the request ID is taken from
+	// <prefix>Request-Id first, and <prefix>Trace-Id is logged as trace_id.
+	TrustedHeaderPrefix string
+	// NoProjects removes the project endpoints (module mode: the host
+	// platform owns the projects): /projects and /projects/{project_id}
+	// answer 404 as unknown paths, whatever the method and the body.
+	NoProjects bool
+	// Outbox reports the delivery of events to the host platform's outbox
+	// table (module mode; nil without a forwarder): /readyz shows it in the
+	// field outbox and, when delivery is stalled, as checks.outbox
+	// "stalled". A stall does not make the server unready.
+	Outbox func(ctx context.Context) (OutboxState, error)
+}
+
+// OutboxState is the delivery state Options.Outbox reports. When the
+// backlog cannot be read, Outbox returns an error with the rest.
+type OutboxState struct {
+	Pending         int64
+	OldestPendingAt time.Time // zero: nothing pending
+	Stalled         bool
+	StalledSince    time.Time
+	LastError       string
 }
 
 // publicPaths are served without authentication.
@@ -64,7 +100,7 @@ func NewHandler(o Options) http.Handler {
 		p, _ := actorref.NewPseudonymizer(key)
 		o.Pseudonym = p.Pseudonym
 	}
-	h := &handlers{svc: o.Service, readiness: o.Readiness, version: o.Version}
+	h := &handlers{svc: o.Service, readiness: o.Readiness, version: o.Version, outbox: o.Outbox, logger: o.Logger}
 	strict := gen.NewStrictHandlerWithOptions(h, []gen.StrictMiddlewareFunc{contentLength}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			WriteError(w, r, NewError(CodeInvalidRequest, err.Error(), nil))
@@ -84,18 +120,37 @@ func NewHandler(o Options) http.Handler {
 		WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
 	})
 	var handler http.Handler = mux
+	if o.NoProjects {
+		handler = withoutProjects(handler)
+	}
 	handler = Prefix(o.APIPrefix, publicPaths)(handler)
 	handler = Authenticate(o.Authenticator, publicPaths)(handler)
 	handler = Recover(o.Logger)(handler)
-	handler = AccessLog(o.Logger, o.Pseudonym)(handler)
-	handler = RequestID(o.IDGen)(handler)
+	var requestIDHeader, traceHeader string
+	if o.TrustedHeaderPrefix != "" {
+		requestIDHeader, traceHeader = o.TrustedHeaderPrefix+ClaimRequestID, o.TrustedHeaderPrefix+ClaimTraceID
+	}
+	handler = AccessLog(o.Logger, o.Pseudonym, traceHeader)(handler)
+	handler = RequestID(o.IDGen, requestIDHeader)(handler)
 	return handler
 }
 
-// contentLength passes the request's Content-Length to the upload handler,
-// which refuses a body above the limit before reading it.
+// withoutProjects answers the project endpoints with the 404 of an unknown
+// path (Options.NoProjects).
+func withoutProjects(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p := r.URL.Path; p == apiBase+"/projects" || strings.HasPrefix(p, apiBase+"/projects/") {
+			WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// contentLength passes the request's Content-Length to the upload handlers,
+// which refuse a body above the limit before reading it.
 func contentLength(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFunc {
-	if operationID != "PutObject" {
+	if operationID != "PutObject" && operationID != "UploadObject" {
 		return f
 	}
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
@@ -109,6 +164,8 @@ type handlers struct {
 	svc       *core.Service
 	readiness []ReadinessCheck
 	version   string
+	outbox    func(ctx context.Context) (OutboxState, error)
+	logger    *slog.Logger
 }
 
 var _ gen.StrictServerInterface = (*handlers)(nil)
@@ -136,6 +193,14 @@ func (h *handlers) GetReadyz(ctx context.Context, _ gen.GetReadyzRequestObject) 
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		err := c.Check(cctx)
 		cancel()
+		var ce *CheckError
+		if errors.As(err, &ce) {
+			details := map[string]any{"reason": ce.Reason}
+			for k, v := range ce.Details {
+				details[k] = v
+			}
+			return fail(c, ce.Message, details), nil
+		}
 		if err != nil {
 			return fail(c, c.Name+" is not available", map[string]any{}), nil
 		}
@@ -146,5 +211,39 @@ func (h *handlers) GetReadyz(ctx context.Context, _ gen.GetReadyzRequestObject) 
 	if v != "" {
 		resp.Version = &v
 	}
+	if h.outbox != nil {
+		resp.Outbox = h.outboxReport(ctx, checks)
+	}
 	return resp, nil
+}
+
+// outboxReport returns the field outbox of /readyz and sets checks.outbox
+// to "stalled" when delivery is stalled (the server stays ready).
+func (h *handlers) outboxReport(ctx context.Context, checks map[string]string) *gen.ReadinessOutbox {
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	st, err := h.outbox(cctx)
+	cancel()
+	if st.Stalled {
+		checks["outbox"] = "stalled"
+	} else if _, ok := checks["outbox"]; !ok {
+		checks["outbox"] = "ok"
+	}
+	var out gen.ReadinessOutbox
+	if err == nil {
+		out.Pending = &st.Pending
+		if !st.OldestPendingAt.IsZero() {
+			t := st.OldestPendingAt.UTC()
+			out.OldestPendingAt = &t
+		}
+	} else {
+		h.logger.Warn("readyz: cannot count the pending events of the outbox", "request_id", RequestIDFrom(ctx), "err", err.Error())
+	}
+	if st.Stalled {
+		since, last := st.StalledSince.UTC(), st.LastError
+		out.StalledSince, out.LastError = &since, &last
+	}
+	if out == (gen.ReadinessOutbox{}) {
+		return nil
+	}
+	return &out
 }

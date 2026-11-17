@@ -75,6 +75,9 @@ type Error struct {
 	Message string
 	Details map[string]any
 	cause   error
+	// noChallenge leaves the WWW-Authenticate header off a 401: the
+	// identity headers of module mode are no bearer scheme.
+	noChallenge bool
 }
 
 func (e *Error) Error() string {
@@ -150,7 +153,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		d := ae.Details
 		body.Details = &d
 	}
-	if status == http.StatusUnauthorized {
+	if status == http.StatusUnauthorized && !ae.noChallenge {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="mfgraph"`)
 	}
 	if retryable(ae) {

@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -148,8 +147,9 @@ func generationConflict(current int64) *Error {
 //  5. the new tree nodes are stored;
 //  6. one transaction inserts the snapshot and its parent, moves the
 //     branch head with a compare-and-swap on the expected generation,
-//     marks the blobs live, appends snapshot.created and branch.updated to
-//     the outbox and completes the idempotency record.
+//     marks the blobs live, appends mfgraph.commit_created and
+//     mfgraph.branch_updated (reason commit) to the outbox and completes
+//     the idempotency record.
 //
 // A failure before step 5 leaves nothing behind; after it, unreferenced
 // tree nodes and objects remain for garbage collection. The database never
@@ -206,7 +206,7 @@ func (s *Service) Commit(ctx context.Context, p ports.Principal, workspaceID str
 		}
 		return s.record(ctx, p, ws, branch, head, record{
 			root: res.Root, delta: res.Delta, trigger: ports.TriggerManual, message: req.Message,
-			live: hashes, event: ports.EventSnapshotCreated,
+			live: hashes, event: ports.EventCommitCreated,
 		}, complete)
 	})
 }
@@ -293,14 +293,18 @@ type record struct {
 }
 
 // record runs the transaction of a commit or a restore. A snapshot is never
-// older than its parent: when the clock is behind the parent's time (a
-// clock set back, or another server's clock ahead), it gets the parent's
-// time plus one microsecond.
+// older than its parent, and the events of a branch keep their order in
+// the outbox: the time of a snapshot is at least the time of the last
+// change of its branch (branch.UpdatedAtUs: the parent's time, or the
+// creation of the branch) plus two microseconds, because the events of that
+// change took its time and the next microsecond. When the clock is behind
+// (a clock set back, or another server's clock ahead), the snapshot gets
+// that lower bound.
 func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Workspace, branch ports.Branch, head base, r record,
 	complete completer) (CommitResult, error) {
 	now := s.nowUs()
-	if head.snap.ID != "" && now <= head.snap.CreatedAtUs {
-		now = head.snap.CreatedAtUs + 1
+	if floor := max(branch.UpdatedAtUs, head.snap.CreatedAtUs) + 2; now < floor {
+		now = floor
 	}
 	parents := []string{}
 	files, bytes := head.snap.EntryCount+r.delta.Files, head.snap.TotalBytes+r.delta.Bytes
@@ -314,25 +318,35 @@ func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Worksp
 		return CommitResult{}, fmt.Errorf("core: snapshot counts %d files, %d bytes", files, bytes)
 	}
 	snap := ports.Snapshot{ID: s.d.IDs.NewID(), WorkspaceID: ws.ID, ProjectID: ws.ProjectID, BranchID: branch.ID,
-		RefName: branch.RefName, AuthorRef: p.Ref, AuthorPrincipalUID: p.PrincipalUID, Message: r.message,
+		RefName: branch.RefName, AuthorRef: p.Ref, AuthorPrincipalUID: p.PrincipalUID, AuthorType: p.ActorType,
+		OnBehalfOfRef: p.OnBehalfOfRef, OnBehalfOfType: p.OnBehalfOfType, Message: r.message,
 		TriggerKind: r.trigger, RootTreeHash: r.root, TreeFormatVersion: tree.FormatVersion, ParentIDs: parents,
 		EntryCount: files, TotalBytes: bytes, CreatedAtUs: now}
 	result := CommitResult{SnapshotID: snap.ID, BranchID: branch.ID, RefName: branch.RefName, Generation: branch.Generation + 1,
 		RootTreeHash: r.root.String(), ParentIDs: parents, RestoredFrom: r.restoredFrom, CreatedAtUs: now}
-	snapEvent, err := json.Marshal(snapshotEvent{SchemaVersion: 1, TenantID: ws.TenantID, ProjectID: ws.ProjectID,
-		WorkspaceID: ws.ID, SnapshotID: snap.ID, BranchID: branch.ID, RefName: branch.RefName,
-		RootTreeHash: r.root.String(), ParentIDs: parents, TriggerKind: r.trigger, RestoredFrom: r.restoredFrom,
-		ActorRef: p.Ref, EntryCount: files, TotalBytes: bytes, CreatedAt: rfc3339(now)})
-	if err != nil {
-		return CommitResult{}, err
+	commit := commitData{WorkspaceID: ws.ID, SnapshotID: snap.ID, BranchID: branch.ID, RefName: branch.RefName,
+		RootTreeHash: r.root.String(), ParentIDs: parents, TriggerKind: r.trigger, EntryCount: files, TotalBytes: bytes}
+	if p.OnBehalfOfRef != "" {
+		a := actorOf(p.OnBehalfOfRef, p.OnBehalfOfType)
+		commit.OnBehalfOf = &a
+	}
+	var data any = commit
+	if r.event == ports.EventSnapshotRestored {
+		data = restoreData{commitData: commit, RestoredFrom: r.restoredFrom}
 	}
 	var prevHead *string
 	if branch.HeadSnapshotID != "" {
 		prevHead = &branch.HeadSnapshotID
 	}
-	branchEvent, err := json.Marshal(branchUpdatedEvent{SchemaVersion: 1, TenantID: ws.TenantID, ProjectID: ws.ProjectID,
-		WorkspaceID: ws.ID, BranchID: branch.ID, RefName: branch.RefName, HeadSnapshotID: snap.ID,
-		PreviousHeadSnapshotID: prevHead, Generation: branch.Generation + 1, ActorRef: p.Ref, UpdatedAt: rfc3339(now)})
+	reason := ReasonCommit
+	if r.event == ports.EventSnapshotRestored {
+		reason = ReasonRestore
+	}
+	evs, err := s.events(p, ws.ProjectID, now,
+		eventSpec{kind: r.event, workspaceID: ws.ID, key: snap.ID, version: 1, data: data},
+		eventSpec{kind: ports.EventBranchUpdated, workspaceID: ws.ID, key: branch.ID, version: branch.Generation + 1,
+			data: branchUpdatedData{WorkspaceID: ws.ID, BranchID: branch.ID, RefName: branch.RefName, HeadSnapshotID: snap.ID,
+				PreviousHeadSnapshotID: prevHead, Generation: branch.Generation + 1, Reason: reason}})
 	if err != nil {
 		return CommitResult{}, err
 	}
@@ -353,13 +367,8 @@ func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Worksp
 				return err
 			}
 		}
-		for _, ev := range []ports.Event{
-			{ID: s.d.IDs.NewID(), Type: r.event, WorkspaceID: ws.ID, AggregateID: snap.ID, Payload: snapEvent, CreatedAtUs: now},
-			{ID: s.d.IDs.NewID(), Type: ports.EventBranchUpdated, WorkspaceID: ws.ID, AggregateID: branch.ID, Payload: branchEvent, CreatedAtUs: now},
-		} {
-			if err := s.d.Store.Append(ctx, tx, ev); err != nil {
-				return err
-			}
+		if err := s.appendEvents(ctx, tx, evs); err != nil {
+			return err
 		}
 		return completeIf(ctx, complete, tx, result)
 	})
@@ -373,6 +382,7 @@ func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Worksp
 	if err != nil {
 		return CommitResult{}, mapErr(err, "snapshot")
 	}
+	s.eventsCommitted()
 	return result, nil
 }
 
@@ -386,7 +396,8 @@ func rfc3339(us int64) string { return time.UnixMicro(us).UTC().Format("2006-01-
 // has nothing there, the path is removed from the head. The path is looked
 // up with the lookup rules; restored entries keep their stored bytes. The
 // transaction is that of a commit, with trigger_kind restore and the
-// event snapshot.restored.
+// events mfgraph.snapshot_restored and mfgraph.branch_updated (reason
+// restore).
 func (s *Service) Restore(ctx context.Context, p ports.Principal, snapshotID string, req RestoreRequest, idemKey string) (CommitResult, error) {
 	if err := checkTarget(req.BranchID, req.ExpectedGeneration, req.Message); err != nil {
 		return CommitResult{}, err

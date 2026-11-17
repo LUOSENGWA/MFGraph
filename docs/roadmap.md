@@ -13,7 +13,8 @@
 ## M1 — core (G1)
 
 - **M1.0a** — **done**: single workspace / single branch (`main`) / POSIX local disk / whole-file objects; `upload → commit → browse/download → diff → restore → restart`; REST and a thin CLI. The acceptance tests (`test/e2e`: the nine acceptance criteria, a restore/commit race and a CLI smoke test) pass on MySQL 8.0 and on seekdb in CI.
-- **M1.0b**: chunk/pack (uncompressed), resumable and multipart upload, presigned URLs and S3, locks/fencing, GC, quotas, project commit, MCP, an outbox publisher.
+- **M1.0a module** — **done**: the same binary as a module process of a host platform ([module mode](module-mode.md)): Unix domain socket, identity headers and project containment, the [events](events.md) forwarded to the host's outbox table in order, actor types, the upload path `/objects/`, reproducible bundles. The module acceptance tests pass on MySQL 8.0 and seekdb next to the standalone ones; CI runs the acceptance script of the bundle.
+- **M1.0b**: chunk/pack (uncompressed), resumable and multipart upload (below `/uploads/`), presigned URLs and S3, locks/fencing (and the `lock` capability of the module), explicit snapshots and `mfgraph.snapshot_created`, GC, quotas, project commit, MCP, an outbox publisher for standalone deployments.
 - **M1.1**: hardening — roles, branches by name, a full CLI.
 - exit: 1 GiB upload without server-side buffering; no half snapshot after kill -9; two concurrent commits → one CAS win; lock fencing; GC never deletes committed snapshots; POSIX + S3 contract tests green.
 
@@ -26,6 +27,7 @@
 - **Restore** of a whole snapshot (its tree reused as is) or of one path, as a new snapshot whose parent is the branch head. A restored name that the head's directory does not have must not conflict in case with the names there.
 - **Requests.** JSON bodies are `application/json`, one JSON value, at most `MFGRAPH_MAX_JSON_BODY_BYTES` (16 MiB); downloads are attachments with `nosniff` and check the stored object before they start; a request holds its `Idempotency-Key` for a lease (`MFGRAPH_IDEMPOTENCY_LEASE`, 60 s), after which a retry takes over; lock wait timeouts and deadlocks of the database are answered with 503 and `Retry-After: 1`.
 - **Operations.** A database is required (without one the service answers 503); TCP or Unix domain socket; a configurable API prefix; `/readyz` reports the Unicode version V and the build version; graceful shutdown within 8 s; log pseudonyms keyed per deployment.
+- **Module mode** (M1.0a module): `MFGRAPH_MODE=module`, `--config` and `--socket`, the host's variable names as aliases, identity headers instead of bearer tokens, project containment (404, never 403), no project endpoints, the events forwarded to the host's outbox table, actor types stored with every actor, `PUT /objects/{workspace_id}`, and `make bundle`.
 
 ### M1.0a: scope and deviations
 
@@ -33,11 +35,13 @@
 |---|---|---|---|
 | Database | required; without one every business endpoint answers 503 | unchanged | — |
 | Permissions (standalone) | the creator of a project is its only owner; everyone else gets 404 | roles: reader / editor / reviewer / owner | M1.1 |
-| Permissions (embedded) | — | the host platform's access control decides; MFGraph checks that resources belong together | M2 |
+| Permissions (embedded) | done in M1.0a module: the host's proxy admits a request to one project; MFGraph checks that resources belong to it (404 otherwise, never 403) | signed identity headers (HMAC), 403 decided by MFGraph, team-based authorization | later |
 | CLI | thin client of the REST API | full CLI | M1.1 |
-| Uploads | whole file, one request, at most 1 GiB | multipart, resumable, presigned, S3 | M1.0b |
+| Uploads | whole file, one request, at most 1 GiB; also under the upload path `/objects/` | multipart, resumable, presigned, S3, below `/uploads/` | M1.0b |
 | Branches | only `main` | branches by name; case-insensitive uniqueness in the database | M1.0b / M1.1 |
-| Events | written to `outbox_events`, not published | a publisher; the host platform's outbox when embedded | M1.0b / M2 |
+| Events | written to `outbox_events`; module mode forwards them to the host's outbox table (M1.0a module), in order within a branch and in commit order between workspaces; standalone deployments do not publish them | a publisher for standalone deployments; an index on `(status, created_at_us, event_id)` for large backlogs and a retention period for delivered rows; a time floor between "branch from snapshot S" and a commit on S; a test of two module processes forwarding at once | M1.0b |
+| Readiness probe of a module | `/readyz` (database, schema version, storage, the host's outbox table, the state of delivery) | an optional read-only `GET {prefix}/_smoke` if the host's upgrade gate needs a real request | M1.0b |
+| `mfgraph.snapshot_created` | registered, not emitted: snapshots come only from commits and restores | emitted for explicit snapshots (checkpoints, a snapshot before a restore) | M1.0b |
 | Usage and quotas | not maintained (the row exists) | quotas | M1.0b |
 | Garbage collection | none; orphaned objects and staged uploads accumulate | GC | M1.0b |
 | Long paths in queries | `GET` with a `path` query parameter (up to 4096 bytes) | a `POST` form when needed | later |

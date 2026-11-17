@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -11,28 +12,84 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
 )
 
-// Environment variables.
+// Environment variables. The MODULE_* variables and MFGRAPH_DSN,
+// MFGRAPH_DATA_DIR and MFGRAPH_ROUTE_PREFIX are the names a host platform
+// uses for a module process; MFGRAPH_DSN, MFGRAPH_DATA_DIR,
+// MFGRAPH_ROUTE_PREFIX and MODULE_SOCKET are aliases of MFGRAPH_DB_DSN,
+// MFGRAPH_STORAGE_ROOT, MFGRAPH_API_PREFIX and MFGRAPH_HTTP_ADDR=unix:<path>
+// (see Aliases).
 const (
-	EnvHTTPAddr         = "MFGRAPH_HTTP_ADDR"
-	EnvAPIPrefix        = "MFGRAPH_API_PREFIX"
-	EnvDBDSN            = "MFGRAPH_DB_DSN"
-	EnvMigrateOnStart   = "MFGRAPH_MIGRATE_ON_START"
-	EnvKernelMigrations = "MFGRAPH_KERNEL_MIGRATIONS"
-	EnvStorageRoot      = "MFGRAPH_STORAGE_ROOT"
-	EnvTenantID         = "MFGRAPH_TENANT_ID"
-	EnvMaxUploadBytes   = "MFGRAPH_MAX_UPLOAD_BYTES"
-	EnvMaxJSONBodyBytes = "MFGRAPH_MAX_JSON_BODY_BYTES"
-	EnvMaxCommitChanges = "MFGRAPH_MAX_COMMIT_CHANGES"
-	EnvAuthTokens       = "MFGRAPH_AUTH_TOKENS"
-	EnvLogLevel         = "MFGRAPH_LOG_LEVEL"
-	EnvLogFormat        = "MFGRAPH_LOG_FORMAT"
-	EnvLogPseudonymKey  = "MFGRAPH_LOG_PSEUDONYM_KEY"
-	EnvShutdownTimeout  = "MFGRAPH_SHUTDOWN_TIMEOUT"
-	EnvIdempotencyLease = "MFGRAPH_IDEMPOTENCY_LEASE"
-	DefaultHTTPAddr     = "127.0.0.1:8094"
-	DefaultAPIPrefix    = "/api/v1"
-	DefaultTenantID     = "00000000000000000000000000"
-	DefaultMaxUpload    = 1 << 30
+	EnvMode                = "MFGRAPH_MODE"
+	EnvHTTPAddr            = "MFGRAPH_HTTP_ADDR"
+	EnvAPIPrefix           = "MFGRAPH_API_PREFIX"
+	EnvRoutePrefix         = "MFGRAPH_ROUTE_PREFIX"
+	EnvDBDSN               = "MFGRAPH_DB_DSN"
+	EnvDSN                 = "MFGRAPH_DSN"
+	EnvOpsDSN              = "MFGRAPH_OPS_DSN"
+	EnvMigrateOnStart      = "MFGRAPH_MIGRATE_ON_START"
+	EnvKernelMigrations    = "MFGRAPH_KERNEL_MIGRATIONS"
+	EnvStorageRoot         = "MFGRAPH_STORAGE_ROOT"
+	EnvDataDir             = "MFGRAPH_DATA_DIR"
+	EnvTenantID            = "MFGRAPH_TENANT_ID"
+	EnvMaxUploadBytes      = "MFGRAPH_MAX_UPLOAD_BYTES"
+	EnvMaxJSONBodyBytes    = "MFGRAPH_MAX_JSON_BODY_BYTES"
+	EnvMaxCommitChanges    = "MFGRAPH_MAX_COMMIT_CHANGES"
+	EnvAuthTokens          = "MFGRAPH_AUTH_TOKENS"
+	EnvLogLevel            = "MFGRAPH_LOG_LEVEL"
+	EnvLogFormat           = "MFGRAPH_LOG_FORMAT"
+	EnvLogPseudonymKey     = "MFGRAPH_LOG_PSEUDONYM_KEY"
+	EnvShutdownTimeout     = "MFGRAPH_SHUTDOWN_TIMEOUT"
+	EnvIdempotencyLease    = "MFGRAPH_IDEMPOTENCY_LEASE"
+	EnvTrustedHeaderPrefix = "MFGRAPH_TRUSTED_HEADER_PREFIX"
+	EnvInternalTokenHeader = "MFGRAPH_INTERNAL_TOKEN_HEADER"
+	EnvOutboxTable         = "MFGRAPH_OUTBOX_TABLE"
+	EnvModuleID            = "MODULE_ID"
+	EnvModuleSocket        = "MODULE_SOCKET"
+	EnvModuleInternalToken = "MODULE_INTERNAL_TOKEN"
+)
+
+// Variables lists every variable Load reads; a configuration file may set
+// exactly these.
+var Variables = []string{
+	EnvMode, EnvHTTPAddr, EnvAPIPrefix, EnvRoutePrefix, EnvDBDSN, EnvDSN, EnvOpsDSN, EnvMigrateOnStart,
+	EnvKernelMigrations, EnvStorageRoot, EnvDataDir, EnvTenantID, EnvMaxUploadBytes, EnvMaxJSONBodyBytes,
+	EnvMaxCommitChanges, EnvAuthTokens, EnvLogLevel, EnvLogFormat, EnvLogPseudonymKey, EnvShutdownTimeout,
+	EnvIdempotencyLease, EnvTrustedHeaderPrefix, EnvInternalTokenHeader, EnvOutboxTable, EnvModuleID, EnvModuleSocket,
+	EnvModuleInternalToken,
+}
+
+// Aliases are pairs of names of one setting: the name MFGraph has always
+// used and the name a host platform injects. Setting both to different
+// values is an error. MODULE_SOCKET=<path> is a third alias, of
+// MFGRAPH_HTTP_ADDR=unix:<path>.
+var Aliases = [][2]string{
+	{EnvDBDSN, EnvDSN},
+	{EnvStorageRoot, EnvDataDir},
+	{EnvAPIPrefix, EnvRoutePrefix},
+}
+
+// Modes (MFGRAPH_MODE).
+const (
+	// ModeStandalone: MFGraph is the whole service: it listens on TCP or a
+	// Unix domain socket, authenticates static bearer tokens and keeps its
+	// own projects (the kernel tables).
+	ModeStandalone = "standalone"
+	// ModeModule: MFGraph runs as a module process of a host platform: it
+	// listens only on a Unix domain socket, trusts the identity headers the
+	// host's proxy sets (authenticated by an internal token), checks only
+	// that a resource belongs to the project of the request (the host owns
+	// projects and their access control), and forwards its events to the
+	// host's outbox table.
+	ModeModule = "module"
+)
+
+// Defaults.
+const (
+	DefaultHTTPAddr        = "127.0.0.1:8094"
+	DefaultAPIPrefix       = "/api/v1"
+	DefaultModuleAPIPrefix = "/internal/v1/mfgraph"
+	DefaultTenantID        = "00000000000000000000000000"
+	DefaultMaxUpload       = 1 << 30
 	// MaxUploadLimit is the largest value of MFGRAPH_MAX_UPLOAD_BYTES: 5 TiB,
 	// the largest object of Amazon S3 and far below the 2^53-1 bytes a file
 	// size of the content format can hold.
@@ -45,39 +102,70 @@ const (
 	MaxJSONBodyLimit   = 1 << 30
 	DefaultMaxChanges  = 10_000
 	DefaultShutdown    = 8 * time.Second
+	// MaxModuleShutdown is the largest MFGRAPH_SHUTDOWN_TIMEOUT of module
+	// mode: the host platform kills a module 8 s after SIGTERM.
+	// ModuleShutdownMargin of it is left for the exit itself (ShutdownBudget).
+	MaxModuleShutdown    = 8 * time.Second
+	ModuleShutdownMargin = time.Second
 	// DefaultIdempotencyLease is the default of MFGRAPH_IDEMPOTENCY_LEASE;
 	// MinIdempotencyLease and MaxIdempotencyLease bound it (the upper bound
 	// is the 24 hours an idempotency record is kept).
 	DefaultIdempotencyLease = 60 * time.Second
 	MinIdempotencyLease     = time.Second
 	MaxIdempotencyLease     = 24 * time.Hour
-	unixPrefix              = "unix:"
-	maxAPIPrefixBytes       = 128
-	minPseudonymKeyBytes    = 16
+	// ModuleID is the only value MODULE_ID may have.
+	ModuleID = "mfgraph"
+	// DefaultTrustedHeaderPrefix is the prefix of the identity headers in
+	// module mode (MFGRAPH_TRUSTED_HEADER_PREFIX): a generic name; the host
+	// platform configures its own.
+	DefaultTrustedHeaderPrefix = "X-Trusted-"
+	// DefaultOutboxTable is the host's outbox table in module mode
+	// (MFGRAPH_OUTBOX_TABLE, schema.table).
+	DefaultOutboxTable = "ops.module_outbox"
+	// MinInternalTokenLength: a shorter MODULE_INTERNAL_TOKEN is accepted
+	// with a warning.
+	MinInternalTokenLength = 16
+	unixPrefix             = "unix:"
+	maxAPIPrefixBytes      = 128
+	minPseudonymKeyBytes   = 16
+	maxHeaderNameBytes     = 128
 )
 
 // MinTokenLength is the minimum length of a static bearer token.
 const MinTokenLength = 16
 
+var (
+	headerNameRe  = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+	outboxTableRe = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
+)
+
 // Config is the server configuration.
 type Config struct {
-	// HTTPAddr is the listen address: host:port (default 127.0.0.1:8094),
-	// or "unix:<path>" for a Unix domain socket (see UnixSocket).
+	// Mode is ModeStandalone (default) or ModeModule.
+	Mode string
+	// HTTPAddr is the listen address: host:port (default 127.0.0.1:8094 in
+	// standalone mode), or "unix:<path>" for a Unix domain socket (see
+	// UnixSocket); module mode accepts only a socket.
 	HTTPAddr string
 	// APIPrefix is the path prefix of the business endpoints (default
-	// /api/v1); /healthz and /readyz are always at the root. A host platform
-	// that forwards a module path sets it to that path.
+	// /api/v1, in module mode /internal/v1/mfgraph); /healthz and /readyz
+	// are always at the root.
 	APIPrefix string
 	// DBDSN is a go-sql-driver/mysql DSN, for example
 	// "mfgraph:secret@tcp(127.0.0.1:3306)/mfgraph". The service needs a
-	// database: without one it starts, but /readyz and every business
-	// endpoint answer 503 db_unavailable.
+	// database: in standalone mode it starts without one, but /readyz and
+	// every business endpoint answer 503 db_unavailable; module mode
+	// requires it.
 	DBDSN string
+	// OpsDSN is the connection the event forwarder of module mode writes the
+	// host's outbox table with (MFGRAPH_OPS_DSN); empty: DBDSN.
+	OpsDSN string
 	// StorageRoot is the root directory of the POSIX blob store; required
 	// when DBDSN is set.
 	StorageRoot string
-	// TenantID is the tenant of a standalone deployment (a ULID; default
-	// 00000000000000000000000000).
+	// TenantID is the tenant of every project and workspace (a ULID): in
+	// standalone mode default 00000000000000000000000000; module mode
+	// requires a fixed tenant ULID other than that one.
 	TenantID string
 	// MaxUploadBytes bounds one upload (default 1 GiB; 1 byte to 5 TiB).
 	MaxUploadBytes int64
@@ -90,8 +178,9 @@ type Config struct {
 	// MigrateOnStart applies pending migrations before serving (default false).
 	MigrateOnStart bool
 	// KernelMigrations includes the kernel bootstrap tables (projects,
-	// principals) when migrating. True for standalone deployments; set it to
-	// false when a host platform owns those tables.
+	// principals) when migrating. True by default in standalone mode;
+	// module mode never runs them (the host owns those tables) and refuses
+	// MFGRAPH_KERNEL_MIGRATIONS=true.
 	KernelMigrations bool
 	// AuthTokens maps static bearer tokens to actor references (any valid
 	// actor reference: a name such as "alice", an ID such as
@@ -99,7 +188,8 @@ type Config struct {
 	// MFGRAPH_AUTH_TOKENS: "token=ACTOR_REF[,token=ACTOR_REF...]". Entries
 	// are separated by ',', the first '=' of an entry separates the token
 	// from the actor reference, and whitespace around an entry is ignored;
-	// an actor reference given here therefore cannot contain ','.
+	// an actor reference given here therefore cannot contain ','. Module
+	// mode ignores them (with a warning).
 	AuthTokens map[string]string
 	// LogLevel and LogFormat ("json" or "text") configure log/slog. Logs at
 	// info level and above identify a caller only by the pseudonym of its
@@ -113,22 +203,117 @@ type Config struct {
 	// the same effect.
 	LogPseudonymKey string
 	// ShutdownTimeout bounds graceful shutdown (default 8s, below the 10 s
-	// after which a supervisor typically kills a process it sent SIGTERM).
+	// after which a supervisor typically kills a process it sent SIGTERM;
+	// in module mode at most 8s, see ShutdownBudget).
 	ShutdownTimeout time.Duration
 	// IdempotencyLease is how long a request holds the in-progress record
 	// of its Idempotency-Key; afterwards a request with the same key takes
 	// it over (default 60s; 1s to 24h). Requests that run longer than the
 	// lease can fail with conflict when the client retries meanwhile.
 	IdempotencyLease time.Duration
+	// ModuleID is MODULE_ID: empty or "mfgraph".
+	ModuleID string
+	// InternalToken is MODULE_INTERNAL_TOKEN, the secret the host's proxy
+	// sends in InternalTokenHeader (module mode).
+	InternalToken string
+	// TrustedHeaderPrefix is the prefix of the identity headers of module
+	// mode (default X-Trusted-): <prefix>Actor, <prefix>Actor-Type,
+	// <prefix>Project, ...
+	TrustedHeaderPrefix string
+	// InternalTokenHeader is the header that carries InternalToken (default
+	// <prefix>Internal-Token).
+	InternalTokenHeader string
+	// OutboxTable is the host's outbox table, schema.table (module mode;
+	// default ops.module_outbox).
+	OutboxTable string
+
+	warnings []string
+	// dbDSNName is the variable DBDSN came from (MFGRAPH_DB_DSN or its alias
+	// MFGRAPH_DSN), for messages.
+	dbDSNName string
+}
+
+// dbDSNVar names the variable of DBDSN in messages.
+func (c Config) dbDSNVar() string {
+	if c.dbDSNName != "" {
+		return c.dbDSNName
+	}
+	return EnvDSN
+}
+
+// Module reports module mode.
+func (c Config) Module() bool { return c.Mode == ModeModule }
+
+// Warnings lists accepted settings that deserve a warning in the log, for
+// example a short internal token. They never contain secrets.
+func (c Config) Warnings() []string { return c.warnings }
+
+// SetSocket makes the server listen on the Unix domain socket path: the
+// --socket option, which wins over the environment and the configuration
+// file.
+func (c *Config) SetSocket(path string) error {
+	if path == "" {
+		return fmt.Errorf("config: --socket needs a path")
+	}
+	c.HTTPAddr = unixPrefix + path
+	return nil
 }
 
 // CheckServe reports settings that the server needs in addition to what
-// Load checks: with a database, a storage root (migrate needs neither).
+// Load checks (the migrate command needs fewer). Standalone mode: with a
+// database, a storage root. Module mode: a socket, the internal token, a
+// database, a storage root, a tenant other than the all-zero default, a
+// shutdown timeout of at most 8 s, and a forwarder connection with the
+// character set utf8mb4 (ForwarderDSN).
 func (c Config) CheckServe() error {
-	if c.DBDSN != "" && c.StorageRoot == "" {
-		return fmt.Errorf("config: %s is set, so %s is required", EnvDBDSN, EnvStorageRoot)
+	if !c.Module() {
+		if c.DBDSN != "" && c.StorageRoot == "" {
+			return fmt.Errorf("config: %s is set, so %s is required", EnvDBDSN, EnvStorageRoot)
+		}
+		return nil
+	}
+	var missing []string
+	if _, ok := c.UnixSocket(); !ok {
+		missing = append(missing, "a Unix domain socket ("+EnvModuleSocket+" or --socket)")
+	}
+	if c.InternalToken == "" {
+		missing = append(missing, EnvModuleInternalToken)
+	}
+	if c.DBDSN == "" {
+		missing = append(missing, EnvDSN+" (or "+EnvDBDSN+")")
+	}
+	if c.StorageRoot == "" {
+		missing = append(missing, EnvDataDir+" (or "+EnvStorageRoot+")")
+	}
+	if c.TenantID == "" {
+		missing = append(missing, EnvTenantID)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("config: module mode requires %s", strings.Join(missing, ", "))
+	}
+	if c.TenantID == DefaultTenantID {
+		return fmt.Errorf("config: module mode requires a fixed tenant ULID in %s, not the all-zero default", EnvTenantID)
+	}
+	if c.ShutdownTimeout > MaxModuleShutdown {
+		return fmt.Errorf("config: module mode allows %s of at most %s: the host platform kills a module %s after SIGTERM",
+			EnvShutdownTimeout, MaxModuleShutdown, MaxModuleShutdown)
+	}
+	if _, err := c.ForwarderDSN(); err != nil {
+		return err
 	}
 	return nil
+}
+
+// ShutdownBudget is the time the server gives itself after SIGTERM to finish
+// the running requests and the last delivery of events. Standalone mode:
+// ShutdownTimeout. Module mode: ShutdownTimeout less ModuleShutdownMargin
+// (at least half of it), so that the process has exited when the host kills
+// it.
+func (c Config) ShutdownBudget() time.Duration {
+	if !c.Module() {
+		return c.ShutdownTimeout
+	}
+	return max(c.ShutdownTimeout-ModuleShutdownMargin, c.ShutdownTimeout/2)
 }
 
 // UnixSocket returns the socket path of a "unix:<path>" HTTPAddr.
@@ -139,44 +324,121 @@ func (c Config) UnixSocket() (string, bool) {
 	return "", false
 }
 
-// Load reads the configuration from MFGRAPH_* variables through getenv
-// (os.Getenv in production).
+// Layered returns the lookup of the settings: a variable set (non-empty) in
+// the environment wins over the configuration file. Command-line options
+// win over both (SetSocket).
+func Layered(getenv func(string) string, file map[string]string) func(string) string {
+	return func(k string) string {
+		if v := getenv(k); v != "" {
+			return v
+		}
+		return file[k]
+	}
+}
+
+// alias returns the value of a setting that has two names; both set to
+// different values is an error (the values are not repeated: they may be
+// secrets).
+func alias(getenv func(string) string, name, other string) (string, error) {
+	a, b := getenv(name), getenv(other)
+	if a != "" && b != "" && a != b {
+		return "", fmt.Errorf("config: %s and %s name the same setting but have different values; set only one", name, other)
+	}
+	if a != "" {
+		return a, nil
+	}
+	return b, nil
+}
+
+// Load reads the configuration through getenv: os.Getenv in production,
+// layered over a configuration file (Layered).
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{
-		HTTPAddr:         DefaultHTTPAddr,
-		APIPrefix:        DefaultAPIPrefix,
-		KernelMigrations: true,
-		TenantID:         DefaultTenantID,
-		MaxUploadBytes:   DefaultMaxUpload,
-		MaxJSONBodyBytes: DefaultMaxJSONBody,
-		MaxCommitChanges: DefaultMaxChanges,
-		AuthTokens:       map[string]string{},
-		LogLevel:         slog.LevelInfo,
-		LogFormat:        "json",
-		ShutdownTimeout:  DefaultShutdown,
-		IdempotencyLease: DefaultIdempotencyLease,
+		Mode:                ModeStandalone,
+		MaxUploadBytes:      DefaultMaxUpload,
+		MaxJSONBodyBytes:    DefaultMaxJSONBody,
+		MaxCommitChanges:    DefaultMaxChanges,
+		AuthTokens:          map[string]string{},
+		LogLevel:            slog.LevelInfo,
+		LogFormat:           "json",
+		ShutdownTimeout:     DefaultShutdown,
+		IdempotencyLease:    DefaultIdempotencyLease,
+		TrustedHeaderPrefix: DefaultTrustedHeaderPrefix,
+		OutboxTable:         DefaultOutboxTable,
 	}
-	if v := getenv(EnvHTTPAddr); v != "" {
-		c.HTTPAddr = v
+	switch v := getenv(EnvMode); v {
+	case "", ModeStandalone:
+	case ModeModule:
+		c.Mode = ModeModule
+	default:
+		return Config{}, fmt.Errorf("config: %s must be %s or %s", EnvMode, ModeStandalone, ModeModule)
+	}
+	module := c.Module()
+	if c.ModuleID = getenv(EnvModuleID); c.ModuleID != "" && c.ModuleID != ModuleID {
+		return Config{}, fmt.Errorf("config: %s must be %s when it is set", EnvModuleID, ModuleID)
+	}
+
+	// The listen address: MFGRAPH_HTTP_ADDR, or MODULE_SOCKET=<path> for
+	// MFGRAPH_HTTP_ADDR=unix:<path>.
+	c.HTTPAddr = getenv(EnvHTTPAddr)
+	if sock := getenv(EnvModuleSocket); sock != "" {
+		if c.HTTPAddr != "" && c.HTTPAddr != unixPrefix+sock {
+			return Config{}, fmt.Errorf("config: %s and %s name the same setting (%s=<path> means %s=unix:<path>) "+
+				"but have different values; set only one", EnvModuleSocket, EnvHTTPAddr, EnvModuleSocket, EnvHTTPAddr)
+		}
+		c.HTTPAddr = unixPrefix + sock
 	}
 	if p, ok := c.UnixSocket(); ok && p == "" {
 		return Config{}, fmt.Errorf("config: %s: unix: needs a socket path", EnvHTTPAddr)
 	}
-	if v := getenv(EnvAPIPrefix); v != "" {
-		if err := checkAPIPrefix(v); err != nil {
-			return Config{}, err
-		}
-		c.APIPrefix = v
+	if _, ok := c.UnixSocket(); module && c.HTTPAddr != "" && !ok {
+		return Config{}, fmt.Errorf("config: module mode listens only on a Unix domain socket: %s must not be a TCP address "+
+			"(set %s or --socket)", EnvHTTPAddr, EnvModuleSocket)
 	}
-	c.DBDSN = getenv(EnvDBDSN)
-	c.StorageRoot = getenv(EnvStorageRoot)
+	if c.HTTPAddr == "" && !module {
+		c.HTTPAddr = DefaultHTTPAddr
+	}
+
+	var err error
+	if c.APIPrefix, err = alias(getenv, EnvAPIPrefix, EnvRoutePrefix); err != nil {
+		return Config{}, err
+	}
+	if c.APIPrefix == "" {
+		c.APIPrefix = DefaultAPIPrefix
+		if module {
+			c.APIPrefix = DefaultModuleAPIPrefix
+		}
+	} else if err := checkAPIPrefix(c.APIPrefix); err != nil {
+		return Config{}, err
+	}
+	if c.DBDSN, err = alias(getenv, EnvDBDSN, EnvDSN); err != nil {
+		return Config{}, err
+	}
+	c.dbDSNName = EnvDBDSN
+	if getenv(EnvDBDSN) == "" {
+		c.dbDSNName = EnvDSN
+	}
+	c.OpsDSN = getenv(EnvOpsDSN)
+	// A DSN the driver cannot parse stops here, before its message (which
+	// may quote a part of the password) could reach a log.
+	for _, d := range [][2]string{{c.dbDSNName, c.DBDSN}, {EnvOpsDSN, c.OpsDSN}} {
+		if d[1] != "" {
+			if _, err := parseDSN(d[0], d[1]); err != nil {
+				return Config{}, err
+			}
+		}
+	}
+	if c.StorageRoot, err = alias(getenv, EnvStorageRoot, EnvDataDir); err != nil {
+		return Config{}, err
+	}
 	if v := getenv(EnvTenantID); v != "" {
 		if !ids.Valid(v) {
 			return Config{}, fmt.Errorf("config: %s must be a ULID (26 uppercase Crockford base32 characters)", EnvTenantID)
 		}
 		c.TenantID = v
+	} else if !module {
+		c.TenantID = DefaultTenantID
 	}
-	var err error
 	if c.MaxUploadBytes, err = parsePositive(getenv, EnvMaxUploadBytes, DefaultMaxUpload); err != nil || c.MaxUploadBytes > MaxUploadLimit {
 		return Config{}, fmt.Errorf("config: %s must be an integer between 1 and %d (5 TiB)", EnvMaxUploadBytes, int64(MaxUploadLimit))
 	}
@@ -197,14 +459,21 @@ func Load(getenv func(string) string) (Config, error) {
 	if c.MigrateOnStart, err = parseBool(getenv, EnvMigrateOnStart, false); err != nil {
 		return Config{}, err
 	}
-	if c.KernelMigrations, err = parseBool(getenv, EnvKernelMigrations, true); err != nil {
+	if c.KernelMigrations, err = parseBool(getenv, EnvKernelMigrations, !module); err != nil {
 		return Config{}, err
+	}
+	if module && c.KernelMigrations {
+		return Config{}, fmt.Errorf("config: module mode never runs the kernel migrations (the host platform owns those "+
+			"tables): %s must be false", EnvKernelMigrations)
 	}
 	if c.MigrateOnStart && c.DBDSN == "" {
 		return Config{}, fmt.Errorf("config: %s requires %s", EnvMigrateOnStart, EnvDBDSN)
 	}
 	if c.AuthTokens, err = parseTokens(getenv(EnvAuthTokens)); err != nil {
 		return Config{}, err
+	}
+	if module && len(c.AuthTokens) > 0 {
+		c.warnings = append(c.warnings, EnvAuthTokens+" is ignored in module mode: the host platform authenticates callers")
 	}
 	if v := getenv(EnvLogLevel); v != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(v)); err != nil {
@@ -231,7 +500,47 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		c.IdempotencyLease = d
 	}
+	if err := c.loadModule(getenv); err != nil {
+		return Config{}, err
+	}
 	return c, nil
+}
+
+// loadModule reads the settings of module mode. They are checked in both
+// modes, so that a typo is found before a deployment switches modes.
+func (c *Config) loadModule(getenv func(string) string) error {
+	c.InternalToken = getenv(EnvModuleInternalToken)
+	if t := c.InternalToken; t != "" {
+		if strings.TrimSpace(t) != t || strings.ContainsFunc(t, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+			return fmt.Errorf("config: %s must not start or end with white space or contain control characters", EnvModuleInternalToken)
+		}
+		if c.Module() && len(t) < MinInternalTokenLength {
+			c.warnings = append(c.warnings, fmt.Sprintf("%s has fewer than %d characters; use a long random value",
+				EnvModuleInternalToken, MinInternalTokenLength))
+		}
+	}
+	if v := getenv(EnvTrustedHeaderPrefix); v != "" {
+		if len(v) > maxHeaderNameBytes/2 || !headerNameRe.MatchString(v) {
+			return fmt.Errorf("config: %s must consist of at most 64 characters A-Z a-z 0-9 -, for example X-Trusted-",
+				EnvTrustedHeaderPrefix)
+		}
+		c.TrustedHeaderPrefix = v
+	}
+	c.InternalTokenHeader = c.TrustedHeaderPrefix + "Internal-Token"
+	if v := getenv(EnvInternalTokenHeader); v != "" {
+		if len(v) > maxHeaderNameBytes || !headerNameRe.MatchString(v) {
+			return fmt.Errorf("config: %s must be a header name of at most 128 characters A-Z a-z 0-9 -", EnvInternalTokenHeader)
+		}
+		c.InternalTokenHeader = v
+	}
+	if v := getenv(EnvOutboxTable); v != "" {
+		if !outboxTableRe.MatchString(v) || len(v) > 129 {
+			return fmt.Errorf("config: %s must be schema.table, each part of A-Z a-z 0-9 _ (at most 64 characters), "+
+				"for example ops.module_outbox", EnvOutboxTable)
+		}
+		c.OutboxTable = v
+	}
+	return nil
 }
 
 func parsePositive(getenv func(string) string, name string, def int64) (int64, error) {
@@ -314,7 +623,8 @@ func parseTokens(s string) (map[string]string, error) {
 
 // Summary describes the configuration for logs without secrets.
 func (c Config) Summary() []any {
-	return []any{
+	s := []any{
+		"mode", c.Mode,
 		"http_addr", c.HTTPAddr,
 		"api_prefix", c.APIPrefix,
 		"db_configured", c.DBDSN != "",
@@ -331,4 +641,15 @@ func (c Config) Summary() []any {
 		"shutdown_timeout", c.ShutdownTimeout.String(),
 		"idempotency_lease", c.IdempotencyLease.String(),
 	}
+	if c.Module() {
+		s = append(s,
+			"module_id", c.ModuleID,
+			"internal_token_configured", c.InternalToken != "",
+			"trusted_header_prefix", c.TrustedHeaderPrefix,
+			"internal_token_header", c.InternalTokenHeader,
+			"ops_dsn_configured", c.OpsDSN != "",
+			"outbox_table", c.OutboxTable,
+		)
+	}
+	return s
 }

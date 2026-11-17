@@ -45,6 +45,7 @@ var wantOperations = []string{
 	"POST /api/v1/projects", "GET /api/v1/projects/{project_id}",
 	"POST /api/v1/workspaces", "GET /api/v1/workspaces/{workspace_id}",
 	"GET /api/v1/workspaces/{workspace_id}/branches", "PUT /api/v1/workspaces/{workspace_id}/objects",
+	"PUT /api/v1/objects/{workspace_id}",
 	"POST /api/v1/workspaces/{workspace_id}/commits", "GET /api/v1/workspaces/{workspace_id}/timeline",
 	"GET /api/v1/snapshots/{snapshot_id}", "GET /api/v1/snapshots/{snapshot_id}/tree",
 	"GET /api/v1/snapshots/{snapshot_id}/file", "GET /api/v1/snapshots/{snapshot_id}/diff",

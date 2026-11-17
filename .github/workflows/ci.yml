@@ -141,13 +141,37 @@ jobs:
           --health-retries 60
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the upgrade test builds the server of an earlier commit
+      # The bundle is built with the Go version that go.mod pins (toolchain).
+      - name: the pinned Go version
+        id: toolchain
+        run: echo "version=$(sed -n 's/^toolchain go//p' go.mod)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: ${{ steps.toolchain.outputs.version }}
+      - name: check the Go version
+        run: |
+          echo "go.mod pins go${{ steps.toolchain.outputs.version }}; go is $(go env GOVERSION)"
+          test "$(go env GOVERSION)" = "go${{ steps.toolchain.outputs.version }}"
       - run: make test-e2e
         env:
           MFGRAPH_E2E_DB_DSN: root:mfgraph@tcp(127.0.0.1:3306)/
           MFGRAPH_E2E_REQUIRE_DB: "1"
+          MFGRAPH_E2E_REQUIRE_UPGRADE: "1"
+      - name: module bundle for linux/amd64
+        run: make bundle BUNDLE_PLATFORMS=linux/amd64
+      - name: acceptance script of the host module, run from the unpacked bundle
+        run: |
+          bundle="$RUNNER_TEMP/bundle"
+          mkdir -p "$bundle"
+          go run ./tools/bundle extract "dist/mfgraph-$(cat packaging/host-module/VERSION)-linux-amd64.tar.zst" "$bundle"
+          cd "$bundle"
+          SOCK="$RUNNER_TEMP/modules/mfgraph.sock" DATADIR="$RUNNER_TEMP/mfgraph-data" TOKEN=dev-token PREPARE_DB=1 \
+          DSN='root:mfgraph@tcp(127.0.0.1:3306)/mfgraph?parseTime=true' \
+          OPS_DSN='root:mfgraph@tcp(127.0.0.1:3306)/ops?parseTime=true' \
+          MYSQL='mysql -h127.0.0.1 -P3306 -uroot -pmfgraph' \
+          scripts/acceptance-m1.0a.sh
 
   e2e-seekdb:
     name: acceptance tests on seekdb
@@ -168,6 +192,8 @@ jobs:
           --health-retries 120
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the upgrade test builds the server of an earlier commit
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -189,11 +215,41 @@ jobs:
           MFGRAPH_E2E_DB_DSN: root@tcp(127.0.0.1:2881)/
           MFGRAPH_E2E_DB_WAIT: 600s
           MFGRAPH_E2E_REQUIRE_DB: "1"
+          MFGRAPH_E2E_REQUIRE_UPGRADE: "1"
+
+  bundle:
+    name: module bundles (reproducible, unsigned)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # The bundle is built with the Go version that go.mod pins (toolchain).
+      - name: the pinned Go version
+        id: toolchain
+        run: echo "version=$(sed -n 's/^toolchain go//p' go.mod)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.toolchain.outputs.version }}
+      - name: check the Go version
+        run: |
+          echo "go.mod pins go${{ steps.toolchain.outputs.version }}; go is $(go env GOVERSION)"
+          test "$(go env GOVERSION)" = "go${{ steps.toolchain.outputs.version }}"
+      - run: make bundle
+      - name: build again from an empty Go build cache and compare
+        run: make bundle-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mfgraph-module-bundles
+          path: dist/
+          if-no-files-found: error
 
   docs:
-    name: links and sensitive-data scan
+    name: links, sensitive-data scan, host names
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - run: python3 scripts/check_links.py .
       - run: python3 scripts/scan_sensitive.py .
+      - name: the host platform is named only in packaging/host-module
+        run: |
+          python3 packaging/host-module/test_check_host_names.py
+          python3 packaging/host-module/check_host_names.py

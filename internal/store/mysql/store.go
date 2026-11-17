@@ -195,10 +195,10 @@ func (s *Store) InsertWorkspace(ctx context.Context, tx ports.Tx, w ports.Worksp
 		return err
 	}
 	_, err = q.ExecContext(ctx, `INSERT INTO workspaces (workspace_id, tenant_id, project_id, workspace_type, owner_ref,
-		owner_principal_uid, storage_backend_id, storage_prefix, storage_prefix_key, display_name, status, created_at_us,
-		updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.TenantID, w.ProjectID, w.Type, []byte(w.OwnerRef), nullString(w.OwnerPrincipalUID), w.StorageBackendID,
-		[]byte(w.StoragePrefix), w.StoragePrefixKey, w.DisplayName, w.Status, w.CreatedAtUs, w.UpdatedAtUs)
+		owner_principal_uid, owner_type, storage_backend_id, storage_prefix, storage_prefix_key, display_name, status,
+		created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.TenantID, w.ProjectID, w.Type, []byte(w.OwnerRef), nullString(w.OwnerPrincipalUID), nullString(w.OwnerType),
+		w.StorageBackendID, []byte(w.StoragePrefix), w.StoragePrefixKey, w.DisplayName, w.Status, w.CreatedAtUs, w.UpdatedAtUs)
 	return wrap(err)
 }
 
@@ -210,16 +210,16 @@ func (s *Store) GetWorkspace(ctx context.Context, tx ports.Tx, id string) (ports
 	}
 	var w ports.Workspace
 	var owner, prefix []byte
-	var uid sql.NullString
+	var uid, ownerType sql.NullString
 	err = q.QueryRowContext(ctx, `SELECT workspace_id, tenant_id, project_id, workspace_type, owner_ref, owner_principal_uid,
-		storage_backend_id, storage_prefix, storage_prefix_key, display_name, status, created_at_us, updated_at_us
+		owner_type, storage_backend_id, storage_prefix, storage_prefix_key, display_name, status, created_at_us, updated_at_us
 		FROM workspaces WHERE workspace_id = ?`, id).
-		Scan(&w.ID, &w.TenantID, &w.ProjectID, &w.Type, &owner, &uid, &w.StorageBackendID, &prefix, &w.StoragePrefixKey,
+		Scan(&w.ID, &w.TenantID, &w.ProjectID, &w.Type, &owner, &uid, &ownerType, &w.StorageBackendID, &prefix, &w.StoragePrefixKey,
 			&w.DisplayName, &w.Status, &w.CreatedAtUs, &w.UpdatedAtUs)
 	if err != nil {
 		return ports.Workspace{}, wrap(err)
 	}
-	w.OwnerRef, w.OwnerPrincipalUID, w.StoragePrefix = string(owner), uid.String, string(prefix)
+	w.OwnerRef, w.OwnerPrincipalUID, w.OwnerType, w.StoragePrefix = string(owner), uid.String, ownerType.String, string(prefix)
 	return w, nil
 }
 
@@ -336,24 +336,25 @@ func (s *Store) InsertUsage(ctx context.Context, tx ports.Tx, workspaceID string
 
 // ---- snapshots --------------------------------------------------------------
 
-const snapshotCols = `snapshot_id, workspace_id, project_id, branch_id, ref_name, author_ref, author_principal_uid, message,
-	trigger_kind, root_tree_hash, root_tree_hash_algo, tree_format_version, entry_count, total_bytes, created_at_us`
+const snapshotCols = `snapshot_id, workspace_id, project_id, branch_id, ref_name, author_ref, author_principal_uid, author_type,
+	on_behalf_of_ref, on_behalf_of_type, message, trigger_kind, root_tree_hash, root_tree_hash_algo, tree_format_version,
+	entry_count, total_bytes, created_at_us`
 
 func scanSnapshot(sc scanner) (ports.Snapshot, error) {
 	var x ports.Snapshot
-	var branch, uid sql.NullString
-	var ref, author []byte
+	var branch, uid, authorType, behalfType sql.NullString
+	var ref, author, behalf []byte
 	var root, algo string
-	if err := sc.Scan(&x.ID, &x.WorkspaceID, &x.ProjectID, &branch, &ref, &author, &uid, &x.Message, &x.TriggerKind, &root, &algo,
-		&x.TreeFormatVersion, &x.EntryCount, &x.TotalBytes, &x.CreatedAtUs); err != nil {
+	if err := sc.Scan(&x.ID, &x.WorkspaceID, &x.ProjectID, &branch, &ref, &author, &uid, &authorType, &behalf, &behalfType,
+		&x.Message, &x.TriggerKind, &root, &algo, &x.TreeFormatVersion, &x.EntryCount, &x.TotalBytes, &x.CreatedAtUs); err != nil {
 		return ports.Snapshot{}, err
 	}
 	h, err := parseHash(algo, root)
 	if err != nil {
 		return ports.Snapshot{}, err
 	}
-	x.BranchID, x.AuthorPrincipalUID, x.RootTreeHash = branch.String, uid.String, h
-	x.RefName, x.AuthorRef = string(ref), string(author)
+	x.BranchID, x.AuthorPrincipalUID, x.AuthorType, x.RootTreeHash = branch.String, uid.String, authorType.String, h
+	x.RefName, x.AuthorRef, x.OnBehalfOfRef, x.OnBehalfOfType = string(ref), string(author), string(behalf), behalfType.String
 	x.ParentIDs = []string{}
 	return x, nil
 }
@@ -365,11 +366,13 @@ func (s *Store) InsertSnapshot(ctx context.Context, tx ports.Tx, x ports.Snapsho
 		return err
 	}
 	_, err = q.ExecContext(ctx, `INSERT INTO snapshots (snapshot_id, workspace_id, project_id, branch_id, ref_name, author_ref,
-		author_principal_uid, message, trigger_kind, root_tree_hash, root_tree_hash_algo, tree_format_version, parent_count,
-		entry_count, total_bytes, status, created_at_us) VALUES (`+placeholders(17)+`)`,
+		author_principal_uid, author_type, on_behalf_of_ref, on_behalf_of_type, message, trigger_kind, root_tree_hash,
+		root_tree_hash_algo, tree_format_version, parent_count, entry_count, total_bytes, status, created_at_us)
+		VALUES (`+placeholders(20)+`)`,
 		x.ID, x.WorkspaceID, x.ProjectID, nullString(x.BranchID), []byte(x.RefName), []byte(x.AuthorRef),
-		nullString(x.AuthorPrincipalUID), x.Message, x.TriggerKind, x.RootTreeHash.Hex(), x.RootTreeHash.Algorithm(),
-		x.TreeFormatVersion, len(x.ParentIDs), x.EntryCount, x.TotalBytes, "committed", x.CreatedAtUs)
+		nullString(x.AuthorPrincipalUID), nullString(x.AuthorType), nullBytes(x.OnBehalfOfRef), nullString(x.OnBehalfOfType),
+		x.Message, x.TriggerKind, x.RootTreeHash.Hex(), x.RootTreeHash.Algorithm(), x.TreeFormatVersion, len(x.ParentIDs),
+		x.EntryCount, x.TotalBytes, "committed", x.CreatedAtUs)
 	if err != nil {
 		return wrap(err)
 	}
@@ -596,9 +599,10 @@ func (s *Store) InsertIdempotency(ctx context.Context, tx ports.Tx, rec ports.Id
 	if rec.Response != nil {
 		response = string(rec.Response)
 	}
-	_, err = q.ExecContext(ctx, `INSERT INTO idempotency_keys (idempotency_key, actor_ref, route, request_hash, response_json,
-		status, created_at_us, expires_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		[]byte(rec.Key), []byte(rec.ActorRef), rec.Route, rec.RequestHash, response, rec.Status, rec.CreatedAtUs, rec.ExpiresAtUs)
+	_, err = q.ExecContext(ctx, `INSERT INTO idempotency_keys (idempotency_key, actor_ref, actor_type, route, request_hash,
+		response_json, status, created_at_us, expires_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[]byte(rec.Key), []byte(rec.ActorRef), nullString(rec.ActorType), rec.Route, rec.RequestHash, response, rec.Status,
+		rec.CreatedAtUs, rec.ExpiresAtUs)
 	return wrap(err)
 }
 
@@ -609,13 +613,14 @@ func (s *Store) GetIdempotency(ctx context.Context, tx ports.Tx, actorRef, route
 		return ports.IdempotencyRecord{}, err
 	}
 	rec := ports.IdempotencyRecord{ActorRef: actorRef, Route: route, Key: key}
-	var response sql.NullString
-	err = q.QueryRowContext(ctx, `SELECT request_hash, response_json, status, created_at_us, expires_at_us FROM idempotency_keys
-		WHERE actor_ref = ? AND route = ? AND idempotency_key = ?`, []byte(actorRef), route, []byte(key)).
-		Scan(&rec.RequestHash, &response, &rec.Status, &rec.CreatedAtUs, &rec.ExpiresAtUs)
+	var response, actorType sql.NullString
+	err = q.QueryRowContext(ctx, `SELECT actor_type, request_hash, response_json, status, created_at_us, expires_at_us
+		FROM idempotency_keys WHERE actor_ref = ? AND route = ? AND idempotency_key = ?`, []byte(actorRef), route, []byte(key)).
+		Scan(&actorType, &rec.RequestHash, &response, &rec.Status, &rec.CreatedAtUs, &rec.ExpiresAtUs)
 	if err != nil {
 		return ports.IdempotencyRecord{}, wrap(err)
 	}
+	rec.ActorType = actorType.String
 	if response.Valid {
 		rec.Response = []byte(response.String)
 	}
@@ -689,4 +694,59 @@ func (s *Store) Events(ctx context.Context) ([]ports.Event, error) {
 		out = append(out, ev)
 	}
 	return out, wrap(rows.Err())
+}
+
+// PendingEvents implements ports.OutboxQueue.
+func (s *Store) PendingEvents(ctx context.Context, limit int) ([]ports.Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT event_id, workspace_id, event_type, aggregate_id, payload_json, created_at_us
+		FROM outbox_events WHERE status = 'pending' AND event_type LIKE ? ORDER BY created_at_us, event_id LIMIT ?`,
+		ports.EventPrefix+"%", limit)
+	if err != nil {
+		return nil, wrap(err)
+	}
+	defer rows.Close()
+	var out []ports.Event
+	for rows.Next() {
+		var ev ports.Event
+		var ws, agg sql.NullString
+		var payload string
+		if err := rows.Scan(&ev.ID, &ws, &ev.Type, &agg, &payload, &ev.CreatedAtUs); err != nil {
+			return nil, wrap(err)
+		}
+		ev.WorkspaceID, ev.AggregateID, ev.Payload = ws.String, agg.String, []byte(payload)
+		out = append(out, ev)
+	}
+	return out, wrap(rows.Err())
+}
+
+// PendingCount implements ports.OutboxQueue.
+func (s *Store) PendingCount(ctx context.Context) (n, oldestAtUs int64, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(created_at_us), 0) FROM outbox_events
+		WHERE status = 'pending' AND event_type LIKE ?`, ports.EventPrefix+"%").Scan(&n, &oldestAtUs)
+	return n, oldestAtUs, wrap(err)
+}
+
+// MarkPublished implements ports.OutboxQueue.
+func (s *Store) MarkPublished(ctx context.Context, id string, publishedAtUs int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox_events SET status = 'published', published_at_us = ?
+		WHERE event_id = ? AND status = 'pending'`, publishedAtUs, id)
+	return wrap(err)
+}
+
+// MarkFailed implements ports.OutboxQueue.
+func (s *Store) MarkFailed(ctx context.Context, id string, nextRetryAtUs int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox_events SET retry_count = retry_count + 1, next_retry_at_us = ?
+		WHERE event_id = ? AND status = 'pending'`, nextRetryAtUs, id)
+	return wrap(err)
+}
+
+// EventDelivery returns the delivery state of an outbox event: its status,
+// retry count and next retry time (tests and diagnostics).
+func (s *Store) EventDelivery(ctx context.Context, id string) (ports.EventDelivery, error) {
+	var d ports.EventDelivery
+	var next, published sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT status, retry_count, next_retry_at_us, published_at_us FROM outbox_events
+		WHERE event_id = ?`, id).Scan(&d.Status, &d.RetryCount, &next, &published)
+	d.NextRetryAtUs, d.PublishedAtUs = next.Int64, published.Int64
+	return d, wrap(err)
 }

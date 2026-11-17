@@ -73,12 +73,24 @@ func TestMySQL(t *testing.T) {
 		{Component: migrate.ComponentMFGraph, Source: migrations.MySQL()},
 	}
 
+	// 0. Empty database: Missing lists everything and creates nothing.
+	if got, err := migrate.Missing(ctx, target, plans); err != nil || len(got) != 9 || got[0] != "kernel/0000_bootstrap" ||
+		got[8] != "mfgraph/0009_actor_types" {
+		t.Fatalf("missing on an empty database: %v %v", got, err)
+	}
+	if tables := listTables(t, db, dbName); len(tables) != 0 {
+		t.Fatalf("Missing created %v", tables)
+	}
+
 	// 1. Empty database: everything is applied.
 	rs, err := migrate.RunAll(ctx, target, plans, time.Now)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	if got := append(rs[0].Applied, rs[1].Applied...); len(got) != 8 || len(rs[0].Skipped)+len(rs[1].Skipped) != 0 {
+	if got, err := migrate.Missing(ctx, target, plans); err != nil || len(got) != 0 {
+		t.Fatalf("missing after the first run: %v %v", got, err)
+	}
+	if got := append(rs[0].Applied, rs[1].Applied...); len(got) != 9 || len(rs[0].Skipped)+len(rs[1].Skipped) != 0 {
 		t.Fatalf("first run applied %v", got)
 	}
 	tables := listTables(t, db, dbName)
@@ -95,14 +107,14 @@ func TestMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
-	if len(rs[0].Applied)+len(rs[1].Applied) != 0 || len(rs[0].Skipped)+len(rs[1].Skipped) != 8 {
+	if len(rs[0].Applied)+len(rs[1].Applied) != 0 || len(rs[0].Skipped)+len(rs[1].Skipped) != 9 {
 		t.Fatalf("second run: %+v", rs)
 	}
 
 	// 3. A modified applied file is refused before anything runs.
 	tampered := copyFS(t, migrations.MySQL())
 	tampered["0002_workstreams_branches.sql"].Data = append(tampered["0002_workstreams_branches.sql"].Data, []byte("-- edited\n")...)
-	tampered["0009_new.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE IF NOT EXISTS must_not_exist (x INT) ENGINE=InnoDB;\n")}
+	tampered["0099_new.sql"] = &fstest.MapFile{Data: []byte("CREATE TABLE IF NOT EXISTS must_not_exist (x INT) ENGINE=InnoDB;\n")}
 	_, err = migrate.RunAll(ctx, target, []migrate.Plan{{Component: migrate.ComponentMFGraph, Source: tampered}}, time.Now)
 	if !errors.Is(err, migrate.ErrChecksumMismatch) {
 		t.Fatalf("tampered run: err = %v", err)
@@ -128,6 +140,24 @@ func TestMySQL(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(rs[0].Applied, []string{"0001_project_owner"}) {
 		t.Fatalf("resume run of ALTER statements: %+v %v", rs, err)
 	}
+	// 0009 (ALTER TABLE ... ADD COLUMN on existing tables) stopped after its
+	// second statement: the rerun adds the remaining columns.
+	if _, err := db.ExecContext(ctx, "DELETE FROM schema_migrations WHERE component = ? AND version = ?", "mfgraph", "0009_actor_types"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := migrate.Missing(ctx, target, plans); err != nil || !reflect.DeepEqual(got, []string{"mfgraph/0009_actor_types"}) {
+		t.Fatalf("missing without 0009: %v %v", got, err)
+	}
+	for _, stmt := range []string{"ALTER TABLE idempotency_keys DROP COLUMN actor_type", "ALTER TABLE workspaces DROP COLUMN owner_type"} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rs, err = migrate.RunAll(ctx, target, plans[1:], time.Now)
+	if err != nil || !reflect.DeepEqual(rs[0].Applied, []string{"0009_actor_types"}) {
+		t.Fatalf("resume run of 0009: %+v %v", rs, err)
+	}
+	checkActorTypeColumns(t, db, dbName)
 
 	// 5. A gap filled later (e.g. 0005 added after 0006/0008 were applied).
 	withGap := copyFS(t, migrations.MySQL())
@@ -143,6 +173,32 @@ func TestMySQL(t *testing.T) {
 	if !errors.Is(err, migrate.ErrUnknownVersion) {
 		t.Fatalf("missing file: err = %v", err)
 	}
+}
+
+// checkActorTypeColumns: the columns of 0009 exist as the server created
+// them (nullable varchar(16)) and keep a type exactly.
+func checkActorTypeColumns(t *testing.T, db *sql.DB, schema string) {
+	t.Helper()
+	rows, err := db.Query(`SELECT table_name, column_name, column_type, is_nullable FROM information_schema.columns
+		WHERE table_schema = ? AND column_name IN ('author_type', 'on_behalf_of_type', 'actor_type', 'owner_type')`, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var table, col, typ, null string
+		if err := rows.Scan(&table, &col, &typ, &null); err != nil {
+			t.Fatal(err)
+		}
+		got[table+"."+col] = strings.ToLower(typ) + " " + null
+	}
+	want := map[string]string{"snapshots.author_type": "varchar(16) YES", "snapshots.on_behalf_of_type": "varchar(16) YES",
+		"idempotency_keys.actor_type": "varchar(16) YES", "workspaces.owner_type": "varchar(16) YES"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("actor type columns = %v\nwant %v", got, want)
+	}
+	t.Logf("measured: ALTER TABLE ... ADD COLUMN of 0009 on existing tables gives %v", got)
 }
 
 func listTables(t *testing.T, db *sql.DB, schema string) []string {

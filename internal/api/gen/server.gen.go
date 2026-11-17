@@ -471,9 +471,21 @@ type Project struct {
 
 // Readiness defines model for Readiness.
 type Readiness struct {
-	// Checks Result per dependency, for example {"db": "ok"}; not_configured when unused.
+	// Checks Result per dependency, for example {"db": "ok"}; not_configured
+	// when unused. In module mode, "outbox" is `ok`, or `stalled` when
+	// the delivery of events to the host platform's outbox table is
+	// stalled: the server stays ready (a restart or less traffic would
+	// not help, and writes keep working), and the field `outbox` has
+	// the details.
 	Checks map[string]string `json:"checks"`
-	Status ReadinessStatus   `json:"status"`
+
+	// Outbox Module mode only: the delivery of events from the local outbox to the
+	// host platform's outbox table. Events are delivered strictly in order,
+	// so one event that cannot be delivered stops every later one; delivery
+	// is stalled when the event at the head of the queue failed 5 times in
+	// a row or for 5 minutes.
+	Outbox *ReadinessOutbox `json:"outbox,omitempty"`
+	Status ReadinessStatus  `json:"status"`
 
 	// UnicodeVersion The Unicode version V of the write-time path rules this server
 	// applies (docs/spec/content-format.md, section 2.4), for example
@@ -492,6 +504,30 @@ type Readiness struct {
 // ReadinessStatus defines model for Readiness.Status.
 type ReadinessStatus string
 
+// ReadinessOutbox Module mode only: the delivery of events from the local outbox to the
+// host platform's outbox table. Events are delivered strictly in order,
+// so one event that cannot be delivered stops every later one; delivery
+// is stalled when the event at the head of the queue failed 5 times in
+// a row or for 5 minutes.
+type ReadinessOutbox struct {
+	// LastError When stalled: the last error of the event at the head of the
+	// queue (never a DSN), cut to 512 bytes.
+	LastError *string `json:"last_error,omitempty"`
+
+	// OldestPendingAt RFC 3339, UTC (`Z`), up to microsecond precision.
+	//
+	// Example: 2026-11-13T08:30:00.123456Z
+	OldestPendingAt *Timestamp `json:"oldest_pending_at,omitempty"`
+
+	// Pending Events in the local outbox that are not delivered yet.
+	Pending *int64 `json:"pending,omitempty"`
+
+	// StalledSince RFC 3339, UTC (`Z`), up to microsecond precision.
+	//
+	// Example: 2026-11-13T08:30:00.123456Z
+	StalledSince *Timestamp `json:"stalled_since,omitempty"`
+}
+
 // RestoreRequest defines model for RestoreRequest.
 type RestoreRequest struct {
 	// BranchId ULID, 26 uppercase Crockford base32 characters.
@@ -507,7 +543,11 @@ type RestoreRequest struct {
 	Path *FilePath `json:"path,omitempty"`
 }
 
-// Snapshot defines model for Snapshot.
+// Snapshot A snapshot: an immutable version of the workspace tree. The author is
+// `author_ref` (with `author_type`); when the author acted on behalf of
+// another actor, as a host platform can say, `on_behalf_of_ref` names
+// that actor (with `on_behalf_of_type`). The optional actor fields are
+// omitted (or `null`) when they do not apply; clients treat both alike.
 type Snapshot struct {
 	// AuthorPrincipalUid ULID of the author when it is known (in a standalone deployment the
 	// ULID whose string form is `author_ref`); `null` until a host
@@ -528,6 +568,12 @@ type Snapshot struct {
 	// Example: manager
 	AuthorRef ActorRef `json:"author_ref"`
 
+	// AuthorType Type of the author as the host platform names it (for example
+	// `human` or `worker`): actors of different types may have the same
+	// reference. Omitted in a standalone deployment, which has no actor
+	// types.
+	AuthorType *string `json:"author_type,omitempty"`
+
 	// BranchId Branch the snapshot was created on.
 	BranchId *string `json:"branch_id"`
 
@@ -539,7 +585,27 @@ type Snapshot struct {
 	// EntryCount Number of files.
 	EntryCount int64  `json:"entry_count"`
 	Message    string `json:"message"`
-	ParentIds  []ULID `json:"parent_ids"`
+
+	// OnBehalfOfPrincipalUid ULID of the actor of `on_behalf_of_ref` when it is known; omitted until a host platform provides ULIDs.
+	OnBehalfOfPrincipalUid *string `json:"on_behalf_of_principal_uid,omitempty"`
+
+	// OnBehalfOfRef Actor reference: the identity string of whoever performed an operation
+	// (the authenticated caller, or the actor it acted on behalf of). A host
+	// platform passes its own identity strings, for example a worker name, a
+	// user name such as `manager`, or an ID such as `@alice:example.com`; in
+	// a standalone deployment it is the string form of the principal's ULID.
+	// Non-empty valid UTF-8, at most 255 bytes (not characters), no control
+	// characters (U+0000-U+001F, U+007F-U+009F). Stored exactly as given and
+	// compared byte for byte: no Unicode normalization, no case folding, no
+	// check that it is a ULID (`a` and `a ` are two actors).
+	//
+	//
+	// Example: manager
+	OnBehalfOfRef *ActorRef `json:"on_behalf_of_ref,omitempty"`
+
+	// OnBehalfOfType Type of the actor of `on_behalf_of_ref` when the host platform gives one; omitted otherwise.
+	OnBehalfOfType *string `json:"on_behalf_of_type,omitempty"`
+	ParentIds      []ULID  `json:"parent_ids"`
 
 	// ProjectId ULID, 26 uppercase Crockford base32 characters.
 	//
@@ -739,6 +805,15 @@ type UnprocessableEntity = Error
 // UnsupportedMediaType defines model for UnsupportedMediaType.
 type UnsupportedMediaType = Error
 
+// UploadObjectParams defines parameters for UploadObject.
+type UploadObjectParams struct {
+	// XContentSHA256 Expected content hash, verified after the upload.
+	XContentSHA256 *Hash `json:"X-Content-SHA256,omitempty"`
+
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+}
+
 // CreateProjectParams defines parameters for CreateProject.
 type CreateProjectParams struct {
 	// XRequestId Client request ID; reused when valid, otherwise replaced.
@@ -886,6 +961,9 @@ type CreateCommitJSONRequestBody = CommitRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// UploadObject Upload a whole file into the workspace staging area (upload path)
+	// (PUT /api/v1/objects/{workspace_id})
+	UploadObject(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params UploadObjectParams)
 	// CreateProject Create a project (standalone deployments)
 	// (POST /api/v1/projects)
 	CreateProject(w http.ResponseWriter, r *http.Request, params CreateProjectParams)
@@ -941,6 +1019,75 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// UploadObject operation middleware
+func (siw *ServerInterfaceWrapper) UploadObject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", r.PathValue("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "workspace_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UploadObjectParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Content-SHA256" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Content-SHA256")]; found {
+		var XContentSHA256 Hash
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Content-SHA256", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Content-SHA256", valueList[0], &XContentSHA256, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Content-SHA256", Err: err})
+			return
+		}
+
+		params.XContentSHA256 = &XContentSHA256
+
+	}
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadObject(w, r, workspaceId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // CreateProject operation middleware
 func (siw *ServerInterfaceWrapper) CreateProject(w http.ResponseWriter, r *http.Request) {
@@ -2073,6 +2220,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}", wrapper.GetWorkspace)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/branches", wrapper.ListBranches)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/objects", wrapper.PutObject)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/objects/{workspace_id}", wrapper.UploadObject)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/commits", wrapper.CreateCommit)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/timeline", wrapper.GetTimeline)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/snapshots/{snapshot_id}", wrapper.GetSnapshot)
@@ -2107,6 +2255,131 @@ type UnauthenticatedJSONResponse Error
 type UnprocessableEntityJSONResponse Error
 
 type UnsupportedMediaTypeJSONResponse Error
+
+type UploadObjectRequestObject struct {
+	WorkspaceId WorkspaceId `json:"workspace_id"`
+	Params      UploadObjectParams
+	Body        io.Reader
+}
+
+type UploadObjectResponseObject interface {
+	VisitUploadObjectResponse(w http.ResponseWriter) error
+}
+
+type UploadObject200JSONResponse StagedObject
+
+func (response UploadObject200JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject201JSONResponse StagedObject
+
+func (response UploadObject201JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UploadObject400JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response UploadObject401JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response UploadObject403JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UploadObject404JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObject413JSONResponse struct{ PayloadTooLargeJSONResponse }
+
+func (response UploadObject413JSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadObjectdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response UploadObjectdefaultJSONResponse) VisitUploadObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type CreateProjectRequestObject struct {
 	Params CreateProjectParams
@@ -3691,6 +3964,9 @@ func (response GetReadyzdefaultJSONResponse) VisitGetReadyzResponse(w http.Respo
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// UploadObject Upload a whole file into the workspace staging area (upload path)
+	// (PUT /api/v1/objects/{workspace_id})
+	UploadObject(ctx context.Context, request UploadObjectRequestObject) (UploadObjectResponseObject, error)
 	// CreateProject Create a project (standalone deployments)
 	// (POST /api/v1/projects)
 	CreateProject(ctx context.Context, request CreateProjectRequestObject) (CreateProjectResponseObject, error)
@@ -3775,6 +4051,35 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// UploadObject operation middleware
+func (sh *strictHandler) UploadObject(w http.ResponseWriter, r *http.Request, workspaceId WorkspaceId, params UploadObjectParams) {
+	var request UploadObjectRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadObject(ctx, request.(UploadObjectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadObject")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadObjectResponseObject); ok {
+		if err := validResponse.VisitUploadObjectResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // CreateProject operation middleware

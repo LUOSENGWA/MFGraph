@@ -15,9 +15,16 @@ info:
 
     * **Authentication.** Every endpoint except `/healthz` and `/readyz`
       requires `Authorization: Bearer <token>`. A missing or unknown token
-      gives `401 unauthenticated`.
+      gives `401 unauthenticated`. Run as a module process of a host
+      platform (module mode, docs/module-mode.md), the server listens on a
+      Unix domain socket below a module prefix (default
+      `/internal/v1/mfgraph`) and takes identity headers set by the host's
+      proxy instead: an internal token, the actor, its type and the project
+      of the request (optionally the actor acted for); `Authorization` is
+      ignored, and a missing or invalid header gives `401 unauthenticated`.
     * **Request IDs.** A valid `X-Request-Id` request header (1–128 visible
-      ASCII characters) is reused; otherwise the server generates a ULID.
+      ASCII characters) is reused (in module mode the request ID header of
+      the host's proxy comes first); otherwise the server generates a ULID.
       Every response, including errors, carries `X-Request-Id`, and error
       bodies repeat it as `request_id`.
     * **Idempotency.** Every POST accepts `Idempotency-Key`. Repeating a
@@ -117,7 +124,13 @@ info:
     * **Ownership.** Every ID is resolved to the workspace (or project) it
       belongs to before authorization. A resource that does not exist and a
       resource of another workspace the caller cannot access give the same
-      `404 not_found`.
+      `404 not_found`. In module mode a request sees exactly the resources
+      of its project; the project endpoints answer `404` there, because the
+      host platform owns the projects.
+    * **Events.** Every change records events in its own transaction
+      (`mfgraph.workspace_created`, `mfgraph.branch_created`,
+      `mfgraph.commit_created`, `mfgraph.snapshot_restored`,
+      `mfgraph.branch_updated`); docs/events.md describes them.
 servers:
   - url: /
 security:
@@ -153,10 +166,13 @@ paths:
       summary: Readiness probe
       description: |
         Checks the dependencies. The service needs a database: without one
-        (not configured, or not reachable) it is not ready. Errors:
+        (not configured, or not reachable) it is not ready, and neither is
+        it while the database lacks a migration of this build. Errors:
         `db_unavailable`, `storage_unavailable` (503; `details.check` names
         the dependency, `details.reason` = `not_configured` when it is not
-        configured).
+        configured, and `schema_behind` when migrations of this build were
+        not applied, listed in `details.missing` as
+        `component/version`).
       security: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
@@ -353,6 +369,72 @@ paths:
         `details.max_bytes`); a `Content-Length` above it is refused before
         the body is read. Object storage is written before the upload is
         recorded: the content is durable when the response arrives.
+        `PUT /api/v1/objects/{workspace_id}` is the same operation under a
+        path that a proxy can give larger upload limits.
+
+        Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
+        (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: X-Content-SHA256
+          in: header
+          required: false
+          description: Expected content hash, verified after the upload.
+          schema:
+            $ref: '#/components/schemas/Hash'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        description: The exact file content; may be empty (zero bytes).
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: The content was already present in this workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagedObject'
+        '201':
+          description: The content was stored and staged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagedObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/objects/{workspace_id}:
+    put:
+      tags: [objects]
+      operationId: uploadObject
+      summary: Upload a whole file into the workspace staging area (upload path)
+      description: |
+        The same operation as `PUT /api/v1/workspaces/{workspace_id}/objects`,
+        with the same parameters, body, responses and errors, under a path
+        that starts with `/objects/`. A proxy in front of the server can give
+        uploads their own body size and time limits by path prefix: embedded
+        in a host platform, the host allows 1 GiB and 600 s only below
+        `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
+        its default limit (8 MiB), which also applies to the other upload
+        path there. Uploads in parts will be added below `{prefix}/uploads/`.
+
+        The request body is the exact file content; uploading creates no
+        snapshot (reference the returned hash in a commit), content that is
+        already present gives 200, and a mismatching `X-Content-SHA256` gives
+        `400 invalid_request` with `details.reason` = `checksum_mismatch`.
 
         Errors: `invalid_request` (400), `unauthenticated` (401), `forbidden`
         (403), `not_found` (404), `file_too_large` / `quota_exceeded` (413).
@@ -1063,7 +1145,13 @@ components:
           enum: [ready]
         checks:
           type: object
-          description: 'Result per dependency, for example {"db": "ok"}; not_configured when unused.'
+          description: |
+            Result per dependency, for example {"db": "ok"}; not_configured
+            when unused. In module mode, "outbox" is `ok`, or `stalled` when
+            the delivery of events to the host platform's outbox table is
+            stalled: the server stays ready (a restart or less traffic would
+            not help, and writes keep working), and the field `outbox` has
+            the details.
           additionalProperties:
             type: string
         unicode_version:
@@ -1077,6 +1165,32 @@ components:
           type: string
           description: Version of the server build.
           example: v1.0.0
+        outbox:
+          $ref: '#/components/schemas/ReadinessOutbox'
+    ReadinessOutbox:
+      type: object
+      description: |
+        Module mode only: the delivery of events from the local outbox to the
+        host platform's outbox table. Events are delivered strictly in order,
+        so one event that cannot be delivered stops every later one; delivery
+        is stalled when the event at the head of the queue failed 5 times in
+        a row or for 5 minutes.
+      properties:
+        pending:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Events in the local outbox that are not delivered yet.
+        oldest_pending_at:
+          $ref: '#/components/schemas/Timestamp'
+        stalled_since:
+          $ref: '#/components/schemas/Timestamp'
+        last_error:
+          type: string
+          maxLength: 512
+          description: |
+            When stalled: the last error of the event at the head of the
+            queue (never a DSN), cut to 512 bytes.
     Project:
       type: object
       required: [project_id, tenant_id, name, status, created_at, updated_at]
@@ -1289,6 +1403,12 @@ components:
           $ref: '#/components/schemas/Timestamp'
     Snapshot:
       type: object
+      description: |
+        A snapshot: an immutable version of the workspace tree. The author is
+        `author_ref` (with `author_type`); when the author acted on behalf of
+        another actor, as a host platform can say, `on_behalf_of_ref` names
+        that actor (with `on_behalf_of_type`). The optional actor fields are
+        omitted (or `null`) when they do not apply; clients treat both alike.
       required: [snapshot_id, workspace_id, project_id, branch_id, ref_name, author_ref, message, trigger_kind,
         root_tree_hash, tree_format_version, parent_ids, entry_count, total_bytes, created_at]
       properties:
@@ -1316,6 +1436,27 @@ components:
             ULID of the author when it is known (in a standalone deployment the
             ULID whose string form is `author_ref`); `null` until a host
             platform provides ULIDs for its actors.
+        author_type:
+          type: string
+          nullable: true
+          pattern: '^[a-z0-9_-]{1,16}$'
+          description: |
+            Type of the author as the host platform names it (for example
+            `human` or `worker`): actors of different types may have the same
+            reference. Omitted in a standalone deployment, which has no actor
+            types.
+        on_behalf_of_ref:
+          $ref: '#/components/schemas/ActorRef'
+        on_behalf_of_principal_uid:
+          type: string
+          nullable: true
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+          description: ULID of the actor of `on_behalf_of_ref` when it is known; omitted until a host platform provides ULIDs.
+        on_behalf_of_type:
+          type: string
+          nullable: true
+          pattern: '^[a-z0-9_-]{1,16}$'
+          description: Type of the actor of `on_behalf_of_ref` when the host platform gives one; omitted otherwise.
         message:
           type: string
         trigger_kind:

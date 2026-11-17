@@ -24,10 +24,13 @@ type EventReader interface {
 	Events(ctx context.Context) ([]ports.Event, error)
 }
 
-// Store is what the suite needs: a ports.Store whose events can be read.
+// Store is what the suite needs: a ports.Store whose events can be read
+// and delivered.
 type Store interface {
 	ports.Store
 	EventReader
+	ports.OutboxQueue
+	EventDelivery(ctx context.Context, id string) (ports.EventDelivery, error)
 }
 
 // Run runs the contract tests. newStore must return an empty store; it is
@@ -48,6 +51,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"Blobs", testBlobs},
 		{"Idempotency", testIdempotency},
 		{"Outbox", testOutbox},
+		{"OutboxQueue", testOutboxQueue},
 		{"Usage", testUsage},
 	}
 	for _, tc := range tests {
@@ -176,6 +180,7 @@ func testWorkspaces(t *testing.T, s Store) {
 	want := workspace(wsA, projA, "default")
 	want.OwnerRef = "a " // trailing space is part of the actor reference
 	want.OwnerPrincipalUID = "01JD3X5Q8Z9W2V4T6R8P0N2M4K"
+	want.OwnerType = "human"
 	tx(t, s, func(tx ports.Tx) error { return s.InsertWorkspace(ctx, tx, want) })
 	got, err := s.GetWorkspace(ctx, nil, wsA)
 	if err != nil || !reflect.DeepEqual(got, want) {
@@ -191,7 +196,8 @@ func testWorkspaces(t *testing.T, s Store) {
 	wantErr(t, "same prefix key on one backend", err, ports.ErrAlreadyExists)
 	dup.StorageBackendID = "other"
 	tx(t, s, func(tx ports.Tx) error { return s.InsertWorkspace(ctx, tx, dup) })
-	if got, err := s.GetWorkspace(ctx, nil, wsB); err != nil || got.StoragePrefix != dup.StoragePrefix || got.OwnerPrincipalUID != "" {
+	if got, err := s.GetWorkspace(ctx, nil, wsB); err != nil || got.StoragePrefix != dup.StoragePrefix || got.OwnerPrincipalUID != "" ||
+		got.OwnerType != "" {
 		t.Fatalf("workspace on another backend: %+v, %v", got, err)
 	}
 	err = s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
@@ -320,7 +326,11 @@ func testSnapshots(t *testing.T, s Store) {
 	child.AuthorRef, child.AuthorPrincipalUID = "01JD3X5Q8Z9W2V4T6R8P0N2M4K", "01JD3X5Q8Z9W2V4T6R8P0N2M4K"
 	child.Message = "\u4e2d\u6587 message with trailing space "
 	child.TriggerKind = ports.TriggerRestore
+	// Actor types, and an actor acted for (a 255-byte reference).
+	child.AuthorType, child.OnBehalfOfType = "worker", "human"
+	child.OnBehalfOfRef = "@" + strings.Repeat("u", 255-len("@:example.com")) + ":example.com"
 	merge := snapshot("01JD3X5Q8Z9W2V4T6R8P0N2S03", 30, "", child.ID, root.ID)
+	merge.AuthorType, merge.OnBehalfOfRef = "agent", "manager" // acted for, without a type
 	merge.EntryCount, merge.TotalBytes = 1<<40, 1<<52
 	tx(t, s, func(tx ports.Tx) error {
 		for _, snap := range []ports.Snapshot{root, child, merge} {
@@ -449,8 +459,15 @@ func testIdempotency(t *testing.T, s Store) {
 	tx(t, s, func(tx ports.Tx) error { return s.InsertIdempotency(ctx, tx, rec) })
 	got, err := s.GetIdempotency(ctx, nil, rec.ActorRef, rec.Route, rec.Key)
 	if err != nil || got.Status != ports.IdempotencyInProgress || len(got.Response) != 0 || got.RequestHash != rec.RequestHash ||
-		got.CreatedAtUs != 100 || got.ExpiresAtUs != 200 {
+		got.CreatedAtUs != 100 || got.ExpiresAtUs != 200 || got.ActorType != "" {
 		t.Fatalf("GetIdempotency = %+v, %v", got, err)
+	}
+	// The actor type is kept.
+	typed := rec
+	typed.Key, typed.ActorType = "k-typed", "worker"
+	tx(t, s, func(tx ports.Tx) error { return s.InsertIdempotency(ctx, tx, typed) })
+	if got, err := s.GetIdempotency(ctx, nil, typed.ActorRef, typed.Route, typed.Key); err != nil || got.ActorType != "worker" {
+		t.Fatalf("typed record = %+v, %v", got, err)
 	}
 	err = s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return s.InsertIdempotency(ctx, tx, rec) })
 	wantErr(t, "duplicate idempotency record", err, ports.ErrAlreadyExists)
@@ -575,6 +592,92 @@ func testOutbox(t *testing.T, s Store) {
 	want := ev("01JD3X5Q8Z9W2V4T6R8P0N2E01", ports.EventSnapshotCreated)
 	if !reflect.DeepEqual(events[0], want) {
 		t.Fatalf("event = %+v\nwant %+v", events[0], want)
+	}
+}
+
+// testOutboxQueue: the pending events come in outbox order (time, then
+// ID), without events of an earlier version's kinds; a failed delivery
+// counts a retry and keeps the event pending; a published event stays
+// published and leaves the queue.
+func testOutboxQueue(t *testing.T, s Store) {
+	ev := func(id, typ string, at int64) ports.Event {
+		return ports.Event{ID: id, Type: typ, WorkspaceID: wsA, AggregateID: wsA, Payload: []byte(`{"v":1}`), CreatedAtUs: at}
+	}
+	// Appended out of order, in two transactions; one row of an old kind.
+	tx(t, s, func(tx ports.Tx) error {
+		for _, e := range []ports.Event{
+			ev("01JD3X5Q8Z9W2V4T6R8P0N2E05", ports.EventBranchUpdated, 21),
+			ev("01JD3X5Q8Z9W2V4T6R8P0N2E09", ports.EventCommitCreated, 20),
+			ev("01JD3X5Q8Z9W2V4T6R8P0N2E01", "snapshot.created", 5),
+		} {
+			if err := s.Append(ctx, tx, e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	tx(t, s, func(tx ports.Tx) error {
+		if err := s.Append(ctx, tx, ev("01JD3X5Q8Z9W2V4T6R8P0N2E07", ports.EventWorkspaceCreated, 10)); err != nil {
+			return err
+		}
+		return s.Append(ctx, tx, ev("01JD3X5Q8Z9W2V4T6R8P0N2E02", ports.EventBranchCreated, 10))
+	})
+	ids := func(evs []ports.Event) string {
+		var out []string
+		for _, e := range evs {
+			out = append(out, e.ID[len(e.ID)-2:])
+		}
+		return strings.Join(out, ",")
+	}
+	got, err := s.PendingEvents(ctx, 100)
+	if err != nil || ids(got) != "02,07,09,05" {
+		t.Fatalf("pending = %s, %v; want 02,07,09,05", ids(got), err)
+	}
+	if n, oldest, err := s.PendingCount(ctx); err != nil || n != 4 || oldest != 10 {
+		t.Fatalf("pending count = %d, oldest %d, %v; want 4, 10", n, oldest, err)
+	}
+	if got, _ := s.PendingEvents(ctx, 2); ids(got) != "02,07" {
+		t.Fatalf("pending with limit 2 = %s", ids(got))
+	}
+	if !reflect.DeepEqual(got[0], ev("01JD3X5Q8Z9W2V4T6R8P0N2E02", ports.EventBranchCreated, 10)) {
+		t.Fatalf("pending event = %+v", got[0])
+	}
+	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02", 777); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02", 888); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := s.EventDelivery(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02"); err != nil || d.Status != ports.EventPending || d.RetryCount != 2 ||
+		d.NextRetryAtUs != 888 {
+		t.Fatalf("after two failures: %+v %v", d, err)
+	}
+	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "02,07,09,05" {
+		t.Fatalf("a failed event left the queue: %s", ids(got))
+	}
+	for _, id := range []string{"01JD3X5Q8Z9W2V4T6R8P0N2E02", "01JD3X5Q8Z9W2V4T6R8P0N2E07"} {
+		if err := s.MarkPublished(ctx, id, 999); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.MarkPublished(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E07", 1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E07", 5); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := s.EventDelivery(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E07"); err != nil || d.Status != ports.EventPublished || d.PublishedAtUs != 999 ||
+		d.RetryCount != 0 {
+		t.Fatalf("published event: %+v %v", d, err)
+	}
+	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "09,05" {
+		t.Fatalf("pending after publishing = %s", ids(got))
+	}
+	if n, oldest, err := s.PendingCount(ctx); err != nil || n != 2 || oldest != 20 {
+		t.Fatalf("pending count after publishing = %d, oldest %d, %v; want 2, 20", n, oldest, err)
+	}
+	if d, err := s.EventDelivery(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E01"); err != nil || d.Status != ports.EventPending {
+		t.Fatalf("old kind: %+v %v", d, err)
 	}
 }
 

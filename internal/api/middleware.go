@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -22,6 +24,7 @@ const MaxRequestIDLength = 128
 
 type requestIDKey struct{}
 type principalKey struct{}
+type claimsKey struct{}
 type actorSlotKey struct{}
 
 // actorSlot lets the authentication middleware tell the access log who the
@@ -29,8 +32,9 @@ type actorSlotKey struct{}
 // context that authentication derives. It is written synchronously while
 // the request is served, before the access log reads it.
 type actorSlot struct {
-	p  ports.Principal
-	ok bool
+	p      ports.Principal
+	claims RequestClaims
+	ok     bool
 }
 
 // RequestIDFrom returns the request ID stored by the RequestID middleware.
@@ -44,6 +48,13 @@ func RequestIDFrom(ctx context.Context) string {
 func PrincipalFrom(ctx context.Context) (ports.Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(ports.Principal)
 	return p, ok
+}
+
+// ClaimsFrom returns the recorded identity headers of a request
+// authenticated by TrustedHeaders (zero otherwise).
+func ClaimsFrom(ctx context.Context) RequestClaims {
+	c, _ := ctx.Value(claimsKey{}).(RequestClaims)
+	return c
 }
 
 // validRequestID accepts 1-128 visible ASCII characters (no spaces or
@@ -60,12 +71,21 @@ func validRequestID(s string) bool {
 	return true
 }
 
-// RequestID reuses a valid X-Request-Id or generates a new ID, stores it in
-// the context and sets it on the response before anything else runs.
-func RequestID(gen ports.IDGen) func(http.Handler) http.Handler {
+// RequestID reuses a valid request ID or generates a new ID, stores it in
+// the context and sets it on the response (X-Request-Id) before anything
+// else runs. The request ID is the first valid one of the trusted header
+// (module mode: <prefix>Request-Id, set by the host platform's proxy; ""
+// for none) and X-Request-Id.
+func RequestID(gen ports.IDGen, trusted string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := r.Header.Get(HeaderRequestID)
+			id := ""
+			if trusted != "" && validRequestID(r.Header.Get(trusted)) {
+				id = r.Header.Get(trusted)
+			}
+			if id == "" {
+				id = r.Header.Get(HeaderRequestID)
+			}
 			if !validRequestID(id) {
 				id = gen.NewID()
 			}
@@ -104,10 +124,14 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 // AccessLog logs one info line per request (never the query string, which
 // may contain file paths). The caller appears only as "actor", the
 // pseudonym of its actor reference (pseudonym, an
-// actorref.Pseudonymizer): raw actor references and principal UIDs are
-// written only to a separate debug-level record, so they appear in the
-// logs only when the level is debug.
-func AccessLog(l *slog.Logger, pseudonym func(string) string) func(http.Handler) http.Handler {
+// actorref.Pseudonymizer), and so does the actor it acts on behalf of
+// ("on_behalf_of"): raw actor references and principal UIDs are written
+// only to a separate debug-level record, so they appear in the logs only
+// when the level is debug. In module mode the line also carries the actor
+// types, the project, the recorded identity headers (team, token_jti,
+// audience, issued_at) and trace_id, the trace ID the host platform's
+// proxy sent in traceHeader ("" for none).
+func AccessLog(l *slog.Logger, pseudonym func(string) string, traceHeader string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -118,13 +142,29 @@ func AccessLog(l *slog.Logger, pseudonym func(string) string) func(http.Handler)
 			next.ServeHTTP(rec, r)
 			attrs := []any{"method", r.Method, "path", r.URL.Path, "status", rec.status, "bytes", rec.bytes,
 				"duration_ms", time.Since(start).Milliseconds(), "request_id", RequestIDFrom(ctx)}
+			if traceHeader != "" {
+				if t := r.Header.Get(traceHeader); validRequestID(t) {
+					attrs = append(attrs, "trace_id", t)
+				}
+			}
 			if slot.ok {
-				attrs = append(attrs, "actor", pseudonym(slot.p.Ref))
+				p, c := slot.p, slot.claims
+				attrs = append(attrs, "actor", pseudonym(p.Ref))
+				for _, kv := range [][2]string{{"actor_type", p.ActorType}, {"project_id", p.ProjectScope},
+					{"on_behalf_of_type", p.OnBehalfOfType}, {"team", c.Team}, {"token_jti", c.TokenJTI},
+					{"audience", c.Audience}, {"issued_at", c.IssuedAt}} {
+					if kv[1] != "" {
+						attrs = append(attrs, kv[0], kv[1])
+					}
+				}
+				if p.OnBehalfOfRef != "" {
+					attrs = append(attrs, "on_behalf_of", pseudonym(p.OnBehalfOfRef))
+				}
 			}
 			l.Info("http request", attrs...)
 			if slot.ok && l.Enabled(ctx, slog.LevelDebug) {
 				l.Debug("http request actor", "request_id", RequestIDFrom(ctx), "actor", pseudonym(slot.p.Ref),
-					"actor_ref", slot.p.Ref, "principal_uid", slot.p.PrincipalUID)
+					"actor_ref", slot.p.Ref, "principal_uid", slot.p.PrincipalUID, "on_behalf_of_ref", slot.p.OnBehalfOfRef)
 			}
 		})
 	}
@@ -149,8 +189,15 @@ func Recover(l *slog.Logger) func(http.Handler) http.Handler {
 }
 
 // Authenticate requires valid credentials on every path except the public
-// ones and stores the principal in the request context.
+// ones and stores the principal (and the recorded identity headers of
+// TrustedHeaders) in the request context. Every failure is 401
+// unauthenticated; identity headers that TrustedHeaders refuses after a
+// valid internal token are also logged as a warning (header name and rule,
+// never the value).
 func Authenticate(a ports.Authenticator, public map[string]bool) func(http.Handler) http.Handler {
+	claims, _ := a.(interface {
+		Claims(*http.Request) RequestClaims
+	})
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if public[r.URL.Path] {
@@ -159,13 +206,26 @@ func Authenticate(a ports.Authenticator, public map[string]bool) func(http.Handl
 			}
 			p, err := a.Authenticate(r)
 			if err != nil {
-				WriteError(w, r, NewError(CodeUnauthenticated, "missing or invalid bearer token", nil))
+				e := NewError(CodeUnauthenticated, "missing or invalid bearer token", nil)
+				var ae *authError
+				if errors.As(err, &ae) {
+					e.Message, e.noChallenge = ae.msg, true
+					if ae.claim {
+						logger(r).Warn("identity headers refused", "request_id", RequestIDFrom(r.Context()), "reason", ae.msg)
+					}
+				}
+				WriteError(w, r, e)
 				return
 			}
-			if slot, ok := r.Context().Value(actorSlotKey{}).(*actorSlot); ok {
-				slot.p, slot.ok = p, true
+			var rc RequestClaims
+			if claims != nil {
+				rc = claims.Claims(r)
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+			if slot, ok := r.Context().Value(actorSlotKey{}).(*actorSlot); ok {
+				slot.p, slot.claims, slot.ok = p, rc, true
+			}
+			ctx := context.WithValue(context.WithValue(r.Context(), principalKey{}, p), claimsKey{}, rc)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
@@ -176,14 +236,28 @@ const apiBase = "/api/v1"
 // Prefix serves the business endpoints below prefix instead of /api/v1: a
 // request to <prefix>/<rest> is routed as /api/v1/<rest>, and any other
 // path except the public ones gives a JSON 404. The access log keeps the
-// path as requested. With prefix /api/v1 it changes nothing.
+// path as requested.
+//
+// A path that is not in its clean form (an empty, "." or ".." segment, a
+// trailing '/', also when percent-encoded) gives the same 404, in both
+// modes and with any prefix: the router would otherwise redirect it to its
+// clean form below /api/v1, a path that behind a proxy with another prefix
+// leads elsewhere. The public paths (/healthz, /readyz) are not affected.
 func Prefix(prefix string, public map[string]bool) func(http.Handler) http.Handler {
+	if prefix == "" {
+		prefix = apiBase
+	}
 	return func(next http.Handler) http.Handler {
-		if prefix == "" || prefix == apiBase {
-			return next
-		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if public[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if p := r.URL.Path; p != path.Clean(p) {
+				WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
+				return
+			}
+			if prefix == apiBase {
 				next.ServeHTTP(w, r)
 				return
 			}

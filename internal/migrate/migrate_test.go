@@ -245,3 +245,32 @@ func TestRepeatedAlterAdd(t *testing.T) {
 		t.Fatalf("a failing CREATE must stop the run: %v", err)
 	}
 }
+
+// TestMissing: the migrations of the plans that the database has not
+// recorded, in order; versions the plans do not know are ignored; nothing
+// is executed.
+func TestMissing(t *testing.T) {
+	f := newFake()
+	plans := []migrate.Plan{
+		{Component: migrate.ComponentKernel, Source: src(map[string]string{"0000_k.sql": "CREATE TABLE IF NOT EXISTS k (x INT);\n"})},
+		{Component: migrate.ComponentMFGraph, Source: src(map[string]string{
+			"0001_a.sql": "CREATE TABLE IF NOT EXISTS a (x INT);\n",
+			"0002_b.sql": "CREATE TABLE IF NOT EXISTS b (x INT);\n",
+			"0009_c.sql": "ALTER TABLE a ADD COLUMN y INT NULL;\n"})},
+	}
+	if got, err := migrate.Missing(context.Background(), f, plans); err != nil ||
+		!reflect.DeepEqual(got, []string{"kernel/0000_k", "mfgraph/0001_a", "mfgraph/0002_b", "mfgraph/0009_c"}) {
+		t.Fatalf("empty database: %v %v", got, err)
+	}
+	f.applied = map[string]map[string]string{"kernel": {"0000_k": "x"}, "mfgraph": {"0001_a": "x", "0002_b": "x", "0010_newer": "x"}}
+	if got, err := migrate.Missing(context.Background(), f, plans); err != nil || !reflect.DeepEqual(got, []string{"mfgraph/0009_c"}) {
+		t.Fatalf("behind by one: %v %v", got, err)
+	}
+	f.applied["mfgraph"]["0009_c"] = "x"
+	if got, err := migrate.Missing(context.Background(), f, plans); err != nil || len(got) != 0 {
+		t.Fatalf("up to date (and a newer version recorded): %v %v", got, err)
+	}
+	if len(f.execs) != 0 {
+		t.Fatalf("Missing executed %q", f.execs)
+	}
+}

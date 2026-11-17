@@ -166,8 +166,14 @@ func freeAddr(t *testing.T) string {
 // start launches the server and waits until /healthz answers.
 func start(t *testing.T, e env) *server {
 	t.Helper()
+	return startBinary(t, serverBin, e)
+}
+
+// startBinary is start with another server binary (an older build).
+func startBinary(t *testing.T, bin string, e env) *server {
+	t.Helper()
 	addr := freeAddr(t)
-	cmd := exec.Command(serverBin)
+	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "MFGRAPH_HTTP_ADDR="+addr)
 	for k, v := range e {
 		cmd.Env = append(cmd.Env, k+"="+v)

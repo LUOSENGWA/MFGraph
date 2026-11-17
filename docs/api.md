@@ -4,19 +4,20 @@
 
 REST/JSON, versioned under `/api/v1`. MCP and CLI are thin adapters over the same API.
 
-The contract of the first core slice is [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.0.3): health checks, projects, project-level workspaces, branches, whole-file upload into staging (`PUT /api/v1/workspaces/{id}/objects`), commits, timeline, tree listing, file download, diff and restore. All of it is implemented (M1.0a). The lists further below show the planned v1 surface; later slices add endpoints without changing existing ones.
+The contract of the first core slice is [`contracts/openapi.yaml`](../contracts/openapi.yaml) (OpenAPI 3.0.3): health checks, projects, project-level workspaces, branches, whole-file upload into staging (`PUT /api/v1/workspaces/{id}/objects`, and the same upload under the upload path `PUT /api/v1/objects/{id}`), commits, timeline, tree listing, file download, diff and restore. All of it is implemented (M1.0a), in both deployment forms: standalone, and as a module process of a host platform ([module mode](module-mode.md)). The lists further below show the planned v1 surface; later slices add endpoints without changing existing ones.
 
 ## The first core slice (M1.0a)
 
 ```text
 GET    /healthz                                   liveness (no authentication)
-GET    /readyz                                    readiness: db, storage; unicode_version, version
+GET    /readyz                                    readiness: db, storage (module mode: outbox); unicode_version, version
 POST   /api/v1/projects                           create a project (its creator owns it)
 GET    /api/v1/projects/{project_id}
 POST   /api/v1/workspaces                         create a workspace and its main branch
 GET    /api/v1/workspaces/{workspace_id}          includes main_branch_id
 GET    /api/v1/workspaces/{workspace_id}/branches
 PUT    /api/v1/workspaces/{workspace_id}/objects  upload one whole file (staged)
+PUT    /api/v1/objects/{workspace_id}             the same upload, under the upload path /objects/
 POST   /api/v1/workspaces/{workspace_id}/commits  the only way to create a snapshot
 GET    /api/v1/workspaces/{workspace_id}/timeline?branch_id=
 GET    /api/v1/snapshots/{snapshot_id}
@@ -27,8 +28,12 @@ POST   /api/v1/snapshots/{snapshot_id}/restore
 ```
 
 - **A database is required.** Without one (`MFGRAPH_DB_DSN` unset or unreachable) the server still starts, `/readyz` answers 503, and every business endpoint answers `503 db_unavailable`; there is no database-less mode.
-- **Prefix.** `/api/v1` is the default prefix of the business endpoints; `MFGRAPH_API_PREFIX` moves them (for example to `/files/v1`, so that `/files/v1/projects` is `POST /api/v1/projects` of the contract), while `/healthz` and `/readyz` stay at the root. Requests to any other path get a JSON 404.
+- **Prefix.** `/api/v1` is the default prefix of the business endpoints; `MFGRAPH_API_PREFIX` moves them (for example to `/files/v1`, so that `/files/v1/projects` is `POST /api/v1/projects` of the contract), while `/healthz` and `/readyz` stay at the root. Requests to any other path get a JSON 404, and so do paths below the prefix that are not in their clean form (`//`, `/./`, `/../`, a trailing `/`): they are never redirected.
 - **Who may do what (standalone).** Any authenticated caller may create a project; the creator is the only owner of the project and of all its workspaces, and everyone else gets `404 not_found` for them. Roles come later; embedded in a host platform, its access control decides.
+- **Module mode.** As a module process of a host platform (`MFGRAPH_MODE=module`, [module mode](module-mode.md)) the server listens on a Unix domain socket below `/internal/v1/mfgraph`; the host's proxy authenticates callers and passes identity headers (actor, actor type, project, optionally the actor acted for) together with an internal token, instead of `Authorization: Bearer`. A request sees exactly the resources of its project: another project's resources give the same `404 not_found` as unknown IDs, a workspace is created only in the request's project, and `/projects` answers 404. The module never answers 403.
+- **Readiness in module mode.** `/readyz` also checks that the host's outbox table can be reached (503 otherwise) and reports the delivery of events to it: `checks.outbox` is `ok`, or `stalled` when the event at the head of the queue failed 5 times in a row or for 5 minutes. A stall leaves the server ready (200), because restarting it or sending it less traffic would not help; the field `outbox` has `pending` and `oldest_pending_at`, and when stalled `stalled_since` and `last_error`. See [module mode](module-mode.md).
+- **Upload path.** `PUT /api/v1/objects/{workspace_id}` is the upload of `PUT /api/v1/workspaces/{workspace_id}/objects` (same responses and errors) under a path that starts with `/objects/`, so that a proxy can give uploads their own size and time limits by path prefix; uploads in parts will be added below `/uploads/`.
+- **Events.** Every change records [events](events.md) (`mfgraph.workspace_created`, `mfgraph.branch_created`, `mfgraph.commit_created`, `mfgraph.snapshot_restored`, `mfgraph.branch_updated`) in its own transaction, with a versioned envelope and an `event_id` derived from the content.
 - **Limits.** One upload is at most `MFGRAPH_MAX_UPLOAD_BYTES` (1 GiB; `413 file_too_large` with `details.max_bytes`, checked against `Content-Length` before the body is read); the body of any other request is at most `MFGRAPH_MAX_JSON_BODY_BYTES` (16 MiB; `413 request_too_large` with `details.max_bytes`, checked against `Content-Length` first and never read beyond the limit); one commit has at most `MFGRAPH_MAX_COMMIT_CHANGES` changes (10,000); lists return at most 500 items per page (default 50). File paths of reads travel in the `path` query parameter (at most 4096 bytes before encoding; a percent-encoded CJK path can reach about 12 KB, more than some proxies accept).
 - **Downloads.** `GET .../file` returns `application/octet-stream` with `Content-Disposition: attachment` (the file name as `filename*` in UTF-8 and as an ASCII `filename` fallback), `X-Content-Type-Options: nosniff`, `ETag`, `304` for a matching `If-None-Match`, and one `Range` (206, or 416). A missing or damaged stored object gives `410 blob_missing` (`missing_in_storage`) before anything is sent.
 - **Names.** A project name and a workspace display name are free text of at most 255 bytes (UTF-8) without control characters, noncharacters, bidi controls or invisible characters (the disallowed list of the path rules); a project name must not be empty or only white space. Otherwise `400 invalid_request`.
@@ -79,14 +84,16 @@ POST   /api/v1/workspaces/{id}/promote
 ## Upload
 
 ```text
-POST   /api/v1/workspaces/{id}/uploads
+POST   /api/v1/uploads                       start an upload in parts (workspace_id in the body)
 GET    /api/v1/uploads/{upload_id}
 POST   /api/v1/uploads/{upload_id}/parts
 POST   /api/v1/uploads/{upload_id}/complete
 DELETE /api/v1/uploads/{upload_id}
 ```
 
-Large files use presigned multipart URLs. The API returns metadata and URLs, not file bytes.
+Large files use presigned multipart URLs. The API returns metadata and URLs, not file bytes. All of these are
+below `/uploads/`, the path prefix (like `/objects/` of the whole-file upload) that a proxy can give larger
+upload limits.
 
 ## Lock
 
@@ -111,7 +118,7 @@ POST   /api/v1/merges/{id}/abort
 ## Headers
 
 ```text
-Authorization: Bearer <token>
+Authorization: Bearer <token>        standalone; module mode: identity headers (module-mode.md)
 Idempotency-Key: <ulid>
 If-Match: <generation>
 X-Request-Id: <ulid>
@@ -161,3 +168,5 @@ Every operation is performed by an **actor**: the authenticated caller, and opti
 Nothing else is required: actor references are stored exactly as given and compared byte for byte, with no Unicode normalization, no case folding and no check that they are ULIDs (`a` and `a ` are two actors). A host platform passes its own identity strings, for example a worker name, a user name such as `manager`, or an ID such as `@alice:example.com`. In a standalone deployment the actor reference of a principal is the string form of its `principal_uid` (a ULID), and the static tokens of `MFGRAPH_AUTH_TOKENS` map to actor references (`token=alice` and `token=01J...` are both valid).
 
 Responses carry the actor reference in `*_ref` fields (`ActorRef` in the [contract](../contracts/openapi.yaml)), with an optional `*_principal_uid` that stays `null` until a host platform provides ULIDs for its actors. The Go implementation is `internal/actorref`.
+
+A host platform also names the **type** of every actor (`[a-z0-9_-]{1,16}`, for example `human` or `worker`), and actors of different types may have the same reference. MFGraph stores the type next to the reference: a snapshot has `author_type` and, when its author acted on behalf of another actor, `on_behalf_of_ref` and `on_behalf_of_type`; these fields are omitted when they do not apply (standalone deployments have no types). An `Idempotency-Key` is replayed only to the actor that used it, with the same type: the same reference with another type gets `409 idempotency_key_reuse`.

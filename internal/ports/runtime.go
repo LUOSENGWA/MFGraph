@@ -17,22 +17,38 @@ type ClockFunc func() time.Time
 // Now calls f.
 func (f ClockFunc) Now() time.Time { return f() }
 
-// Event types written to the outbox by the first core slice.
+// Event kinds (docs/events.md), the same in both deployment forms. The
+// first core slice emits the first five; EventSnapshotCreated is
+// registered for explicit snapshots (checkpoints, snapshots before a
+// restore), which the first core slice does not have.
 const (
-	EventSnapshotCreated  = "snapshot.created"
-	EventSnapshotRestored = "snapshot.restored"
-	EventBranchUpdated    = "branch.updated"
+	EventWorkspaceCreated = "mfgraph.workspace_created"
+	EventBranchCreated    = "mfgraph.branch_created"
+	EventCommitCreated    = "mfgraph.commit_created"
+	EventBranchUpdated    = "mfgraph.branch_updated"
+	EventSnapshotRestored = "mfgraph.snapshot_restored"
+	EventSnapshotCreated  = "mfgraph.snapshot_created"
+)
+
+// EventKinds lists every registered event kind; EmittedEventKinds those the
+// first core slice emits.
+var (
+	EventKinds = []string{EventWorkspaceCreated, EventBranchCreated, EventCommitCreated, EventSnapshotRestored,
+		EventBranchUpdated, EventSnapshotCreated}
+	EmittedEventKinds = []string{EventWorkspaceCreated, EventBranchCreated, EventCommitCreated, EventSnapshotRestored,
+		EventBranchUpdated}
 )
 
 // Event is one outbox row (table outbox_events). It is written with status
-// pending; the first core slice does not publish events.
+// pending in the transaction of the change; module mode forwards it to the
+// host platform's outbox afterwards (package outbox).
 type Event struct {
-	ID          string // event_id, a ULID
-	Type        string
+	ID          string // event_id of the row, a ULID (the envelope has its own event_id)
+	Type        string // the event kind
 	WorkspaceID string
-	AggregateID string // e.g. the snapshot_id
-	Payload     []byte // JSON (encoding/json of a fixed struct)
-	CreatedAtUs int64  // epoch microseconds
+	AggregateID string // the business key: snapshot, branch or workspace ID
+	Payload     []byte // the envelope (JSON)
+	CreatedAtUs int64  // epoch microseconds; the outbox is ordered by (CreatedAtUs, ID)
 }
 
 // Tx is an open unit of work created by a Transactor. It is passed to every
@@ -56,4 +72,47 @@ type Transactor interface {
 // committed. Publishing happens later (at least once).
 type EventSink interface {
 	Append(ctx context.Context, tx Tx, ev Event) error
+}
+
+// OutboxQueue is the read side of the outbox, for the publisher of module
+// mode (package outbox): the events that are still to be delivered, in the
+// order they must be delivered.
+type OutboxQueue interface {
+	// PendingEvents returns up to limit committed events that are not
+	// published yet and have a current kind (mfgraph.*), in outbox order:
+	// by CreatedAtUs, then by ID.
+	PendingEvents(ctx context.Context, limit int) ([]Event, error)
+	// MarkPublished records that an event was delivered; a published event
+	// stays published.
+	MarkPublished(ctx context.Context, id string, publishedAtUs int64) error
+	// MarkFailed records a failed delivery: the event stays pending, its
+	// retry count grows by one and nextRetryAtUs says when the publisher
+	// tries again.
+	MarkFailed(ctx context.Context, id string, nextRetryAtUs int64) error
+	// PendingCount returns how many events PendingEvents would return
+	// without a limit, and the CreatedAtUs of the first of them (0 when
+	// there is none): the backlog, for readiness and logs.
+	PendingCount(ctx context.Context) (n, oldestAtUs int64, err error)
+}
+
+// EventPrefix starts every current event kind; PendingEvents leaves out
+// rows of other kinds (written by an earlier version).
+const EventPrefix = "mfgraph."
+
+// Outbox row states. MFGraph writes only the first two; an operator may
+// set EventSkipped by hand on an event that can never be delivered (see
+// docs/module-mode.md): the publisher reads only pending events, so a
+// skipped one stays in the table, visible, and is never delivered.
+const (
+	EventPending   = "pending"
+	EventPublished = "published"
+	EventSkipped   = "skipped"
+)
+
+// EventDelivery is the delivery state of an outbox row.
+type EventDelivery struct {
+	Status        string // EventPending or EventPublished
+	RetryCount    int
+	NextRetryAtUs int64 // 0 = NULL
+	PublishedAtUs int64 // 0 = NULL
 }

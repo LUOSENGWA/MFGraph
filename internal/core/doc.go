@@ -10,4 +10,9 @@
 // Errors are *Error values with the stable codes of the API (Code*) and
 // details (reason, current_generation, hashes, ...), or *pathx.Error for
 // paths that break a rule (invalid_path).
+//
+// Every change writes its events (events.go, docs/events.md) to the outbox
+// in its own transaction. With Config.HostOwnsProjects (module mode) the
+// host platform owns the projects: the core never reads the projects
+// table and creates workspaces in the project of the request.
 package core

@@ -13,9 +13,16 @@ type CreateProjectRequest struct {
 	Name string `json:"name"`
 }
 
+// errNoProjects answers the project operations when the host platform owns
+// the projects: the same not_found as for an unknown endpoint.
+func errNoProjects() *Error { return newError(CodeNotFound, "no such endpoint", nil) }
+
 // CreateProject creates a project owned by the caller (standalone
 // deployments: the creator is its only owner) in the configured tenant.
 func (s *Service) CreateProject(ctx context.Context, p ports.Principal, req CreateProjectRequest, idemKey string) (ports.Project, error) {
+	if s.cfg.HostOwnsProjects {
+		return ports.Project{}, errNoProjects()
+	}
 	if err := checkLabel("name", req.Name, true); err != nil {
 		return ports.Project{}, err
 	}
@@ -39,6 +46,9 @@ func (s *Service) CreateProject(ctx context.Context, p ports.Principal, req Crea
 
 // GetProject returns a project the caller can see.
 func (s *Service) GetProject(ctx context.Context, p ports.Principal, id string) (ports.Project, error) {
+	if s.cfg.HostOwnsProjects {
+		return ports.Project{}, errNoProjects()
+	}
 	if err := checkID("project_id", id); err != nil {
 		return ports.Project{}, err
 	}
@@ -73,8 +83,9 @@ type WorkspaceView struct {
 }
 
 // CreateWorkspace creates a project-level workspace and, in the same
-// transaction, its main branch (ref main, generation 1, no head) and its
-// usage row. The storage prefix is the default prefix
+// transaction, its main branch (ref main, generation 1, no head), its
+// usage row and the events mfgraph.workspace_created and
+// mfgraph.branch_created. The storage prefix is the default prefix
 // tenants/<tenant>/projects/<project>/workspaces/<workspace>: default
 // prefixes have a fixed number of segments, so they are never nested, and
 // the database rejects two that differ only in case.
@@ -85,9 +96,15 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 	if err := checkLabel("display_name", req.DisplayName, false); err != nil {
 		return WorkspaceView{}, err
 	}
-	proj, err := s.d.Store.GetProject(ctx, nil, req.ProjectID)
-	if err != nil {
-		return WorkspaceView{}, mapErr(err, "project")
+	// When the host owns the projects, the project is the one of the
+	// request as given: the authorizer admits only the request's project,
+	// whose existence is the host's business.
+	proj := ports.Project{ID: req.ProjectID, TenantID: s.cfg.TenantID}
+	if !s.cfg.HostOwnsProjects {
+		var err error
+		if proj, err = s.d.Store.GetProject(ctx, nil, req.ProjectID); err != nil {
+			return WorkspaceView{}, mapErr(err, "project")
+		}
 	}
 	if err := s.checkProject(ctx, p, ports.ActionWorkspaceCreate, proj); err != nil {
 		return WorkspaceView{}, err
@@ -100,13 +117,21 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 			return WorkspaceView{}, err
 		}
 		ws := ports.Workspace{ID: id, TenantID: proj.TenantID, ProjectID: proj.ID, Type: ports.WorkspaceTypeProject,
-			OwnerRef: p.Ref, OwnerPrincipalUID: p.PrincipalUID, StorageBackendID: s.cfg.StorageBackendID,
+			OwnerRef: p.Ref, OwnerPrincipalUID: p.PrincipalUID, OwnerType: p.ActorType, StorageBackendID: s.cfg.StorageBackendID,
 			StoragePrefix: prefix, StoragePrefixKey: storagekey.PrefixKey(prefix), DisplayName: req.DisplayName,
 			Status: ports.StatusActive, CreatedAtUs: now, UpdatedAtUs: now}
 		main := ports.Branch{ID: s.d.IDs.NewID(), WorkspaceID: id, ProjectID: proj.ID, Name: ports.MainRefName,
 			RefName: ports.MainRefName, Type: ports.BranchTypeMain, Generation: 1, Status: ports.StatusActive,
 			CreatedByRef: p.Ref, CreatedByPrincipalUID: p.PrincipalUID, CreatedAtUs: now, UpdatedAtUs: now}
 		view := WorkspaceView{Workspace: ws, MainBranchID: main.ID}
+		evs, err := s.events(p, proj.ID, now,
+			eventSpec{kind: ports.EventWorkspaceCreated, workspaceID: id, key: id, version: 1,
+				data: workspaceCreatedData{WorkspaceID: id, MainBranchID: main.ID, StorageBackendID: ws.StorageBackendID}},
+			eventSpec{kind: ports.EventBranchCreated, workspaceID: id, key: main.ID, version: main.Generation,
+				data: branchCreatedData{WorkspaceID: id, BranchID: main.ID, RefName: main.RefName, Generation: main.Generation}})
+		if err != nil {
+			return WorkspaceView{}, err
+		}
 		err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
 			if err := s.d.Store.InsertWorkspace(ctx, tx, ws); err != nil {
 				return err
@@ -117,12 +142,19 @@ func (s *Service) CreateWorkspace(ctx context.Context, p ports.Principal, req Cr
 			if err := s.d.Store.InsertUsage(ctx, tx, id, now); err != nil {
 				return err
 			}
+			if err := s.appendEvents(ctx, tx, evs); err != nil {
+				return err
+			}
 			return completeIf(ctx, complete, tx, view)
 		})
 		if errors.Is(err, ports.ErrAlreadyExists) {
 			return WorkspaceView{}, &Error{Code: CodeConflict, Message: "the storage prefix of the new workspace is in use", Err: err}
 		}
-		return view, mapErr(err, "workspace")
+		if err != nil {
+			return WorkspaceView{}, mapErr(err, "workspace")
+		}
+		s.eventsCommitted()
+		return view, nil
 	})
 }
 

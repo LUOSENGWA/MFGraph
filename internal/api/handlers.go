@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -82,9 +83,11 @@ func branchJSON(b ports.Branch) gen.Branch {
 
 func snapshotJSON(s ports.Snapshot) gen.Snapshot {
 	return gen.Snapshot{SnapshotId: s.ID, WorkspaceId: s.WorkspaceID, ProjectId: s.ProjectID, BranchId: nullable(s.BranchID),
-		RefName: s.RefName, AuthorRef: s.AuthorRef, AuthorPrincipalUid: nullable(s.AuthorPrincipalUID), Message: s.Message,
-		TriggerKind: s.TriggerKind, RootTreeHash: s.RootTreeHash.String(), TreeFormatVersion: int32(s.TreeFormatVersion),
-		ParentIds: append([]string{}, s.ParentIDs...), EntryCount: s.EntryCount, TotalBytes: s.TotalBytes, CreatedAt: ts(s.CreatedAtUs)}
+		RefName: s.RefName, AuthorRef: s.AuthorRef, AuthorPrincipalUid: nullable(s.AuthorPrincipalUID),
+		AuthorType: nullable(s.AuthorType), OnBehalfOfRef: nullable(s.OnBehalfOfRef), OnBehalfOfType: nullable(s.OnBehalfOfType),
+		Message: s.Message, TriggerKind: s.TriggerKind, RootTreeHash: s.RootTreeHash.String(),
+		TreeFormatVersion: int32(s.TreeFormatVersion), ParentIds: append([]string{}, s.ParentIDs...), EntryCount: s.EntryCount,
+		TotalBytes: s.TotalBytes, CreatedAt: ts(s.CreatedAtUs)}
 }
 
 func commitJSON(r core.CommitResult) gen.CommitResult {
@@ -170,20 +173,40 @@ func (h *handlers) ListBranches(ctx context.Context, req gen.ListBranchesRequest
 // ---- objects, commits, restores -----------------------------------------------
 
 func (h *handlers) PutObject(ctx context.Context, req gen.PutObjectRequestObject) (gen.PutObjectResponseObject, error) {
-	svc, p, err := h.service(ctx)
-	if err != nil {
+	o, created, err := h.upload(ctx, req.WorkspaceId, req.Body, req.Params.XContentSHA256)
+	switch {
+	case err != nil:
 		return nil, err
-	}
-	b, created, err := svc.PutObject(ctx, p, core.PutObjectRequest{WorkspaceID: req.WorkspaceId, Body: req.Body,
-		ContentLength: ContentLengthFrom(ctx), Expected: str(req.Params.XContentSHA256)})
-	if err != nil {
-		return nil, err
-	}
-	o := gen.StagedObject{Hash: b.Hash.String(), Size: b.Size, Status: gen.StagedObjectStatus(b.Status)}
-	if created {
+	case created:
 		return gen.PutObject201JSONResponse(o), nil
 	}
 	return gen.PutObject200JSONResponse(o), nil
+}
+
+// UploadObject is PutObject under the upload path /objects/{workspace_id}.
+func (h *handlers) UploadObject(ctx context.Context, req gen.UploadObjectRequestObject) (gen.UploadObjectResponseObject, error) {
+	o, created, err := h.upload(ctx, req.WorkspaceId, req.Body, req.Params.XContentSHA256)
+	switch {
+	case err != nil:
+		return nil, err
+	case created:
+		return gen.UploadObject201JSONResponse(o), nil
+	}
+	return gen.UploadObject200JSONResponse(o), nil
+}
+
+// upload runs an upload of either upload route.
+func (h *handlers) upload(ctx context.Context, workspaceID string, body io.Reader, expected *string) (gen.StagedObject, bool, error) {
+	svc, p, err := h.service(ctx)
+	if err != nil {
+		return gen.StagedObject{}, false, err
+	}
+	b, created, err := svc.PutObject(ctx, p, core.PutObjectRequest{WorkspaceID: workspaceID, Body: body,
+		ContentLength: ContentLengthFrom(ctx), Expected: str(expected)})
+	if err != nil {
+		return gen.StagedObject{}, false, err
+	}
+	return gen.StagedObject{Hash: b.Hash.String(), Size: b.Size, Status: gen.StagedObjectStatus(b.Status)}, created, nil
 }
 
 func (h *handlers) CreateCommit(ctx context.Context, req gen.CreateCommitRequestObject) (gen.CreateCommitResponseObject, error) {
