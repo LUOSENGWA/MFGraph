@@ -18,6 +18,7 @@ All notable changes will be documented here.
 
 - A DSN the MySQL driver cannot parse stops the start with "`<variable>` is not a valid DSN"; the driver's own message, which could quote a part of the password, is no longer printed.
 - The event forwarder's connection always uses the character set utf8mb4: a DSN without `charset` gets `charset=utf8mb4`, and module mode refuses to start when the forwarder's DSN (`MFGRAPH_OPS_DSN`, or `MFGRAPH_DSN` without it) sets another character set, a list such as `utf8,utf8mb4`, a collation of another character set or a `character_set_*`/`collation_*` session variable. With `charset=utf8` an actor outside the BMP could never be delivered on MySQL, and `latin1` mangled the text.
+- Every database call of the event forwarder (reading the local outbox, writing the host table, marking a row) has a time limit of 15 s; a call without an answer is a failure like any other (logged, counted as a retry, followed by the backoff) instead of a forwarder that waits silently.
 
 ### M1.0a: the first core slice
 

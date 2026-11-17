@@ -1,12 +1,15 @@
 package outbox_test
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -279,5 +282,98 @@ func TestRunNotifyAndBackoff(t *testing.T) {
 	waitRows(2)
 	if d, _ := store.EventDelivery(ctx, ev(2, "", 0).ID); d.RetryCount < 2 || d.Status != ports.EventPublished {
 		t.Fatalf("delivery of the retried event: %+v", d)
+	}
+}
+
+// syncBuffer is a log destination that tests read while the forwarder runs.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// silentPort accepts TCP connections and never answers, like the review's
+// ops port that accepts a connection and sends nothing back.
+func silentPort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	return ln.Addr().String()
+}
+
+// TestCallTimeout: a host database that accepts the connection and never
+// answers. Every call of the forwarder has a time limit: the write fails
+// after it, the failure is recorded as a retry of the event, logged, and
+// followed by the backoff.
+func TestCallTimeout(t *testing.T) {
+	db, err := sql.Open("mysql", "ops:ops-pass@tcp("+silentPort(t)+")/ops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sink, err := outbox.NewSQLSink(db, "ops.module_outbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := memory.NewStore()
+	appendEvents(t, store, ev(1, ports.EventWorkspaceCreated, 1))
+	logs := &syncBuffer{}
+	f := outbox.New(store, sink, outbox.Options{Logger: slog.New(slog.NewTextHandler(logs, nil)), CallTimeout: 300 * time.Millisecond,
+		MinBackoff: 50 * time.Millisecond, MaxBackoff: 50 * time.Millisecond, Interval: time.Hour})
+	start := time.Now()
+	n, err := f.Flush(ctx)
+	took := time.Since(start)
+	if n != 0 || err == nil || !strings.Contains(err.Error(), "write the host's outbox table: no answer within 300ms") ||
+		took < 250*time.Millisecond || took > 5*time.Second {
+		t.Fatalf("flush against a silent database: %d %v after %v", n, err, took)
+	}
+	if d, _ := store.EventDelivery(ctx, ev(1, "", 0).ID); d.RetryCount != 1 || d.Status != ports.EventPending {
+		t.Fatalf("delivery after the timeout: %+v", d)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { f.Run(runCtx); close(done) }()
+	time.Sleep(1200 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop within 2 s of the cancellation while a call was waiting")
+	}
+	if d, _ := store.EventDelivery(ctx, ev(1, "", 0).ID); d.RetryCount < 3 {
+		t.Fatalf("retries after 1.2 s of timeouts of 300 ms: %+v", d)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "no answer within 300ms") ||
+		strings.Contains(logs.String(), "ops-pass") {
+		t.Fatalf("log:\n%s", logs.String())
 	}
 }
