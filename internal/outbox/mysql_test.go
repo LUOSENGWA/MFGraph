@@ -372,4 +372,60 @@ func TestMySQLForwarder(t *testing.T) {
 	t.Logf("measured: %d host rows in outbox order; a duplicate event_id is absorbed by %s", len(rows), outbox.UniqueKey)
 }
 
+// TestMySQLInsertOnlyAccount: the forwarder's account may have INSERT on
+// the host table and nothing else: rows are written, a duplicate counts as
+// delivered, and the readiness check finds the table.
+func TestMySQLInsertOnlyAccount(t *testing.T) {
+	e := newMySQLEnv(t)
+	user := fmt.Sprintf("mfg_ops_%d", time.Now().UnixNano()%1_000_000_000)
+	const password = "ops-test-0123456789"
+	for _, stmt := range []string{
+		"CREATE USER '" + user + "'@'%' IDENTIFIED BY '" + password + "'",
+		"GRANT INSERT ON " + e.opsName + ".module_outbox TO '" + user + "'@'%'",
+	} {
+		if _, err := e.ops.Exec(stmt); err != nil {
+			t.Skipf("cannot create a test account on this server (%v)", err)
+		}
+	}
+	t.Cleanup(func() { _, _ = e.ops.Exec("DROP USER '" + user + "'@'%'") })
+	cfg, _ := mysql.ParseDSN(os.Getenv("MFGRAPH_TEST_MYSQL_DSN"))
+	cfg.User, cfg.Passwd, cfg.DBName = user, password, ""
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sink, err := outbox.NewSQLSink(db, e.opsName+".module_outbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkErr error
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) { // grants may take a moment on seekdb
+		if checkErr = sink.Check(ctx); checkErr == nil || time.Now().After(deadline) {
+			break
+		}
+	}
+	if checkErr != nil {
+		t.Fatalf("readiness with INSERT only: %v", checkErr)
+	}
+	if _, err := db.Exec("SELECT 1 FROM " + e.opsName + ".module_outbox LIMIT 0"); err == nil {
+		t.Log("note: this server allows the SELECT without the privilege")
+	}
+	row := outbox.Row{EventID: strings.Repeat("c", 64), EventKind: ports.EventWorkspaceCreated, ScopeID: projectM, ActorID: "manager",
+		Payload: []byte(`{"v":1}`), CreatedAt: time.Now(), AvailableAt: time.Now(), UpdatedAt: time.Now()}
+	for i := 0; i < 2; i++ {
+		if err := sink.Insert(ctx, row); err != nil {
+			t.Fatalf("insert %d with INSERT only: %v", i+1, err)
+		}
+	}
+	if n := len(e.hostRows()); n != 1 {
+		t.Fatalf("%d rows", n)
+	}
+	other, _ := outbox.NewSQLSink(db, e.opsName+".no_such_table")
+	if err := other.Check(ctx); err == nil {
+		t.Fatal("readiness of a missing table")
+	}
+	t.Log("measured: an account with INSERT on the host table only writes rows, absorbs duplicates and passes the readiness check")
+}
+
 func strPtr(s string) *string { return &s }

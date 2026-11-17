@@ -23,7 +23,10 @@ var tableRe = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
 // UniqueKey is the name of the host table's unique key on event_id.
 const UniqueKey = "uk_module_outbox_event"
 
-const errDupEntry = 1062 // ER_DUP_ENTRY
+const (
+	errDupEntry          = 1062 // ER_DUP_ENTRY
+	errTableAccessDenied = 1142 // ER_TABLEACCESS_DENIED_ERROR
+)
 
 // SQLSink writes the host's outbox table over a MySQL-protocol connection
 // (MySQL 8.0 or seekdb):
@@ -34,9 +37,10 @@ const errDupEntry = 1062 // ER_DUP_ENTRY
 //
 // A duplicate key on UniqueKey means the event was delivered before.
 type SQLSink struct {
-	db     *sql.DB
-	insert string
-	check  string
+	db            *sql.DB
+	schema, table string
+	insert        string
+	check         string
 }
 
 // NewSQLSink returns the sink of table (schema.table) on db.
@@ -47,7 +51,7 @@ func NewSQLSink(db *sql.DB, table string) (*SQLSink, error) {
 	schema, name, _ := strings.Cut(table, ".")
 	quoted := "`" + schema + "`.`" + name + "`"
 	return &SQLSink{
-		db: db,
+		db: db, schema: schema, table: name,
 		insert: "INSERT INTO " + quoted + " (event_id, module, event_kind, scope_kind, scope_id, actor_type, actor_id, " +
 			"payload_json, status, attempts, available_at, created_at, updated_at) " +
 			"VALUES (?, 'mfgraph', ?, 'project', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)",
@@ -69,13 +73,30 @@ func (s *SQLSink) Insert(ctx context.Context, r Row) error {
 	return err
 }
 
-// Check implements Sink: the connection works and the table exists.
+// Check implements Sink: the connection works and the table exists, by
+// SELECT 1 FROM <table> LIMIT 0. The account of the forwarder may have
+// INSERT on the table and nothing else, which MySQL and seekdb answer with
+// a privilege error; the table must then be listed in
+// information_schema.tables, which shows the tables an account has any
+// privilege on.
 func (s *SQLSink) Check(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, s.check)
-	if err != nil {
+	if err == nil {
+		return rows.Close()
+	}
+	var me *mysql.MySQLError
+	if !errors.As(err, &me) || me.Number != errTableAccessDenied {
 		return err
 	}
-	return rows.Close()
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?`,
+		s.schema, s.table).Scan(&n); err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("outbox: table %s.%s not found", s.schema, s.table)
+	}
+	return nil
 }
 
 // isDuplicateEvent reports a duplicate key on the event_id of the host
