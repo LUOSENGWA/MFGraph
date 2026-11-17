@@ -8,7 +8,8 @@ envelopes and IDs are the same in both deployment forms:
 - **standalone:** the events stay in `outbox_events` (status `pending`); no
   publisher reads them yet;
 - **module mode:** a forwarder in the server process copies them, in order,
-  to the outbox table of the host platform.
+  to the outbox table of the host platform (see
+  [Module mode](module-mode.md#events)).
 
 This document is the vocabulary of the events. A host platform can use it to
 check that what a module emits is what it registered (a drift check): the
