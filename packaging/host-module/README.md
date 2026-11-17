@@ -148,6 +148,68 @@ kernel's), and running it again skips what is applied.
   `X-Atf-Request-Id`, `X-Atf-Trace-Id`, `X-Atf-Token-Jti`, `X-Atf-Issued-At`,
   `X-Atf-Audience` (optional; see [Module mode](../../docs/module-mode.md)).
 
+## Events in `ops.module_outbox`
+
+The forwarder writes the events of `docs/events.md` to `ops.module_outbox`
+(through `MFGRAPH_OPS_DSN`, always with the character set utf8mb4), one at a
+time, at least once.
+
+**Order.** Within one branch, events arrive in the order of its
+generations. Between branches (in M1.0a: between workspaces), they arrive in
+the order their transactions completed, which is not always the order of
+their `created_at`: a change that started earlier but committed later
+arrives after one that committed first. The publisher must read the table
+by `ops.module_outbox.id` (the order of insertion) and **must not use
+`created_at` as a cursor**, or it can miss rows.
+
+**Deduplication.** The unique index on `event_id` (see above) turns a
+redelivered event into a duplicate-key error, which the forwarder treats as
+delivered.
+
+**A stalled forwarder.** One event that cannot be written stops every later
+event (delivery is strictly in order), while the module keeps serving.
+
+- How to see it: after 5 failures in a row or 5 minutes, the module logs an
+  ERROR line `outbox: delivery to the host's outbox table is stalled` with
+  `pending`, `oldest_pending_at`, `event` (the local ID in
+  `mfgraph.outbox_events`), `event_id` (the envelope's ID, as in
+  `ops.module_outbox`), `event_kind`, `failures`, `stalled_since` and `err`
+  (never a DSN), again at most every 5 minutes, and an INFO line when
+  delivery resumes. `/readyz` stays 200 but reports `checks.outbox` =
+  `stalled` and the field `outbox` (`pending`, `oldest_pending_at`,
+  `stalled_since`, `last_error`).
+- Common causes: the character set of the connection (now always utf8mb4;
+  `charset=utf8` failed for actors outside the BMP), a column that is too
+  narrow, a missing unique index (duplicates rather than a stall).
+- Environments whose `ops.module_outbox` was created by the first version of
+  0029 (`actor_id VARCHAR(191)`) keep that column after 0029 was changed;
+  widen it by hand:
+
+  ```sql
+  ALTER TABLE ops.module_outbox MODIFY actor_id VARCHAR(255) NULL;
+  ```
+
+- Repair the host table first: the forwarder retries by itself (at most
+  60 s apart) and delivers everything in order. Only an event that can
+  never be delivered may be skipped by hand, in the `mfgraph` schema, with
+  the local ID of the ERROR line, and only as `skipped`, never `published`:
+
+  ```sql
+  UPDATE outbox_events SET status='skipped' WHERE event_id=? AND status='pending';
+  ```
+
+  The forwarder reads only `pending` rows, so the next event follows; the
+  skipped row stays in `outbox_events` (`SELECT ... WHERE
+  status='skipped'`) and never reaches `ops.module_outbox` unless it is set
+  back to `pending`.
+
+See `docs/module-mode.md` ("A stalled forwarder") for details.
+
+**Request IDs.** The module takes the request ID from `X-Atf-Request-Id`,
+or from `X-Request-Id` when that is missing or not 1-128 visible ASCII
+characters, or else makes a ULID, and returns the one it used in the
+response header `X-Request-Id`. Either header works.
+
 ## Running the acceptance script
 
 From the root of an unpacked bundle of the machine's platform:

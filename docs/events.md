@@ -7,8 +7,8 @@ envelopes and IDs are the same in both deployment forms:
 
 - **standalone:** the events stay in `outbox_events` (status `pending`); no
   publisher reads them yet;
-- **module mode:** a forwarder in the server process copies them, in order,
-  to the outbox table of the host platform (see
+- **module mode:** a forwarder in the server process copies them to the
+  outbox table of the host platform, in the order described below (see
   [Module mode](module-mode.md#events)).
 
 This document is the vocabulary of the events. A host platform can use it to
@@ -100,13 +100,25 @@ here first.
 
 ## Order and delivery
 
-- The events of one transaction are emitted in the order of the table rows
-  above (`workspace_created` before `branch_created`; the snapshot event
-  before `branch_updated`). The outbox orders events by its time column and
-  then by row ID: the events of one transaction are one microsecond apart,
-  and a change of a branch is at least two microseconds after the previous
-  one, so this order holds whatever the clock and the IDs do.
-- The events of one branch follow its generations.
+- **Within one branch, events follow its generations.** The events of one
+  transaction are emitted in the order of the table rows above
+  (`workspace_created` before `branch_created`; the snapshot event before
+  `branch_updated`) and are one microsecond apart in the outbox, and a
+  change of a branch is recorded at least two microseconds after its
+  previous change; the outbox is read by its time column and then by row
+  ID, so this order holds whatever the clock and the IDs do.
+- **Between branches (in this version: between workspaces), events follow
+  the order in which their transactions completed,** not the time they
+  record: a change that started earlier but committed later reaches the
+  host table after a change that committed first. A consumer must therefore
+  read the host's table in the order of its own row ID (the order of
+  insertion) and must not use `created_at` (the time of the change) as a
+  cursor: a later row can carry an earlier time.
 - Delivery is at least once: an event may arrive again (after a restart, or
   when the forwarder could not record that it delivered it), always with the
-  same `event_id`.
+  same `event_id`; the host's table deduplicates by a unique index on
+  `event_id`.
+- An event that can never be delivered stops the delivery of the module's
+  later events until it is repaired or skipped by hand (see
+  [Module mode](module-mode.md#a-stalled-forwarder)); a skipped event does
+  not reach the host.

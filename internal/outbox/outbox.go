@@ -6,10 +6,16 @@
 // for its outbox table, and two connections cannot commit in one
 // transaction, so the Forwarder copies the events afterwards:
 //
-//   - strictly in outbox order, by (created_at_us, event_id): it delivers
-//     the pending events one by one and stops at the first one it cannot
-//     deliver, without skipping it; the next attempt starts with that event
-//     again;
+//   - in outbox order, by (created_at_us, event_id), one event at a time:
+//     it stops at the first event it cannot deliver, without skipping it,
+//     and the next attempt starts with that event again. The events of one
+//     branch therefore arrive in the order of its generations (a change of
+//     a branch is recorded at least 2 microseconds after the previous one). Events of
+//     different branches or workspaces arrive in the order their
+//     transactions committed, which is not always the order of their
+//     created_at_us: a transaction that stamped its events earlier but
+//     committed later is delivered after the other. The host table's
+//     auto-increment ID is the order of delivery; created_at is no cursor;
 //   - at least once: an event whose event_id the host table already has
 //     counts as delivered (the host's unique index on event_id rejects the
 //     row, and the duplicate value of the error is the event_id), so an

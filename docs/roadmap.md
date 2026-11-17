@@ -39,7 +39,8 @@
 | CLI | thin client of the REST API | full CLI | M1.1 |
 | Uploads | whole file, one request, at most 1 GiB; also under the upload path `/objects/` | multipart, resumable, presigned, S3, below `/uploads/` | M1.0b |
 | Branches | only `main` | branches by name; case-insensitive uniqueness in the database | M1.0b / M1.1 |
-| Events | written to `outbox_events`; module mode forwards them to the host's outbox table (M1.0a module); standalone deployments do not publish them | a publisher for standalone deployments | M1.0b |
+| Events | written to `outbox_events`; module mode forwards them to the host's outbox table (M1.0a module), in order within a branch and in commit order between workspaces; standalone deployments do not publish them | a publisher for standalone deployments; an index on `(status, created_at_us, event_id)` for large backlogs and a retention period for delivered rows; a time floor between "branch from snapshot S" and a commit on S; a test of two module processes forwarding at once | M1.0b |
+| Readiness probe of a module | `/readyz` (database, schema version, storage, the host's outbox table, the state of delivery) | an optional read-only `GET {prefix}/_smoke` if the host's upgrade gate needs a real request | M1.0b |
 | `mfgraph.snapshot_created` | registered, not emitted: snapshots come only from commits and restores | emitted for explicit snapshots (checkpoints, a snapshot before a restore) | M1.0b |
 | Usage and quotas | not maintained (the row exists) | quotas | M1.0b |
 | Garbage collection | none; orphaned objects and staged uploads accumulate | GC | M1.0b |
