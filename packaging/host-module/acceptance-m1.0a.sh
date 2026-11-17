@@ -11,8 +11,12 @@
 # the module directly over its socket and therefore sets the identity
 # headers itself (behind the host, the kernel injects them). It needs bash,
 # curl with --unix-socket, python3 and a mysql client (MYSQL) for the
-# database checks. It prints the filled difference table (appendix B) and
-# exits 1 when a row failed.
+# database checks. It prints the difference table (appendix B) in two parts,
+# the module side with this run's results and the host side for the host to
+# fill in, with the states PASS, HOST-PENDING and FAIL, and exits 1 when a
+# row failed. BIG_UPLOAD=1 adds the upload of 1 GiB straight to the module
+# (row 5; it needs about 2 GiB of free space in DATADIR and the work
+# directory).
 set -uo pipefail
 
 # 0) Variables: the names of the template.
@@ -23,11 +27,19 @@ DATADIR=${DATADIR:-/data/mfgraph}
 DSN=${DSN:-'root:@tcp(127.0.0.1:2881)/mfgraph?parseTime=true'}
 OPS_DSN=${OPS_DSN:-'root:@tcp(127.0.0.1:2881)/ops?parseTime=true'}
 TOKEN=${TOKEN:-dev-token}
-# Additions: the fixed tenant, the project of the requests and another one,
-# the actor, the header prefix, the configuration file, the mysql client.
-TENANT=${TENANT:-01M7K943SH6K5W7N4F1K3J000G}
-PROJECT=${PROJECT:-01M7K943SH6K5W7N4F1K3J000G}
-OTHER_PROJECT=${OTHER_PROJECT:-01M7K943SH6K5W7N4F1K3J001G}
+# Additions: the tenant (the fixed value the platform assigned), the project
+# of the requests and another one (new ULIDs for every run unless set; never
+# the tenant), the actor, the header prefix, the configuration file, the
+# mysql client.
+ulid() {
+	python3 -c 'import os, time
+alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+n = (int(time.time() * 1000) << 80) | int.from_bytes(os.urandom(10), "big")
+print("".join(alphabet[(n >> (5 * i)) & 31] for i in range(25, -1, -1)))'
+}
+TENANT=${TENANT:-01M7MT9K23WZC95EECHGDBSYH7}
+PROJECT=${PROJECT:-$(ulid)}
+OTHER_PROJECT=${OTHER_PROJECT:-$(ulid)}
 ACTOR=${ACTOR:-acceptance-user}
 ACTOR_TYPE=${ACTOR_TYPE:-human}
 HDR=${HDR:-X-Atf-}
@@ -38,6 +50,9 @@ MIGRATIONS_DIR=${MIGRATIONS_DIR:-migrations}
 # PREPARE_DB=1 creates the two schemas and the host's outbox table when
 # they are missing (local runs and MFGraph's CI; the host has them).
 PREPARE_DB=${PREPARE_DB:-0}
+# BIG_UPLOAD=1 uploads 1 GiB straight to the module (row 5); off by default
+# and in MFGraph's CI.
+BIG_UPLOAD=${BIG_UPLOAD:-0}
 WORK=${WORK:-$(mktemp -d "${TMPDIR:-/tmp}/mfgraph-acceptance.XXXXXX")}
 
 ORIGIN=$(printf %s "$BASE" | sed -E 's#^(https?://[^/]+).*#\1#')
@@ -54,7 +69,7 @@ mkdir -p "$WORK"
 
 log() { printf '== %s\n' "$*"; }
 
-# result NUMBER PASS|FAIL|HOST MEASURED [NOTE]
+# result NUMBER PASS|HOST-PENDING|FAIL MEASURED [NOTE]
 result() {
 	printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >>"$WORK/results.tsv"
 	[ "$2" = FAIL ] && FAILED=1
@@ -98,8 +113,10 @@ sha() { python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"r
 
 now() { python3 -c 'import time; print(time.time())'; }
 
+# The host runs the migration command with MFGRAPH_DSN alone: everything
+# else comes from etc/module.env.
 run_migrate() {
-	MODULE_ID=mfgraph MFGRAPH_DSN="$DSN" MFGRAPH_KERNEL_MIGRATIONS=false "$BIN" --config "$CONFIG" migrate >"$WORK/migrate-$1.log" 2>&1
+	env -i MFGRAPH_DSN="$DSN" "$BIN" --config "$CONFIG" migrate >"$WORK/migrate-$1.log" 2>&1
 }
 
 start_server() {
@@ -122,7 +139,11 @@ for tool in curl python3; do
 done
 [ -x "$BIN" ] || { echo "no executable $BIN (run from the bundle root)" >&2; exit 2; }
 [ -f "$CONFIG" ] || { echo "no $CONFIG (run from the bundle root)" >&2; exit 2; }
-log "work directory $WORK; database $DB, host outbox $OUTBOX_TABLE"
+if [ "$PROJECT" = "$TENANT" ] || [ "$OTHER_PROJECT" = "$TENANT" ] || [ "$OTHER_PROJECT" = "$PROJECT" ]; then
+	echo "TENANT, PROJECT and OTHER_PROJECT must be three different ULIDs" >&2
+	exit 2
+fi
+log "work directory $WORK; database $DB, host outbox $OUTBOX_TABLE; tenant $TENANT, projects $PROJECT and $OTHER_PROJECT"
 
 if [ "$PREPARE_DB" = 1 ]; then
 	log "prepare: schemas $DB and ${OUTBOX_TABLE%%.*}, table $OUTBOX_TABLE"
@@ -164,7 +185,7 @@ if run_migrate 1 && run_migrate 2; then
 	ktables=$(sql "$DB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$DB' AND table_name IN ('projects', 'principals')")
 	want=$(for f in "$MIGRATIONS_DIR"/*.sql; do printf '%s\t%s\n' "$(basename "$f" .sql)" "$(sha "$f")"; done)
 	if [ "$second" = 1 ] && [ "$kernel" = 0 ] && [ "$others" = 0 ] && [ "$ktables" = 0 ] && [ "$recorded" = "$want" ]; then
-		result 6 PASS "migrate x2 ok; $files versions recorded (component mfgraph, checksums = migrations/); no kernel tables; --config read (module mode)"
+		result 6 PASS "migrate x2 ok with MFGRAPH_DSN as the only variable; $files versions recorded (component mfgraph, checksums = migrations/); no kernel tables; --config read (module mode)"
 	else
 		result 6 FAIL "second run skipped all: $second; kernel runs: $kernel; other components: $others; kernel tables: $ktables; checksums equal: $([ "$recorded" = "$want" ] && echo yes || echo no)" "see $WORK/migrate-*.log"
 	fi
@@ -308,9 +329,41 @@ else
 	result 4 FAIL "another project:$codes; /projects: $projects"
 fi
 
-# 5) Upload limits (row 5): the host's proxy enforces them.
-result 5 HOST "the upload path PUT /internal/v1/mfgraph/objects/{workspace_id} works (row 2)" \
-	"limits 1 GiB / 600 s on /objects/ and /uploads/, 8 MiB elsewhere: measured by the host"
+# 5) Upload limits (row 5): the module's own limit is 1 GiB
+# (MFGRAPH_MAX_UPLOAD_BYTES); with BIG_UPLOAD=1, 1 GiB goes straight to the
+# module within 600 s and one byte more is refused (413). The limits of the
+# host's proxy (1 GiB / 600 s on /objects/ and /uploads/, 8 MiB elsewhere)
+# are measured by the host: the row stays HOST-PENDING.
+host5="1 GiB through the host's proxy: arranged separately (the proxy's server timeouts); this round the proxy is tested with small files"
+if [ "$BIG_UPLOAD" = 1 ]; then
+	log "1 GiB upload"
+	big="$WORK/big.bin"
+	python3 -c 'import os, sys
+with open(sys.argv[1], "wb") as f:
+    for _ in range(256):
+        f.write(os.urandom(4 << 20))' "$big"
+	want=$(sha "$big")
+	t0=$(now)
+	CODE=$(curl -sS --unix-socket "$SOCK" -o "$WORK/body" -w '%{http_code}' --max-time 600 -X PUT -T "$big" \
+		-H "${HDR}Internal-Token: $TOKEN" -H "${HDR}Actor: $ACTOR" -H "${HDR}Actor-Type: $ACTOR_TYPE" -H "${HDR}Project: $PROJECT" \
+		-H 'Content-Type: application/octet-stream' "$BASE/objects/$WS")
+	big_code=$CODE
+	big_secs=$(python3 -c 'import sys; print("%.1f" % (float(sys.argv[2]) - float(sys.argv[1])))' "$t0" "$(now)")
+	big_hash=$(field hash)
+	rm -f "$big"
+	CODE=$(curl -sS --unix-socket "$SOCK" -o "$WORK/body" -w '%{http_code}' -X PUT --data-binary x \
+		-H "${HDR}Internal-Token: $TOKEN" -H "${HDR}Actor: $ACTOR" -H "${HDR}Actor-Type: $ACTOR_TYPE" -H "${HDR}Project: $PROJECT" \
+		-H 'Content-Type: application/octet-stream' -H 'Content-Length: 1073741825' "$BASE/objects/$WS")
+	over=$CODE
+	if { [ "$big_code" = 201 ] || [ "$big_code" = 200 ]; } && [ "$big_hash" = "sha256:$want" ] && [ "$over" = 413 ] &&
+		python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) <= 600 else 1)' "$big_secs"; then
+		result 5 HOST-PENDING "1 GiB straight to the module: $big_code in ${big_secs}s (<= 600 s), hash equal; 1 GiB + 1 byte: $over; the upload path works like the older one (row 2)" "$host5"
+	else
+		result 5 FAIL "1 GiB straight to the module: $big_code in ${big_secs}s, hash equal: $([ "$big_hash" = "sha256:$want" ] && echo yes || echo no); 1 GiB + 1 byte: $over" "$host5"
+	fi
+else
+	result 5 HOST-PENDING "the upload path PUT /internal/v1/mfgraph/objects/{workspace_id} works like the older one (row 2); 1 GiB straight to the module: not run (BIG_UPLOAD=1)" "$host5"
+fi
 
 # 3) SIGTERM (row 8): exit within 8 s, socket removed, data kept.
 log "SIGTERM"
@@ -344,7 +397,7 @@ fi
 log "outbox"
 cat >"$WORK/check_events.py" <<'PY'
 import hashlib, json, re, sys
-rows_file, events_doc, ws, project, actor, actor_type, s1, s2, s3 = sys.argv[1:10]
+rows_file, events_doc, ws, project, actor, actor_type, s1, s2, s3, tenant = sys.argv[1:11]
 registered = re.findall(r"^\| `(mfgraph\.[a-z_]+)` \|", open(events_doc, encoding="utf-8").read(), re.M)
 rows = []
 for line in open(rows_file, encoding="utf-8"):
@@ -376,6 +429,7 @@ for eid, module, kind, scope_kind, scope_id, atype, aid, status, attempts, env i
         "project_id": env.get("project_id") == project,
         "actor": env.get("actor") == {"type": actor_type, "id": actor},
         "registered": kind in registered,
+        "no tenant": tenant not in json.dumps(env) and "tenant" not in json.dumps(env).lower(),
     }
     bad = [k for k, ok in checks.items() if not ok]
     if bad:
@@ -398,13 +452,13 @@ outbox=""
 for _ in $(seq 1 20); do
 	sql "${OUTBOX_TABLE%%.*}" "SELECT event_id, module, event_kind, scope_kind, scope_id, IFNULL(actor_type, ''), IFNULL(actor_id, ''),
 		status, attempts, payload_json FROM ${OUTBOX_TABLE#*.} WHERE module = 'mfgraph' AND scope_id = '$PROJECT' ORDER BY id" >"$WORK/outbox.tsv" || break
-	outbox=$(python3 "$WORK/check_events.py" "$WORK/outbox.tsv" "$EVENTS_DOC" "$WS" "$PROJECT" "$ACTOR" "$ACTOR_TYPE" "$S1" "$S2" "$S3")
+	outbox=$(python3 "$WORK/check_events.py" "$WORK/outbox.tsv" "$EVENTS_DOC" "$WS" "$PROJECT" "$ACTOR" "$ACTOR_TYPE" "$S1" "$S2" "$S3" "$TENANT")
 	case $outbox in OK*) break ;; esac
 	sleep 0.5
 done
 case $outbox in
 OK*)
-	result 7 PASS "${outbox#OK }; envelope v/event_id/occurred_at/project_id/actor complete; event_id = documented derivation; kinds in docs/events.md" \
+	result 7 PASS "${outbox#OK }; envelope v/event_id/occurred_at/project_id/actor complete, no tenant; event_id = documented derivation; kinds in docs/events.md" \
 		"six kinds registered, five emitted: snapshot_created 0 because M1.0a has no manual snapshot and no snapshot before a restore"
 	;;
 *) result 7 FAIL "${outbox:-no rows read}" "see $WORK/outbox.tsv" ;;
@@ -418,7 +472,8 @@ else
 	result 9 FAIL "$BIN version failed"
 fi
 
-# The difference table (appendix B).
+# The difference table (appendix B): the module side with this run's
+# results, the host side for the host to fill in.
 python3 - "$WORK/results.tsv" >"$WORK/acceptance-m1.0a-result.md" <<'PY'
 import sys
 items = {
@@ -436,11 +491,20 @@ rows = {}
 for line in open(sys.argv[1], encoding="utf-8"):
     n, status, measured, note = line.rstrip("\n").split("\t")
     rows[n] = (status, measured, note)
-print("| # | 项 | 期望（契约） | 实测 | 偏差/处理 |")
-print("|---|---|---|---|---|")
+head = ["| # | 项 | 期望（契约） | 状态 | 实测 | 偏差/处理 |", "|---|---|---|---|---|---|"]
+print("## 模块侧（直连 UDS，本次实测）")
+print()
+print("\n".join(head))
 for n in sorted(items, key=int):
     status, measured, note = rows.get(n, ("FAIL", "not run", ""))
-    print("| %s | %s | %s | %s: %s | %s |" % (n, items[n][0], items[n][1], status, measured.replace("|", "/"), note.replace("|", "/") or "—"))
+    print("| %s | %s | %s | %s | %s | %s |" % (n, items[n][0], items[n][1], status, measured.replace("|", "/"),
+                                             note.replace("|", "/") or "无"))
+print()
+print("## 宿主侧（经宿主代理，宿主回填）")
+print()
+print("\n".join(head))
+for n in sorted(items, key=int):
+    print("| %s | %s | %s |  |  |  |" % (n, items[n][0], items[n][1]))
 PY
 echo
 cat "$WORK/acceptance-m1.0a-result.md"

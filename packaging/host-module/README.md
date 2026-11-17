@@ -106,8 +106,19 @@ different values stop the start. The process refuses to start, with a
 message that names the setting (never a token or a DSN password), when: it
 is given a TCP address, `MODULE_ID` is not `mfgraph`, `MODULE_INTERNAL_TOKEN`,
 the DSN, the data directory or the tenant is missing, the tenant is the
-all-zero ULID, or `MFGRAPH_KERNEL_MIGRATIONS=true`. An internal token
-shorter than 16 characters is accepted with a warning.
+all-zero ULID, `MFGRAPH_KERNEL_MIGRATIONS=true`, `MFGRAPH_SHUTDOWN_TIMEOUT`
+is above 8 s, a DSN is malformed, or the forwarder's DSN (`MFGRAPH_OPS_DSN`,
+or `MFGRAPH_DSN` without it) sets a character set other than utf8mb4 (a DSN
+without `charset` gets `charset=utf8mb4`). An internal token shorter than
+16 characters is accepted with a warning. The tenant the platform assigned
+is `01M7MT9K23WZC95EECHGDBSYH7`; it stays inside the module (data and
+storage paths) and never appears in an event.
+
+The migration command (`migrations.command` of the manifest) needs
+`MFGRAPH_DSN` and nothing else: the mode and the other static settings come
+from `etc/module.env`; no socket, internal token, tenant, data directory or
+`MFGRAPH_OPS_DSN`. It runs only MFGraph's own migrations (never the
+kernel's), and running it again skips what is applied.
 
 ## What the host provides
 
@@ -147,16 +158,28 @@ cd bundle
 SOCK=/run/agentteams/modules/mfgraph.sock DATADIR=/data/mfgraph \
 DSN='mfgraph:...@tcp(127.0.0.1:2881)/mfgraph' OPS_DSN='ops:...@tcp(127.0.0.1:2881)/ops' TOKEN=dev-token \
 MYSQL='mysql -h127.0.0.1 -P2881 -uroot' scripts/acceptance-m1.0a.sh
+# with BIG_UPLOAD=1 before the script: also the upload of 1 GiB straight to the module (row 5)
 ```
 
 The variables are those of the host's template (`BIN`, `SOCK`, `BASE`,
 `DATADIR`, `DSN`, `OPS_DSN`, `TOKEN`) plus `TENANT`, `PROJECT`,
 `OTHER_PROJECT`, `ACTOR`, `ACTOR_TYPE`, `HDR`, `CONFIG` and `MYSQL` (a mysql
 client command for the database checks); all have defaults and can be
-overridden. `PREPARE_DB=1` creates the two schemas and the host table when
-they are missing (MFGraph's CI and local runs). The script needs bash, curl
-with `--unix-socket`, python3 and the mysql client. It prints the difference
-table with the measured values and exits 1 if a row failed.
+overridden. `TENANT` defaults to the platform's tenant
+`01M7MT9K23WZC95EECHGDBSYH7`; `PROJECT` and `OTHER_PROJECT` are new ULIDs
+for every run (never the tenant). `PREPARE_DB=1` creates the two schemas
+and the host table when they are missing (MFGraph's CI and local runs).
+`BIG_UPLOAD=1` (off by default, and in MFGraph's CI) uploads 1 GiB of
+random data straight to the module, which must answer within 600 s with the
+right hash, and then one byte more, which must be refused with 413; it
+needs about 2 GiB of free space. The migration runs with `MFGRAPH_DSN` as
+the only variable (`env -i`), as the host runs it. The script needs bash,
+curl with `--unix-socket`, python3 and the mysql client. It prints the
+difference table in two parts, the module side with this run's results and
+the host side for the host to fill in, with the states `PASS`,
+`HOST-PENDING` and `FAIL`, and exits 1 if a row failed. Row 5 is
+`HOST-PENDING` when it passes: the limits of the host's proxy are measured
+there.
 
 Differences from the host's template, because of the MFGraph API:
 
@@ -184,6 +207,10 @@ for example `make bundle BUNDLE_PLATFORMS=darwin/arm64`.
 
 ## Difference table
 
-`acceptance-m1.0a-diff.md` is the host's table (appendix B) filled in
-beforehand from MFGraph's runs on MySQL 8.0 and seekdb; the script prints
-the same table with the values of the run.
+`acceptance-m1.0a-diff.md` is the host's table (appendix B) in two parts:
+the module side, filled in beforehand from MFGraph's runs on MySQL 8.0 and
+seekdb (with `BIG_UPLOAD=1`), and the host side, left empty for the host's
+runs through its proxy. The states are `PASS`, `HOST-PENDING` and `FAIL`;
+row 5 is `HOST-PENDING`: 1 GiB straight to the module is verified, 1 GiB
+through the host's proxy is arranged separately. The script prints the same
+two parts with the values of the run.
