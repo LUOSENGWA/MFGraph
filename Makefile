@@ -52,6 +52,7 @@ docs-check: host-names-check
 
 ## host-names-check: the host platform's name and header prefix appear only in packaging/host-module
 host-names-check:
+	python3 packaging/host-module/test_check_host_names.py
 	python3 packaging/host-module/check_host_names.py
 
 # Module bundles (packaging/host-module): platforms and output directory.

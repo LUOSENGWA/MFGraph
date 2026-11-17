@@ -96,7 +96,7 @@ func TestModuleRefusals(t *testing.T) {
 		"bad outbox table":             with(moduleEnv(), config.EnvOutboxTable, "module_outbox"),
 		"outbox table with backquote":  with(moduleEnv(), config.EnvOutboxTable, "ops.`x`"),
 		"outbox table with three dots": with(moduleEnv(), config.EnvOutboxTable, "a.b.c"),
-		"bad header prefix":            with(moduleEnv(), config.EnvTrustedHeaderPrefix, "X Atf-"),
+		"bad header prefix":            with(moduleEnv(), config.EnvTrustedHeaderPrefix, "X Host-"),
 		"bad token header":             with(moduleEnv(), config.EnvInternalTokenHeader, "X-Token:"),
 		"token with white space":       with(moduleEnv(), config.EnvModuleInternalToken, " "+tokenM),
 		"token with control character": with(moduleEnv(), config.EnvModuleInternalToken, tokenM+"\x01"),

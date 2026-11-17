@@ -13,7 +13,8 @@ generic (see [Module mode](../../docs/module-mode.md)), and
 | `acceptance-m1.0a.sh` | The acceptance script of M1.0a, `scripts/acceptance-m1.0a.sh` in the bundle. |
 | `acceptance-m1.0a-diff.md` | The difference table, filled in beforehand by MFGraph, `scripts/acceptance-m1.0a-diff.md` in the bundle. |
 | `VERSION` | The module version: `0.1.0` is M1.0a; every milestone raises the minor version, `1.0.0` is the first stable version. |
-| `check_host_names.py` | CI check: the host's name and header prefix appear nowhere else. |
+| `check_host_names.py` | CI check: the host's name and header prefix appear nowhere else, in any of the spellings its documentation lists (also concatenated, split across lines, in UTF-16); a line with `host-name-check: allow` is exempt. |
+| `test_check_host_names.py` | Tests of the check (CI and `make host-names-check` run them). |
 
 ## Bundles
 

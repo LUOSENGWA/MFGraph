@@ -250,4 +250,6 @@ jobs:
       - run: python3 scripts/check_links.py .
       - run: python3 scripts/scan_sensitive.py .
       - name: the host platform is named only in packaging/host-module
-        run: python3 packaging/host-module/check_host_names.py
+        run: |
+          python3 packaging/host-module/test_check_host_names.py
+          python3 packaging/host-module/check_host_names.py
