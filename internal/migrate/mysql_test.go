@@ -73,10 +73,22 @@ func TestMySQL(t *testing.T) {
 		{Component: migrate.ComponentMFGraph, Source: migrations.MySQL()},
 	}
 
+	// 0. Empty database: Missing lists everything and creates nothing.
+	if got, err := migrate.Missing(ctx, target, plans); err != nil || len(got) != 9 || got[0] != "kernel/0000_bootstrap" ||
+		got[8] != "mfgraph/0009_actor_types" {
+		t.Fatalf("missing on an empty database: %v %v", got, err)
+	}
+	if tables := listTables(t, db, dbName); len(tables) != 0 {
+		t.Fatalf("Missing created %v", tables)
+	}
+
 	// 1. Empty database: everything is applied.
 	rs, err := migrate.RunAll(ctx, target, plans, time.Now)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
+	}
+	if got, err := migrate.Missing(ctx, target, plans); err != nil || len(got) != 0 {
+		t.Fatalf("missing after the first run: %v %v", got, err)
 	}
 	if got := append(rs[0].Applied, rs[1].Applied...); len(got) != 9 || len(rs[0].Skipped)+len(rs[1].Skipped) != 0 {
 		t.Fatalf("first run applied %v", got)
@@ -132,6 +144,9 @@ func TestMySQL(t *testing.T) {
 	// second statement: the rerun adds the remaining columns.
 	if _, err := db.ExecContext(ctx, "DELETE FROM schema_migrations WHERE component = ? AND version = ?", "mfgraph", "0009_actor_types"); err != nil {
 		t.Fatal(err)
+	}
+	if got, err := migrate.Missing(ctx, target, plans); err != nil || !reflect.DeepEqual(got, []string{"mfgraph/0009_actor_types"}) {
+		t.Fatalf("missing without 0009: %v %v", got, err)
 	}
 	for _, stmt := range []string{"ALTER TABLE idempotency_keys DROP COLUMN actor_type", "ALTER TABLE workspaces DROP COLUMN owner_type"} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

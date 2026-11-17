@@ -291,6 +291,38 @@ type Plan struct {
 	Source    fs.FS
 }
 
+// errNoSuchTable is ER_NO_SUCH_TABLE (MySQL and seekdb).
+const errNoSuchTable = 1146
+
+// Missing returns the migrations of plans that the database has not
+// recorded, as "component/version" in order: a binary newer than its
+// schema. It changes nothing (no schema_migrations is created; without
+// that table every migration is missing). Recorded versions that the plans
+// do not know (a binary older than its schema) are not reported.
+func Missing(ctx context.Context, t Target, plans []Plan) ([]string, error) {
+	var out []string
+	for _, p := range plans {
+		ms, err := Load(p.Source)
+		if err != nil {
+			return nil, fmt.Errorf("migrate: load %s: %w", p.Component, err)
+		}
+		applied, err := t.AppliedVersions(ctx, p.Component)
+		var me *mysql.MySQLError
+		if errors.As(err, &me) && me.Number == errNoSuchTable {
+			applied, err = nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("migrate: read schema_migrations: %w", err)
+		}
+		for _, m := range ms {
+			if _, ok := applied[m.Version]; !ok {
+				out = append(out, p.Component+"/"+m.Version)
+			}
+		}
+	}
+	return out, nil
+}
+
 // RunAll loads and runs several components in order (for example kernel,
 // then mfgraph) and returns one Result per component.
 func RunAll(ctx context.Context, t Target, plans []Plan, now func() time.Time) ([]Result, error) {

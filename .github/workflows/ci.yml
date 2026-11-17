@@ -141,6 +141,8 @@ jobs:
           --health-retries 60
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the upgrade test builds the server of an earlier commit
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -148,6 +150,7 @@ jobs:
         env:
           MFGRAPH_E2E_DB_DSN: root:mfgraph@tcp(127.0.0.1:3306)/
           MFGRAPH_E2E_REQUIRE_DB: "1"
+          MFGRAPH_E2E_REQUIRE_UPGRADE: "1"
       - name: module bundle for linux/amd64
         run: make bundle BUNDLE_PLATFORMS=linux/amd64
       - name: acceptance script of the host module, run from the unpacked bundle
@@ -181,6 +184,8 @@ jobs:
           --health-retries 120
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the upgrade test builds the server of an earlier commit
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -202,6 +207,7 @@ jobs:
           MFGRAPH_E2E_DB_DSN: root@tcp(127.0.0.1:2881)/
           MFGRAPH_E2E_DB_WAIT: 600s
           MFGRAPH_E2E_REQUIRE_DB: "1"
+          MFGRAPH_E2E_REQUIRE_UPGRADE: "1"
 
   bundle:
     name: module bundles (reproducible, unsigned)

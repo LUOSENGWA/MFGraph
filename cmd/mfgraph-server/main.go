@@ -40,6 +40,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -372,7 +373,19 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		}
 		deps := core.Deps{Store: store, Objects: objects, Trees: trees, Authz: authz.ProjectOwner{}, Clock: ports.ClockFunc(time.Now),
 			IDs: ids.NewGenerator(), Logger: logger}
-		readiness[0].Check, readiness[1].Check = store.Ping, objects.Check
+		schema := newSchemaCheck(cfg, db, logger)
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if err := schema.check(cctx); err != nil && !errors.As(err, new(*api.CheckError)) {
+			logger.Warn("cannot read the recorded migrations", "err", err.Error())
+		}
+		cancel()
+		readiness[0].Check = func(ctx context.Context) error {
+			if err := store.Ping(ctx); err != nil {
+				return err
+			}
+			return schema.check(ctx)
+		}
+		readiness[1].Check = objects.Check
 		if cfg.Module() {
 			deps.Authz = authz.ProjectScope{}
 			ops, sink, err := hostOutbox(cfg)
@@ -491,6 +504,51 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		return err
 	}
 	return nil
+}
+
+// schemaCheck compares the migrations this binary embeds with those the
+// database recorded. Missing ones (a binary newer than its schema, for
+// example after an upgrade without the migrate command) make /readyz
+// answer 503 db_unavailable with details.reason schema_behind and the list
+// in details.missing, and are logged as an ERROR at the start and at most
+// every 5 minutes after. Recorded versions this binary does not know (an
+// older binary on a newer schema) are fine.
+type schemaCheck struct {
+	plans  []migrate.Plan
+	target migrate.Target
+	logger *slog.Logger
+	mu     sync.Mutex
+	logged time.Time
+	last   string // the missing migrations last logged
+}
+
+const schemaLogEvery = 5 * time.Minute
+
+func newSchemaCheck(cfg config.Config, db *sql.DB, logger *slog.Logger) *schemaCheck {
+	return &schemaCheck{plans: migrationPlans(cfg), target: migrate.SQLTarget{DB: db}, logger: logger}
+}
+
+func (s *schemaCheck) check(ctx context.Context) error {
+	missing, err := migrate.Missing(ctx, s.target, s.plans)
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	list := strings.Join(missing, ", ")
+	s.mu.Lock()
+	log := list != s.last || time.Since(s.logged) >= schemaLogEvery
+	if log {
+		s.logged, s.last = time.Now(), list
+	}
+	s.mu.Unlock()
+	if log {
+		s.logger.Error("the database schema is behind this build: run the migrate command (mfgraph-server migrate) before "+
+			"starting it; until then requests can fail", "missing_migrations", list)
+	}
+	return &api.CheckError{Reason: "schema_behind", Message: "the database schema is behind this build: run the migrate command",
+		Details: map[string]any{"missing": missing}}
 }
 
 // hostOutbox opens the connection of the forwarder (MFGRAPH_OPS_DSN, or

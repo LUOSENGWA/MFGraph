@@ -134,8 +134,15 @@ contract migration in next release
 N-1 API compatibility; prefer old binary + new schema over restore.
 
 Migrations only add tables, nullable columns and indexes, so the previous binary keeps working on the new schema.
-Apply them before starting a new version: the M1.0a module release adds `0009_actor_types` (nullable actor type
-columns), which the new binary reads.
+
+- **Upgrade: migrate first.** Run `mfgraph-server migrate` with the new binary before starting it (or start it with
+  `MFGRAPH_MIGRATE_ON_START=true`): the M1.0a module release adds `0009_actor_types` (nullable actor type columns),
+  which the new binary reads. A binary whose embedded migrations are not all applied starts, logs an ERROR, and
+  `/readyz` answers 503 `db_unavailable` with `details.reason` `schema_behind` and the missing migrations in
+  `details.missing`, because its requests could fail.
+- **Rollback: no automatic migration.** The previous binary runs on the new schema only with
+  `MFGRAPH_MIGRATE_ON_START=false` (the default): its migration runner refuses a schema that records a migration it
+  does not know (`applied migration missing from source`), so with `true` it does not start.
 
 ## Backup
 

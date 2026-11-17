@@ -130,8 +130,14 @@ expand 迁移
 
 N-1 API 兼容；优先旧二进制 + 新 schema，而不是回滚恢复。
 
-迁移只新增表、可为空的列和索引，所以旧二进制在新 schema 上照常工作。启动新版本前先执行迁移：M1.0a 模块化版本新增
-`0009_actor_types`（可为空的身份类型列），新二进制会读这些列。
+迁移只新增表、可为空的列和索引，所以旧二进制在新 schema 上照常工作。
+
+- **升级：先执行迁移。** 启动新版本之前，先用新二进制执行 `mfgraph-server migrate`（或者带
+  `MFGRAPH_MIGRATE_ON_START=true` 启动）：M1.0a 模块化版本新增 `0009_actor_types`（可为空的身份类型列），新二进制会读这些列。
+  内嵌迁移没有全部执行时，新二进制照常启动，但会打 ERROR 日志，`/readyz` 返回 503 `db_unavailable`，
+  `details.reason` 为 `schema_behind`，`details.missing` 列出缺少的迁移，因为这时请求可能出错。
+- **回滚：关闭自动迁移。** 旧二进制只有在 `MFGRAPH_MIGRATE_ON_START=false`（默认值）时才能在新 schema 上运行：
+  它的迁移程序遇到记录了自己不认识的迁移的 schema 会报错（`applied migration missing from source`），所以设成 `true` 时启动不了。
 
 ## 备份
 

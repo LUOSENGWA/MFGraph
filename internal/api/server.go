@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -14,6 +15,17 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
+
+// CheckError is an error of a readiness check that says why: /readyz
+// answers 503 with its Message and with details.reason = Reason plus
+// Details (details.check names the check).
+type CheckError struct {
+	Reason  string
+	Message string
+	Details map[string]any
+}
+
+func (e *CheckError) Error() string { return e.Message }
 
 // ReadinessCheck is one dependency checked by /readyz.
 type ReadinessCheck struct {
@@ -181,6 +193,14 @@ func (h *handlers) GetReadyz(ctx context.Context, _ gen.GetReadyzRequestObject) 
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		err := c.Check(cctx)
 		cancel()
+		var ce *CheckError
+		if errors.As(err, &ce) {
+			details := map[string]any{"reason": ce.Reason}
+			for k, v := range ce.Details {
+				details[k] = v
+			}
+			return fail(c, ce.Message, details), nil
+		}
 		if err != nil {
 			return fail(c, c.Name+" is not available", map[string]any{}), nil
 		}

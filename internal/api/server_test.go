@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -117,6 +118,15 @@ func TestReadyz(t *testing.T) {
 	resp, b = do(t, srv, "GET", "/readyz", "", nil)
 	if resp.StatusCode != 503 || decodeEnvelope(t, resp, b).Code != api.CodeDBUnavailable {
 		t.Fatalf("readyz down: %d %s", resp.StatusCode, b)
+	}
+	behind := &api.CheckError{Reason: "schema_behind", Message: "the database schema is behind this build: run the migrate command",
+		Details: map[string]any{"missing": []string{"mfgraph/0009_actor_types"}}}
+	srv = newServer(t, api.ReadinessCheck{Name: "db", Code: api.CodeDBUnavailable, Check: func(context.Context) error { return behind }})
+	resp, b = do(t, srv, "GET", "/readyz", "", nil)
+	if e := decodeEnvelope(t, resp, b); resp.StatusCode != 503 || e.Code != api.CodeDBUnavailable || e.Details["check"] != "db" ||
+		e.Details["reason"] != "schema_behind" || fmt.Sprint(e.Details["missing"]) != "[mfgraph/0009_actor_types]" ||
+		!strings.Contains(e.Message, "migrate") {
+		t.Fatalf("readyz with the schema behind: %d %s", resp.StatusCode, b)
 	}
 	srv = newServer(t, api.ReadinessCheck{Name: "db", Code: api.CodeDBUnavailable, Check: func(context.Context) error { return nil }})
 	if resp, b = do(t, srv, "GET", "/readyz", "", nil); resp.StatusCode != 200 || !strings.Contains(string(b), `"db":"ok"`) ||

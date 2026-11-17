@@ -460,10 +460,13 @@ type ClientInterface interface {
 	// GetReadyz Readiness probe
 	//
 	// Checks the dependencies. The service needs a database: without one
-	// (not configured, or not reachable) it is not ready. Errors:
+	// (not configured, or not reachable) it is not ready, and neither is
+	// it while the database lacks a migration of this build. Errors:
 	// `db_unavailable`, `storage_unavailable` (503; `details.check` names
 	// the dependency, `details.reason` = `not_configured` when it is not
-	// configured).
+	// configured, and `schema_behind` when migrations of this build were
+	// not applied, listed in `details.missing` as
+	// `component/version`).
 	//
 	// Corresponds with GET /readyz (the `GetReadyz` operationId).
 	GetReadyz(ctx context.Context, params *GetReadyzParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1029,10 +1032,13 @@ func (c *Client) GetHealthz(ctx context.Context, params *GetHealthzParams, reqEd
 // GetReadyz Readiness probe
 //
 // Checks the dependencies. The service needs a database: without one
-// (not configured, or not reachable) it is not ready. Errors:
+// (not configured, or not reachable) it is not ready, and neither is
+// it while the database lacks a migration of this build. Errors:
 // `db_unavailable`, `storage_unavailable` (503; `details.check` names
 // the dependency, `details.reason` = `not_configured` when it is not
-// configured).
+// configured, and `schema_behind` when migrations of this build were
+// not applied, listed in `details.missing` as
+// `component/version`).
 //
 // Corresponds with GET /readyz (the `GetReadyz` operationId).
 func (c *Client) GetReadyz(ctx context.Context, params *GetReadyzParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2594,10 +2600,13 @@ type ClientWithResponsesInterface interface {
 	// GetReadyzWithResponse Readiness probe
 	//
 	// Checks the dependencies. The service needs a database: without one
-	// (not configured, or not reachable) it is not ready. Errors:
+	// (not configured, or not reachable) it is not ready, and neither is
+	// it while the database lacks a migration of this build. Errors:
 	// `db_unavailable`, `storage_unavailable` (503; `details.check` names
 	// the dependency, `details.reason` = `not_configured` when it is not
-	// configured).
+	// configured, and `schema_behind` when migrations of this build were
+	// not applied, listed in `details.missing` as
+	// `component/version`).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -4379,10 +4388,13 @@ func (c *ClientWithResponses) GetHealthzWithResponse(ctx context.Context, params
 // GetReadyzWithResponse Readiness probe
 //
 // Checks the dependencies. The service needs a database: without one
-// (not configured, or not reachable) it is not ready. Errors:
+// (not configured, or not reachable) it is not ready, and neither is
+// it while the database lacks a migration of this build. Errors:
 // `db_unavailable`, `storage_unavailable` (503; `details.check` names
 // the dependency, `details.reason` = `not_configured` when it is not
-// configured).
+// configured, and `schema_behind` when migrations of this build were
+// not applied, listed in `details.missing` as
+// `component/version`).
 //
 // Returns a wrapper object for the known response body format(s).
 //
