@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -17,19 +20,38 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/api/gen"
 )
 
-func TestResumableUpload(t *testing.T)       { testResumable(t, false, false) }
-func TestStandaloneS3Resumable(t *testing.T) { testResumable(t, true, false) }
+func TestResumableUpload(t *testing.T)            { testResumable(t, "posix", false) }
+func TestStandaloneS3Resumable(t *testing.T)      { testResumable(t, "s3", false) }
+func TestStandaloneS3RelayResumable(t *testing.T) { testResumable(t, "s3-relay", false) }
 func TestLargeResumableUpload(t *testing.T) {
 	if os.Getenv("MFGRAPH_E2E_LARGE_RESUME") != "1" {
 		t.Skip("set MFGRAPH_E2E_LARGE_RESUME=1 to stream 1 GiB")
 	}
-	testResumable(t, false, true)
+	testResumable(t, "posix", true)
 }
 
-func testResumable(t *testing.T, remote, large bool) {
+func testResumable(t *testing.T, backend string, large bool) {
 	e := newEnv(t)
-	if remote {
+	if backend != "posix" {
 		useS3(t, e)
+	}
+	if backend == "s3-relay" {
+		target, err := url.Parse(e["MFGRAPH_S3_ENDPOINT"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		upstream := httputil.NewSingleHostReverseProxy(target)
+		gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && r.URL.Query().Has("uploads") {
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(http.StatusNotImplemented)
+				io.WriteString(w, "<Error><Code>NotImplemented</Code></Error>")
+				return
+			}
+			upstream.ServeHTTP(w, r)
+		}))
+		t.Cleanup(gateway.Close)
+		e["MFGRAPH_S3_ENDPOINT"] = gateway.URL
 	}
 	e["MFGRAPH_CHUNK_BYTES"], e["MFGRAPH_PACK_BYTES"] = "4194304", "67108864"
 	s := start(t, e)
@@ -59,7 +81,7 @@ func testResumable(t *testing.T, remote, large bool) {
 	putPart := func(link gen.UploadPartURL) gen.PartETag {
 		t.Helper()
 		var tag string
-		if remote {
+		if backend == "s3" {
 			if !strings.HasPrefix(link.Url, e["MFGRAPH_S3_ENDPOINT"]+"/") {
 				t.Fatal("native upload did not issue a URL for this endpoint")
 			}

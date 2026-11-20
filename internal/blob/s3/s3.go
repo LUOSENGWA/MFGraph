@@ -22,6 +22,7 @@ import (
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
+	"github.com/LUOSENGWA/MFGraph/internal/scratchfile"
 )
 
 type Config struct {
@@ -175,6 +176,16 @@ func (s *Store) put(ctx context.Context, dir string, r io.Reader, limit, exact i
 	} else if peekErr != nil {
 		return zero, false, peekErr
 	}
+	if size < 0 {
+		if err := s.probeMultipart(ctx, tmp); err != nil {
+			return zero, false, err
+		}
+	}
+	if s.native.Load() < 0 {
+		// body contains the buffered prefix through limit; r supplies the
+		// extra byte needed to distinguish an exact fit from an overflow.
+		return s.putSingle(ctx, io.MultiReader(body, r), limit, exact, expected, keyOf)
+	}
 	uploaded, err := s.client.Client.PutObject(ctx, s.bucket, tmp, io.TeeReader(body, h), size,
 		minio.PutObjectOptions{PartSize: uint64(partSize), NumThreads: 1})
 	if err != nil {
@@ -216,6 +227,40 @@ func (s *Store) put(ctx context.Context, dir string, r io.Reader, limit, exact i
 	return info, err == nil, storageErr(err)
 }
 
+// Single-PUT backends require a known content length. Verify the stream on
+// local scratch space before publishing it under its content-derived name.
+func (s *Store) putSingle(ctx context.Context, r io.Reader, limit, exact int64, expected contenthash.Hash,
+	keyOf func(contenthash.Hash) string) (ports.ObjectInfo, bool, error) {
+	var zero ports.ObjectInfo
+	f, clean, err := scratchfile.New("mfgraph-s3-*")
+	if err != nil {
+		return zero, false, err
+	}
+	defer clean()
+	h := contenthash.NewHasher()
+	n, over, err := ports.ReadLimited(r, io.MultiWriter(f, h), limit)
+	if err != nil {
+		return zero, false, err
+	}
+	if exact >= 0 && (over || n != exact) {
+		return zero, false, ports.ErrSizeMismatch
+	}
+	if over {
+		return zero, false, ports.ErrTooLarge
+	}
+	sum := h.Sum()
+	if !expected.IsZero() && sum != expected {
+		return zero, false, ports.ErrHashMismatch
+	}
+	info := ports.ObjectInfo{Key: keyOf(sum), Size: n, Hash: sum}
+	if ok, err := s.intact(ctx, info.Key, n); ok || err != nil {
+		return info, false, err
+	}
+	_, err = s.client.Client.PutObject(ctx, s.bucket, info.Key, io.NewSectionReader(f, 0, n), n,
+		minio.PutObjectOptions{DisableMultipart: true})
+	return info, err == nil, storageErr(err)
+}
+
 // Remove just the temporary version from this call, even on cancellation.
 func (s *Store) removeTemp(ctx context.Context, key, version string) {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
@@ -242,14 +287,7 @@ func (s *Store) Check(ctx context.Context) error {
 	}
 	if err == nil {
 		s.versioned.Store(i.VersionID != "" && i.VersionID != "null")
-		if s.native.Load() == 0 {
-			id, startErr := s.StartMultipart(ctx, key+"/multipart")
-			if startErr == nil {
-				err = s.AbortMultipart(ctx, key+"/multipart", id)
-			} else if !errors.Is(startErr, ports.ErrUnsupportedMultipart) {
-				err = startErr
-			}
-		}
+		err = s.probeMultipart(ctx, key+"/multipart")
 	}
 	rmErr := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{VersionID: i.VersionID})
 	return storageErr(errors.Join(err, rmErr))

@@ -3,11 +3,13 @@ package layout
 import (
 	"context"
 	"errors"
-	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
-	"github.com/LUOSENGWA/MFGraph/internal/ports"
-	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
 	"io"
 	"sort"
+
+	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/ports"
+	"github.com/LUOSENGWA/MFGraph/internal/scratchfile"
+	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
 )
 
 // SmallPacks groups newly referenced whole files at commit time. A durable
@@ -27,7 +29,7 @@ func SmallPacks(ctx context.Context, objects ports.BlobStore, newID func() strin
 		return nil, nil
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Hash.Hex() < files[j].Hash.Hex() })
-	tmp, clean, err := scratchPack()
+	tmp, clean, err := scratchfile.New("mfgraph-pack-*")
 	if err != nil {
 		return nil, err
 	}

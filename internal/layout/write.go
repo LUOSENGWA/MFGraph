@@ -12,6 +12,7 @@ import (
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
+	"github.com/LUOSENGWA/MFGraph/internal/scratchfile"
 	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
 )
 
@@ -53,7 +54,7 @@ func Write(ctx context.Context, objects ports.BlobStore, newID func() string, pr
 	if limit < 0 {
 		return out, ports.ErrTooLarge
 	}
-	tmp, clean, err := scratchPack()
+	tmp, clean, err := scratchfile.New("mfgraph-pack-*")
 	if err != nil {
 		return out, err
 	}
@@ -116,18 +117,6 @@ func Write(ctx context.Context, objects ports.BlobStore, newID func() string, pr
 		return out, ports.ErrHashMismatch
 	}
 	return out, nil
-}
-
-// An unlinked scratch file is reclaimed even when a writer is killed.
-func scratchPack() (*os.File, func(), error) {
-	f, err := os.CreateTemp("", "mfgraph-pack-*")
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := os.Remove(f.Name()); err != nil {
-		return f, func() { f.Close(); os.Remove(f.Name()) }, nil
-	}
-	return f, func() { f.Close() }, nil
 }
 
 func packKey(h contenthash.Hash) string { return "packs/" + h.Hex() + ".pack" }

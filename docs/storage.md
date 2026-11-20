@@ -94,6 +94,11 @@ and removes its own small object. Whole-file uploads and downloads go through th
 sessions issue bounded S3 PUT URLs for individual parts. The endpoint and bucket identify the workspace's backend.
 Changing that identity requires migrating the data separately.
 
+When the backend reports that native multipart is unsupported, clients upload
+parts through the server. It verifies the length and SHA-256 on local scratch
+disk before issuing one PUT. Allow scratch space for each concurrent whole
+object or pack. The backend's single-PUT size limit applies to each object.
+
 ### Fixed chunks and packs
 
 Standalone packed writes require **both** `MFGRAPH_CHUNK_BYTES` (4–16 MiB)

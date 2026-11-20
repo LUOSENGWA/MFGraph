@@ -72,6 +72,14 @@ func TestS3BlobStoreContract(t *testing.T) {
 	})
 }
 
+func TestS3SinglePutContract(t *testing.T) {
+	porttest.RunBlobStore(t, func(t *testing.T) (ports.BlobStore, porttest.Corrupter) {
+		f := testStore(t)
+		f.native.Store(-1)
+		return f.Store, f
+	})
+}
+
 func TestS3Readiness(t *testing.T) {
 	f := testStore(t)
 	if err := f.Check(context.Background()); err != nil {

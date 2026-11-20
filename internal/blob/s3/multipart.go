@@ -21,7 +21,7 @@ func (s *Store) StartMultipart(ctx context.Context, key string) (string, error) 
 		return "", ports.ErrUnsupportedMultipart
 	}
 	id, err := s.client.NewMultipartUpload(ctx, s.bucket, key, minio.PutObjectOptions{})
-	if minio.ToErrorResponse(err).Code == "NotImplemented" {
+	if unsupportedMultipart(err) {
 		s.native.Store(-1)
 		return "", ports.ErrUnsupportedMultipart
 	}
@@ -29,6 +29,25 @@ func (s *Store) StartMultipart(ctx context.Context, key string) (string, error) 
 		s.native.Store(1)
 	}
 	return id, storageErr(err)
+}
+
+func unsupportedMultipart(err error) bool {
+	resp := minio.ToErrorResponse(err)
+	return resp.Code == "NotImplemented" || resp.StatusCode == http.StatusNotImplemented || resp.StatusCode == http.StatusMethodNotAllowed
+}
+
+func (s *Store) probeMultipart(ctx context.Context, key string) error {
+	if s.native.Load() != 0 {
+		return nil
+	}
+	id, err := s.StartMultipart(ctx, key)
+	if errors.Is(err, ports.ErrUnsupportedMultipart) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.AbortMultipart(ctx, key, id)
 }
 
 func (s *Store) PartURL(ctx context.Context, key, id string, number int, ttl time.Duration) (string, error) {
@@ -76,6 +95,9 @@ func (s *Store) AbortMultipart(ctx context.Context, key, id string) error {
 			return nil
 		}
 		err = s.client.RemoveIncompleteUpload(ctx, s.bucket, key)
+		if unsupportedMultipart(err) {
+			return nil
+		}
 	} else {
 		err = s.client.AbortMultipartUpload(ctx, s.bucket, key, id)
 	}
