@@ -16,9 +16,16 @@ import (
 var _ ports.MultipartStore = (*Store)(nil)
 
 func (s *Store) StartMultipart(ctx context.Context, key string) (string, error) {
+	if s.native.Load() < 0 {
+		return "", ports.ErrUnsupportedMultipart
+	}
 	id, err := s.client.NewMultipartUpload(ctx, s.bucket, key, minio.PutObjectOptions{})
 	if minio.ToErrorResponse(err).Code == "NotImplemented" {
+		s.native.Store(-1)
 		return "", ports.ErrUnsupportedMultipart
+	}
+	if err == nil {
+		s.native.Store(1)
 	}
 	return id, storageErr(err)
 }

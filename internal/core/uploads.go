@@ -160,7 +160,7 @@ func (s *Service) InitUpload(ctx context.Context, p ports.Principal, r InitUploa
 		u := ports.Upload{ID: s.d.IDs.NewID(), WorkspaceID: ws.ID, Path: r.Path, ContentType: r.ContentType, Size: r.Size, PartSize: partSize, Total: total,
 			Checksum: r.Checksum, Backend: ws.StorageBackendID, Owner: p.Ref, OwnerUID: p.PrincipalUID, OwnerType: p.ActorType, Status: ports.UploadInitiated, Created: now, Expires: now + s.cfg.UploadTTL.Microseconds()}
 		native, ok := s.d.Objects.(ports.MultipartStore)
-		if ok && total > 0 && s.d.Objects.Capabilities().Multipart {
+		if ok && total > 0 {
 			id, err := native.StartMultipart(ctx, assemblyKey(ws, u.ID))
 			if err != nil && !errors.Is(err, ports.ErrUnsupportedMultipart) {
 				return zero, mapErr(err, "multipart")

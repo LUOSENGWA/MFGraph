@@ -76,6 +76,19 @@ func TestS3Readiness(t *testing.T) {
 	if err := f.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	caps := f.Capabilities()
+	if !caps.Multipart || !caps.Presign || caps.Versioning {
+		t.Fatalf("unversioned bucket capabilities: %+v", caps)
+	}
+	if err := f.client.EnableVersioning(context.Background(), f.bucket); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !f.Capabilities().Versioning {
+		t.Fatal("enabled versioning was not detected")
+	}
 }
 
 func TestS3NativeMultipart(t *testing.T) {

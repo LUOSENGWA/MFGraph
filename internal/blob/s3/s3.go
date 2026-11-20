@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -29,9 +30,11 @@ type Config struct {
 }
 
 type Store struct {
-	client *minio.Core
-	bucket string
-	log    *slog.Logger
+	client    *minio.Core
+	bucket    string
+	log       *slog.Logger
+	native    atomic.Int32 // unknown (0), observed (+1), unsupported (-1)
+	versioned atomic.Bool
 }
 
 func New(cfg Config, log *slog.Logger) (*Store, error) {
@@ -60,7 +63,8 @@ func New(cfg Config, log *slog.Logger) (*Store, error) {
 }
 
 func (s *Store) Capabilities() ports.Capabilities {
-	return ports.Capabilities{Range: true, Copy: true, Multipart: true, Presign: true, List: true}
+	supported := s.native.Load() > 0
+	return ports.Capabilities{Range: true, Copy: true, List: true, Multipart: supported, Presign: supported, Versioning: s.versioned.Load()}
 }
 
 func storageErr(err error) error {
@@ -234,6 +238,17 @@ func (s *Store) Check(ctx context.Context) error {
 		err = errors.Join(readErr, body.Close())
 		if err == nil && string(b) != "k" {
 			err = errors.New("range read returned wrong bytes")
+		}
+	}
+	if err == nil {
+		s.versioned.Store(i.VersionID != "" && i.VersionID != "null")
+		if s.native.Load() == 0 {
+			id, startErr := s.StartMultipart(ctx, key+"/multipart")
+			if startErr == nil {
+				err = s.AbortMultipart(ctx, key+"/multipart", id)
+			} else if !errors.Is(startErr, ports.ErrUnsupportedMultipart) {
+				err = startErr
+			}
 		}
 	}
 	rmErr := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{VersionID: i.VersionID})
