@@ -77,6 +77,9 @@ func RunBlobStore(t *testing.T, newStore func(t *testing.T) (ports.BlobStore, Co
 				t.Errorf("Get of a missing key: %v", err)
 			}
 		}
+		if err := s.Delete(ctx, "never/created/object"); err != nil {
+			t.Fatalf("delete under absent parents: %v", err)
+		}
 		if err := s.Delete(ctx, key); err != nil {
 			t.Fatal(err)
 		}

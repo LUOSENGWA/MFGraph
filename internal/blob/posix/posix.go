@@ -61,36 +61,28 @@ func New(root string, log *slog.Logger) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	fi, err := os.Stat(abs)
-	if err != nil {
-		return nil, fmt.Errorf("%w: storage root: %v", ports.ErrStorageUnavailable, err)
-	}
-	if !fi.IsDir() {
-		return nil, fmt.Errorf("%w: storage root %s is not a directory", ports.ErrStorageUnavailable, abs)
-	}
-	f, err := os.CreateTemp(abs, tmpPattern)
-	if err != nil {
-		return nil, fmt.Errorf("%w: storage root is not writable: %v", ports.ErrStorageUnavailable, err)
-	}
-	name := f.Name()
-	f.Close()
-	if err := os.Remove(name); err != nil {
+	s := &Store{root: abs, log: log}
+	if err := s.Check(context.Background()); err != nil {
 		return nil, err
 	}
-	return &Store{root: abs, log: log}, nil
+	return s, nil
 }
 
 // Root returns the absolute root directory.
 func (s *Store) Root() string { return s.root }
 
 // Check reports whether the root directory is still usable (readiness).
-func (s *Store) Check(context.Context) error {
-	fi, err := os.Stat(s.root)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ports.ErrStorageUnavailable, err)
+func (s *Store) Check(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if !fi.IsDir() {
-		return fmt.Errorf("%w: storage root is not a directory", ports.ErrStorageUnavailable)
+	f, err := os.CreateTemp(s.root, tmpPattern)
+	if err == nil {
+		_, err = f.Write([]byte{0})
+		err = errors.Join(err, f.Close(), os.Remove(f.Name()))
+	}
+	if err != nil {
+		return fmt.Errorf("%w: storage root write check: %w", ports.ErrStorageUnavailable, err)
 	}
 	return nil
 }
@@ -406,7 +398,16 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	err = os.Remove(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		// Another deleter may still be syncing an existing parent.
+		err = syncDir(filepath.Dir(path))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if err != nil {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
