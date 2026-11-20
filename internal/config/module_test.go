@@ -219,7 +219,7 @@ func TestMalformedDSN(t *testing.T) {
 // TestForwarderDSN: the forwarder's connection gets charset=utf8mb4 unless
 // the DSN sets it; any other character set stops the start of module mode
 // (CheckServe) with a message that names the variable but not the DSN.
-// Standalone mode has no forwarder and accepts any character set.
+// Both deployment modes validate the primary connection as well.
 func TestForwarderDSN(t *testing.T) {
 	for _, ok := range []string{"", "?charset=utf8mb4", "?charset=UTF8MB4", "?parseTime=true&collation=utf8mb4_bin",
 		"?character_set_client=utf8mb4&collation_connection=%27utf8mb4_0900_ai_ci%27"} {
@@ -273,10 +273,19 @@ func TestForwarderDSN(t *testing.T) {
 			}
 		}
 	}
-	// Standalone mode: no forwarder, any character set.
+	// Standalone main connections carry the same names and actor references.
 	c, err := config.Load(env(map[string]string{config.EnvDBDSN: dsnM + "?charset=utf8", config.EnvStorageRoot: "/data"}))
-	if err != nil || c.CheckServe() != nil {
+	if err != nil || c.CheckServe() == nil {
 		t.Fatalf("standalone with charset=utf8: %v %v", err, c.CheckServe())
+	}
+	c, err = config.Load(env(with(moduleEnv(), config.EnvDSN, dsnM+"?charset=latin1", config.EnvOpsDSN, "ops@tcp(h:1)/ops")))
+	if err != nil || c.CheckServe() == nil {
+		t.Fatalf("separate healthy outbox masked invalid primary DSN")
+	}
+	c.DBDSN = "module@tcp(h:1)/module"
+	mc, err := c.MainDSN()
+	if err != nil || !strings.Contains(mc.FormatDSN(), "charset=utf8mb4") {
+		t.Fatalf("main connection charset: %v", err)
 	}
 }
 

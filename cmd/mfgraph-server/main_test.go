@@ -118,10 +118,10 @@ func TestMigrateCommandMySQL(t *testing.T) {
 		}
 		wait = d
 	}
-	db, err := openDB(context.Background(), dsn)
+	db, err := openDB(context.Background(), config.Config{DBDSN: dsn})
 	for deadline := time.Now().Add(wait); err != nil && time.Now().Before(deadline); {
 		time.Sleep(2 * time.Second)
-		db, err = openDB(context.Background(), dsn)
+		db, err = openDB(context.Background(), config.Config{DBDSN: dsn})
 	}
 	if err != nil {
 		t.Fatal(err)

@@ -40,12 +40,19 @@ func (c Config) ForwarderDSN() (*mysql.Config, error) {
 	if dsn == "" {
 		name, dsn = c.dbDSNVar(), c.DBDSN
 	}
+	return unicodeDSN(name, dsn)
+}
+
+// MainDSN preserves four-byte UTF-8 names and actor references on all main connections.
+func (c Config) MainDSN() (*mysql.Config, error) { return unicodeDSN(c.dbDSNVar(), c.DBDSN) }
+
+func unicodeDSN(name, dsn string) (*mysql.Config, error) {
 	cfg, err := parseDSN(name, dsn)
 	if err != nil {
 		return nil, err
 	}
 	refuse := func(what string) error {
-		return fmt.Errorf("config: %s %s; the event forwarder writes the host's outbox table with the character set %s only: "+
+		return fmt.Errorf("config: %s %s; MFGraph connections require the character set %s: "+
 			"remove the parameter or set charset=%s", name, what, ForwarderCharset, ForwarderCharset)
 	}
 	if v, ok := dsnParam(dsn, "charset"); ok && !strings.EqualFold(v, ForwarderCharset) {

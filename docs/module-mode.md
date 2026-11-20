@@ -52,7 +52,7 @@ mfgraph-server --config etc/module.env migrate
 | `MODULE_SOCKET` | the socket path; the same as `MFGRAPH_HTTP_ADDR=unix:<path>`; `--socket` wins | a socket is required |
 | `MODULE_INTERNAL_TOKEN` | the secret the host's proxy sends in the internal token header | required; any non-empty value without surrounding white space or control characters; shorter than 16 characters gives a warning |
 | `MFGRAPH_DSN` = `MFGRAPH_DB_DSN` | the database of the module | required |
-| `MFGRAPH_OPS_DSN` | the connection of the event forwarder | optional; without it the forwarder uses `MFGRAPH_DSN`. The forwarder's connection always uses the character set utf8mb4: a DSN without `charset` gets `charset=utf8mb4`; another character set, a list such as `utf8,utf8mb4`, a collation of another character set or a `character_set_*`/`collation_*` session variable stops the start |
+| `MFGRAPH_OPS_DSN` | the connection of the event forwarder | optional; without it the forwarder uses `MFGRAPH_DSN`. Both the main and forwarder connections use utf8mb4: a DSN without `charset` gets `charset=utf8mb4`; another character set, a list such as `utf8,utf8mb4`, a collation of another character set or a `character_set_*`/`collation_*` session variable stops the start |
 | `MFGRAPH_DATA_DIR` = `MFGRAPH_STORAGE_ROOT` | the root directory of the object store | required |
 | `MFGRAPH_TENANT_ID` | the fixed tenant of the deployment (a ULID) | required, and not the all-zero default |
 | `MFGRAPH_TRUSTED_HEADER_PREFIX` | the prefix of the identity headers | default `X-Trusted-` |

@@ -281,6 +281,11 @@ func (c *Config) SetSocket(path string) error {
 // shutdown timeout of at most 8 s, and a forwarder connection with the
 // character set utf8mb4 (ForwarderDSN).
 func (c Config) CheckServe() error {
+	if c.DBDSN != "" {
+		if _, err := c.MainDSN(); err != nil {
+			return err
+		}
+	}
 	if !c.Module() {
 		if c.BlobBackend == "s3" {
 			if c.S3Endpoint == "" || c.S3Bucket == "" || c.S3AccessKey == "" || c.S3SecretKey == "" {

@@ -262,11 +262,16 @@ func listenUnix(path string) (net.Listener, error) {
 
 // openDB opens and pings the database of dsn, which config.Load has parsed
 // already; an error never repeats the DSN.
-func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := sql.Open("mysql", dsn)
+func openDB(ctx context.Context, cfg config.Config) (*sql.DB, error) {
+	dsn, err := cfg.MainDSN()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := mysqldriver.NewConnector(dsn)
 	if err != nil {
 		return nil, errors.New("the database DSN is not valid")
 	}
+	db := sql.OpenDB(conn)
 	db.SetMaxOpenConns(32)
 	db.SetMaxIdleConns(32)
 	db.SetConnMaxLifetime(30 * time.Minute)
@@ -300,7 +305,7 @@ func migrateOnly(ctx context.Context, cfg config.Config, logger *slog.Logger) er
 	if cfg.DBDSN == "" {
 		return errors.New(config.EnvDBDSN + " is required")
 	}
-	db, err := openDB(ctx, cfg.DBDSN)
+	db, err := openDB(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -347,7 +352,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	var svc *core.Service
 	var fwd *outbox.Forwarder
 	if cfg.DBDSN != "" {
-		db, err := openDB(ctx, cfg.DBDSN)
+		db, err := openDB(ctx, cfg)
 		if err != nil {
 			return err
 		}
