@@ -41,7 +41,9 @@ func isStdlib(p string) bool { return !strings.Contains(strings.SplitN(p, "/", 2
 
 // TestDependencyRule enforces the layering:
 //
-//	core       -> stdlib, ports, contenthash, pathx, tree, storagekey
+//	core       -> stdlib, ports, layout and the pure packages
+//	layout     -> stdlib, ports, contenthash, storagekey, scratchfile
+//	scratchfile -> stdlib only
 //	ports      -> stdlib, contenthash
 //	pure pkgs  -> stdlib, each other (and golang.org/x/text for pathx)
 //
@@ -50,9 +52,10 @@ func isStdlib(p string) bool { return !strings.Contains(strings.SplitN(p, "/", 2
 func TestDependencyRule(t *testing.T) {
 	pure := []string{"internal/contenthash", "internal/pathx", "internal/tree", "internal/storagekey"}
 	rules := map[string][]string{
-		"internal/core":   append([]string{"internal/ports", "internal/layout"}, pure...),
-		"internal/ports":  {"internal/contenthash"},
-		"internal/layout": {"internal/ports", "internal/contenthash", "internal/storagekey"},
+		"internal/core":        append([]string{"internal/ports", "internal/layout"}, pure...),
+		"internal/ports":       {"internal/contenthash"},
+		"internal/layout":      {"internal/ports", "internal/contenthash", "internal/storagekey", "internal/scratchfile"},
+		"internal/scratchfile": nil,
 	}
 	for _, p := range pure {
 		rules[p] = append([]string{"golang.org/x/text/"}, pure...)
