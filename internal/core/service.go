@@ -35,6 +35,8 @@ const (
 
 // Config holds the settings of the use cases.
 type Config struct {
+	UploadTTL time.Duration // standalone resumable session lifetime
+
 	PackSizes layout.Sizes // explicit opt-in for new packed writes
 	// TenantID is the tenant of every project and workspace (a ULID; in a
 	// standalone deployment MFGRAPH_TENANT_ID).
@@ -99,6 +101,9 @@ func New(cfg Config, d Deps) (*Service, error) {
 	}
 	if cfg.MaxCommitChanges <= 0 {
 		cfg.MaxCommitChanges = DefaultMaxCommitChanges
+	}
+	if cfg.UploadTTL <= 0 {
+		cfg.UploadTTL = 24 * time.Hour
 	}
 	if cfg.IdempotencyTTL <= 0 {
 		cfg.IdempotencyTTL = DefaultIdempotencyTTL

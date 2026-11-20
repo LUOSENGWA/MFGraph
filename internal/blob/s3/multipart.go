@@ -17,6 +17,9 @@ var _ ports.MultipartStore = (*Store)(nil)
 
 func (s *Store) StartMultipart(ctx context.Context, key string) (string, error) {
 	id, err := s.client.NewMultipartUpload(ctx, s.bucket, key, minio.PutObjectOptions{})
+	if minio.ToErrorResponse(err).Code == "NotImplemented" {
+		return "", ports.ErrUnsupportedMultipart
+	}
 	return id, storageErr(err)
 }
 

@@ -2,8 +2,11 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrUnsupportedMultipart = errors.New("native multipart is unsupported")
 
 // Part is a backend part of one upload, identified by its opaque ETag.
 type Part struct {

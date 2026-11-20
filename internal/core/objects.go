@@ -45,10 +45,14 @@ func (s *Service) PutObject(ctx context.Context, p ports.Principal, req PutObjec
 	if req.ContentLength > s.cfg.MaxUploadBytes {
 		return ports.Blob{}, false, s.tooLarge()
 	}
-	return s.stage(ctx, ws, req.Body, req.ContentLength, expected)
+	return s.stage(ctx, ws, req.Body, req.ContentLength, expected, nil)
 }
 
-func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader, size int64, expected contenthash.Hash) (ports.Blob, bool, error) {
+// stageFinish finalizes an upload in the same transaction as publication of
+// the blob. created distinguishes new content from a verified replay.
+type stageFinish func(context.Context, ports.Tx, ports.Blob, bool) error
+
+func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader, size int64, expected contenthash.Hash, finish stageFinish) (ports.Blob, bool, error) {
 	blob := ports.Blob{WorkspaceID: ws.ID, Status: ports.BlobStaged, CreatedAtUs: s.nowUs()}
 	var packed layout.Written
 	var err error
@@ -73,19 +77,29 @@ func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader,
 	case err != nil:
 		return ports.Blob{}, false, mapErr(err, "object")
 	}
-	record := func(ctx context.Context, tx ports.Tx) error {
-		if blob.Chunking != layout.Fixed {
-			return nil
-		}
-		return s.d.Store.RecordLayout(ctx, tx, ws.ID, blob.Hash, packed.Packs, packed.File, blob.CreatedAtUs)
+	if finish != nil && blob.Size != size {
+		return ports.Blob{}, false, invalid("assembled file size differs from the declared size")
 	}
+	record := func(ctx context.Context, tx ports.Tx, created bool) error {
+		if blob.Chunking == layout.Fixed {
+			if err := s.d.Store.RecordLayout(ctx, tx, ws.ID, blob.Hash, packed.Packs, packed.File, blob.CreatedAtUs); err != nil {
+				return err
+			}
+		}
+		if finish != nil {
+			return finish(ctx, tx, blob, created)
+		}
+		return nil
+	}
+	var duplicate bool
 	err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
 		if err := s.d.Store.InsertBlob(ctx, tx, blob); err != nil {
+			duplicate = errors.Is(err, ports.ErrAlreadyExists)
 			return err
 		}
-		return record(ctx, tx)
+		return record(ctx, tx, true)
 	})
-	if !errors.Is(err, ports.ErrAlreadyExists) {
+	if !duplicate {
 		return blob, err == nil, mapErr(err, "blob")
 	}
 	old, err := s.d.Store.GetBlob(ctx, nil, ws.ID, blob.Hash)
@@ -93,17 +107,19 @@ func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader,
 		return ports.Blob{}, false, mapErr(err, "blob")
 	}
 	if err = s.checkObject(ctx, ws, old); !errors.Is(err, ports.ErrNotFound) {
+		if err == nil && finish != nil {
+			err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return finish(ctx, tx, old, false) })
+		}
 		return old, false, mapErr(err, "object")
 	}
-	// A verified re-upload repairs a missing layout even if the operator
-	// selected different chunk sizes or switched back to whole-file writes.
+	// Repair a missing layout even when the current write settings differ.
+	blob.Status, blob.CreatedAtUs = old.Status, old.CreatedAtUs
 	err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
 		if err := s.d.Store.SetBlobLayout(ctx, tx, blob); err != nil {
 			return err
 		}
-		return record(ctx, tx)
+		return record(ctx, tx, false)
 	})
-	blob.Status, blob.CreatedAtUs = old.Status, old.CreatedAtUs
 	return blob, false, mapErr(err, "blob")
 }
 
