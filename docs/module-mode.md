@@ -272,10 +272,10 @@ authentication. `/readyz` checks:
   `details.reason` is `schema_behind` and `details.missing` lists the
   missing migrations (run the migrate command; a schema with migrations the
   binary does not know, from a newer release, is fine);
-- the storage root;
-- in module mode the host's outbox table (check `outbox`, 503 when the
-  forwarder's connection fails or the table does not exist; when the account
-  may only insert, the table is looked up in `information_schema.tables`),
+- a temporary write and removal under the storage root;
+- in module mode the host's outbox table (check `outbox`, 503 when an
+  INSERT into the delivery columns fails, including missing write access).
+  The probe selects zero rows and leaves the host table empty of probe events,
   and the state of delivery: `checks.outbox` is `ok` or `stalled` (still
   200), and the field `outbox` has the backlog (see
   [A stalled forwarder](#a-stalled-forwarder)).

@@ -433,6 +433,17 @@ func TestMySQLInsertOnlyAccount(t *testing.T) {
 		t.Fatalf("unique index seen by the INSERT-only account: %v %v", st, err)
 	}
 	t.Logf("measured: the INSERT-only account sees the unique index on event_id as %s", st)
+	if _, err := e.ops.Exec("GRANT SELECT ON " + e.opsName + ".module_outbox TO '" + user + "'@'%'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.ops.Exec("REVOKE INSERT ON " + e.opsName + ".module_outbox FROM '" + user + "'@'%'"); err != nil {
+		t.Fatal(err)
+	}
+	// Reconnect so privilege caches also see the change on seekdb.
+	db.SetMaxIdleConns(0)
+	if err := sink.Check(ctx); err == nil {
+		t.Fatal("readiness succeeded with SELECT only")
+	}
 	t.Log("measured: an account with INSERT on the host table only writes rows, absorbs duplicates and passes the readiness check")
 }
 

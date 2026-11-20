@@ -20,10 +20,7 @@ const datetime6 = "2006-01-02 15:04:05.000000"
 // tableRe is the form of a table name, schema.table.
 var tableRe = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
 
-const (
-	errDupEntry          = 1062 // ER_DUP_ENTRY
-	errTableAccessDenied = 1142 // ER_TABLEACCESS_DENIED_ERROR
-)
+const errDupEntry = 1062 // ER_DUP_ENTRY
 
 // SQLSink writes the host's outbox table over a MySQL-protocol connection
 // (MySQL 8.0 or seekdb):
@@ -51,12 +48,13 @@ func NewSQLSink(db *sql.DB, table string) (*SQLSink, error) {
 	}
 	schema, name, _ := strings.Cut(table, ".")
 	quoted := "`" + schema + "`.`" + name + "`"
+	prefix := "INSERT INTO " + quoted + " (event_id, module, event_kind, scope_kind, scope_id, actor_type, actor_id, " +
+		"payload_json, status, attempts, available_at, created_at, updated_at) "
 	return &SQLSink{
 		db: db, schema: schema, table: name,
-		insert: "INSERT INTO " + quoted + " (event_id, module, event_kind, scope_kind, scope_id, actor_type, actor_id, " +
-			"payload_json, status, attempts, available_at, created_at, updated_at) " +
-			"VALUES (?, 'mfgraph', ?, 'project', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)",
-		check: "SELECT 1 FROM " + quoted + " LIMIT 0",
+		insert: prefix + "VALUES (?, 'mfgraph', ?, 'project', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)",
+		check: prefix + "SELECT '', 'mfgraph', '', 'project', '', NULL, NULL, '{}', 'pending', 0, " +
+			"CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM DUAL WHERE 1 = 0",
 	}, nil
 }
 
@@ -141,30 +139,11 @@ func (s *SQLSink) UniqueEventIDIndex(ctx context.Context) (IndexState, error) {
 	return IndexMissing, nil
 }
 
-// Check implements Sink: the connection works and the table exists, by
-// SELECT 1 FROM <table> LIMIT 0. The account of the forwarder may have
-// INSERT on the table and nothing else, which MySQL and seekdb answer with
-// a privilege error; the table must then be listed in
-// information_schema.tables, which shows the tables an account has any
-// privilege on.
+// Check exercises the actual INSERT columns without selecting any rows.
+// INSERT-only accounts can pass and a probe never publishes a host event.
 func (s *SQLSink) Check(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, s.check)
-	if err == nil {
-		return rows.Close()
-	}
-	var me *mysql.MySQLError
-	if !errors.As(err, &me) || me.Number != errTableAccessDenied {
-		return err
-	}
-	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?`,
-		s.schema, s.table).Scan(&n); err != nil {
-		return err
-	}
-	if n != 1 {
-		return fmt.Errorf("outbox: table %s.%s not found", s.schema, s.table)
-	}
-	return nil
+	_, err := s.db.ExecContext(ctx, s.check)
+	return err
 }
 
 // isDuplicateOf reports a duplicate key error (1062) whose duplicate value
