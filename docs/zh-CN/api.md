@@ -91,8 +91,16 @@ POST   /api/v1/uploads/{upload_id}/complete
 DELETE /api/v1/uploads/{upload_id}
 ```
 
-大文件使用预签名 multipart URL。API 返回元数据与 URL，不返回文件字节。这些接口都在 `/uploads/` 下：和整文件上传的
-`/objects/` 一样，代理可以按这个路径前缀放宽上传限制。
+独立部署已支持以上接口。初始化时传入 `workspace_id`、`path` 和 `size_bytes`，可选的
+`checksum_sha256` 用于校验整文件。响应中有会话 ID、协商后的分片大小、到期时间和首批 PUT URL。
+相对 URL 使用模块的 Bearer token。绝对 S3 URL 直接向对象存储发送字节，模块 token 只发给模块。
+保存每次 PUT 返回的 ETag。重启后用 GET 查询缺片编号，再用 `{"part_numbers":[2,3]}` 取新 URL。
+按编号升序提交每片的 ETag，完成后取得整文件 `blob_hash`，再通过普通 commit 创建快照。
+
+独立部署的传输分片通常为 16 MiB，可按客户端提示缩小，文件较大时会调整以满足最多 10,000 片。
+固定 chunk 和 pack 的尺寸需另外显式配置。S3 的单片 URL 最长有效 15 分钟。
+独立部署的会话默认保留 24 小时，可通过 `MFGRAPH_UPLOAD_SESSION_TTL` 配置。过期会话返回 410 并释放预留，
+服务重启后也会清理无人继续的过期会话。嵌入部署的分片接入方式待宿主确认。
 
 ## 锁
 

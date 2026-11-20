@@ -25,6 +25,7 @@ const ReasonUnsupportedContentType = "unsupported_content_type"
 // have a limit of their own (file_too_large): the upload of the first core
 // slice and the same operation under the upload path /objects/.
 var uploadPatterns = map[string]bool{
+	http.MethodPut + " " + apiBase + "/uploads/{upload_id}/parts":         true,
 	http.MethodPut + " " + apiBase + "/workspaces/{workspace_id}/objects": true,
 	http.MethodPut + " " + apiBase + "/objects/{workspace_id}":            true,
 }

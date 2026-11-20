@@ -90,8 +90,8 @@ origin), and `MFGRAPH_S3_BUCKET` (an existing bucket). Supply
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optionally `AWS_SESSION_TOKEN`
 and `AWS_REGION`. The account needs bucket listing and object read, write,
 copy, multipart and removal privileges. A readiness probe creates, reads
-and removes its own small object. Client uploads and downloads go through
-the server. The endpoint and bucket identify the workspace's backend.
+and removes its own small object. Whole-file uploads and downloads go through the server. Standalone multipart
+sessions issue bounded S3 PUT URLs for individual parts. The endpoint and bucket identify the workspace's backend.
 Changing that identity requires migrating the data separately.
 
 ### Fixed chunks and packs

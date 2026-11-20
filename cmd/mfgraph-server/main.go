@@ -409,9 +409,29 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 				Check: fwd.CheckSink})
 		}
 		svc, err = core.New(core.Config{TenantID: cfg.TenantID, StorageBackendID: backendID, PackSizes: cfg.PackSizes, MaxUploadBytes: cfg.MaxUploadBytes,
-			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)
+			UploadTTL: cfg.UploadSessionTTL, MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)
 		if err != nil {
 			return err
+		}
+		if !cfg.Module() {
+			sweepCtx, stopSweep := context.WithCancel(ctx)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				tick := time.NewTicker(time.Minute)
+				defer tick.Stop()
+				for {
+					if err := svc.ReapUploads(sweepCtx); err != nil && sweepCtx.Err() == nil {
+						logger.Warn("upload session cleanup will retry", "err", err)
+					}
+					select {
+					case <-sweepCtx.Done():
+						return
+					case <-tick.C:
+					}
+				}
+			}()
+			defer func() { stopSweep(); <-done }()
 		}
 	} else {
 		logger.Warn("no " + config.EnvDBDSN + " configured: /readyz and every business endpoint answer 503 db_unavailable")

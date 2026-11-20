@@ -233,6 +233,12 @@ func TestEveryOperationAnswers503WithoutDatabase(t *testing.T) {
 	srv := newServer(t)
 	commit := `{"branch_id":"` + ulid1 + `","expected_generation":1,"message":"m","changes":[{"path":"a.txt","hash":"` + hashA + `"}]}`
 	cases := []struct{ op, method, path, body, ctype string }{
+		{"initUpload", "POST", "/api/v1/uploads", `{"workspace_id":"` + ulid1 + `","path":"a","size_bytes":1}`, "application/json"},
+		{"getUpload", "GET", "/api/v1/uploads/" + ulid1, "", ""},
+		{"abortUpload", "DELETE", "/api/v1/uploads/" + ulid1, "", ""},
+		{"signUploadParts", "POST", "/api/v1/uploads/" + ulid1 + "/parts", `{"part_numbers":[1]}`, "application/json"},
+		{"putUploadPart", "PUT", "/api/v1/uploads/" + ulid1 + "/parts?part_number=1", "x", "application/octet-stream"},
+		{"completeUpload", "POST", "/api/v1/uploads/" + ulid1 + "/complete", `{"parts":[]}`, "application/json"},
 		{"createProject", "POST", "/api/v1/projects", `{"name":"demo"}`, "application/json"},
 		{"getProject", "GET", "/api/v1/projects/" + ulid1, "", ""},
 		{"createWorkspace", "POST", "/api/v1/workspaces", `{"project_id":"` + ulid1 + `"}`, "application/json"},

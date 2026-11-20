@@ -100,7 +100,11 @@ func NewHandler(o Options) http.Handler {
 		p, _ := actorref.NewPseudonymizer(key)
 		o.Pseudonym = p.Pseudonym
 	}
-	h := &handlers{svc: o.Service, readiness: o.Readiness, version: o.Version, outbox: o.Outbox, logger: o.Logger}
+	prefix := o.APIPrefix
+	if prefix == "" {
+		prefix = apiBase
+	}
+	h := &handlers{prefix: strings.TrimSuffix(prefix, "/"), svc: o.Service, readiness: o.Readiness, version: o.Version, outbox: o.Outbox, logger: o.Logger}
 	strict := gen.NewStrictHandlerWithOptions(h, []gen.StrictMiddlewareFunc{contentLength}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			WriteError(w, r, NewError(CodeInvalidRequest, err.Error(), nil))
@@ -121,7 +125,7 @@ func NewHandler(o Options) http.Handler {
 	})
 	var handler http.Handler = mux
 	if o.NoProjects {
-		handler = withoutProjects(handler)
+		handler = standaloneRoutesHidden(handler)
 	}
 	handler = Prefix(o.APIPrefix, publicPaths)(handler)
 	handler = Authenticate(o.Authenticator, publicPaths)(handler)
@@ -135,11 +139,11 @@ func NewHandler(o Options) http.Handler {
 	return handler
 }
 
-// withoutProjects answers the project endpoints with the 404 of an unknown
+// standaloneRoutesHidden answers standalone-only endpoints with the 404 of an unknown
 // path (Options.NoProjects).
-func withoutProjects(next http.Handler) http.Handler {
+func standaloneRoutesHidden(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p := r.URL.Path; p == apiBase+"/projects" || strings.HasPrefix(p, apiBase+"/projects/") {
+		if p := r.URL.Path; p == apiBase+"/projects" || strings.HasPrefix(p, apiBase+"/projects/") || p == apiBase+"/uploads" || strings.HasPrefix(p, apiBase+"/uploads/") {
 			WriteError(w, r, NewError(CodeNotFound, "no such endpoint", nil))
 			return
 		}
@@ -150,7 +154,7 @@ func withoutProjects(next http.Handler) http.Handler {
 // contentLength passes the request's Content-Length to the upload handlers,
 // which refuse a body above the limit before reading it.
 func contentLength(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFunc {
-	if operationID != "PutObject" && operationID != "UploadObject" {
+	if operationID != "PutObject" && operationID != "UploadObject" && operationID != "PutUploadPart" {
 		return f
 	}
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
@@ -161,6 +165,7 @@ func contentLength(f gen.StrictHandlerFunc, operationID string) gen.StrictHandle
 // handlers implements the generated strict server interface on top of
 // core.Service.
 type handlers struct {
+	prefix    string
 	svc       *core.Service
 	readiness []ReadinessCheck
 	version   string

@@ -30,6 +30,7 @@ const (
 	EnvMigrateOnStart      = "MFGRAPH_MIGRATE_ON_START"
 	EnvKernelMigrations    = "MFGRAPH_KERNEL_MIGRATIONS"
 	EnvStorageRoot         = "MFGRAPH_STORAGE_ROOT"
+	EnvUploadSessionTTL    = "MFGRAPH_UPLOAD_SESSION_TTL"
 	EnvChunkBytes          = "MFGRAPH_CHUNK_BYTES"
 	EnvPackBytes           = "MFGRAPH_PACK_BYTES"
 	EnvBlobBackend         = "MFGRAPH_BLOB_BACKEND"
@@ -65,7 +66,7 @@ var Variables = []string{
 	EnvKernelMigrations, EnvStorageRoot, EnvDataDir, EnvTenantID, EnvMaxUploadBytes, EnvMaxJSONBodyBytes,
 	EnvMaxCommitChanges, EnvAuthTokens, EnvLogLevel, EnvLogFormat, EnvLogPseudonymKey, EnvShutdownTimeout,
 	EnvIdempotencyLease, EnvTrustedHeaderPrefix, EnvInternalTokenHeader, EnvOutboxTable, EnvModuleID, EnvModuleSocket,
-	EnvModuleInternalToken, EnvChunkBytes, EnvPackBytes, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
+	EnvModuleInternalToken, EnvUploadSessionTTL, EnvChunkBytes, EnvPackBytes, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
 }
 
 // Aliases are pairs of names of one setting: the name MFGraph has always
@@ -151,6 +152,7 @@ var (
 
 // Config is the server configuration.
 type Config struct {
+	UploadSessionTTL                            time.Duration
 	PackSizes                                   layout.Sizes
 	BlobBackend, S3Endpoint, S3Bucket, S3Region string
 	S3AccessKey, S3SecretKey, S3SessionToken    string
@@ -530,6 +532,13 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("config: %s must be json or text", EnvLogFormat)
 		}
 		c.LogFormat = v
+	}
+	if v := getenv(EnvUploadSessionTTL); v != "" {
+		d, err := time.ParseDuration(v)
+		if module || err != nil || d < time.Second {
+			return Config{}, fmt.Errorf("config: %s must be a standalone duration of at least one second", EnvUploadSessionTTL)
+		}
+		c.UploadSessionTTL = d
 	}
 	if v := getenv(EnvShutdownTimeout); v != "" {
 		d, err := time.ParseDuration(v)

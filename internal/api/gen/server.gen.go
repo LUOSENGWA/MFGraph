@@ -320,6 +320,11 @@ type CommitResult struct {
 	SnapshotId ULID `json:"snapshot_id"`
 }
 
+// CompleteUploadBody defines model for CompleteUploadBody.
+type CompleteUploadBody struct {
+	Parts []PartETag `json:"parts"`
+}
+
 // CreateProjectRequest defines model for CreateProjectRequest.
 type CreateProjectRequest struct {
 	// Name Free text, stored as given: valid UTF-8 of at most 255 bytes (the
@@ -427,6 +432,38 @@ type Health struct {
 
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
+
+// InitUploadBody defines model for InitUploadBody.
+type InitUploadBody struct {
+	// ChecksumSha256 Lowercase SHA-256 digest, optionally prefixed with the algorithm name and a colon.
+	ChecksumSha256 *string `json:"checksum_sha256,omitempty"`
+	ContentType    *string `json:"content_type,omitempty"`
+
+	// PartSizeBytes Optional transport part-size hint. Independent of chunk and pack sizes.
+	PartSizeBytes *int64 `json:"part_size_bytes,omitempty"`
+
+	// Path Relative file path; see "File paths" and "Looking up a path" in the API description.
+	//
+	// Example: docs/specs/format.md
+	Path      FilePath `json:"path"`
+	SizeBytes *int64   `json:"size_bytes"`
+
+	// WorkspaceId ULID, 26 uppercase Crockford base32 characters.
+	//
+	// Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
+	WorkspaceId ULID `json:"workspace_id"`
+}
+
+// PartETag defines model for PartETag.
+type PartETag struct {
+	Etag       string `json:"etag"`
+	PartNumber int    `json:"part_number"`
+}
+
+// PartNumbers defines model for PartNumbers.
+type PartNumbers struct {
+	PartNumbers []int `json:"part_numbers"`
+}
 
 // PathErrorKind The path rule an `invalid_path` error reports (docs/spec/content-format.md,
 // section 2): `empty`, `invalid_utf8`, `absolute` (leading `/`),
@@ -705,6 +742,75 @@ type TreeListing struct {
 // Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
 type ULID = string
 
+// UploadPartURL defines model for UploadPartURL.
+type UploadPartURL struct {
+	Method     string `json:"method"`
+	PartNumber int    `json:"part_number"`
+
+	// Url Use the bearer token only for a same-origin relative relay URL. For an absolute presigned S3 URL send only the part bytes.
+	Url string `json:"url"`
+}
+
+// UploadReceipt defines model for UploadReceipt.
+type UploadReceipt struct {
+	// BlobHash `sha256:` followed by 64 lowercase hex digits.
+	//
+	// Example: sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+	BlobHash Hash `json:"blob_hash"`
+
+	// Path Relative file path; see "File paths" and "Looking up a path" in the API description.
+	//
+	// Example: docs/specs/format.md
+	Path      FilePath `json:"path"`
+	SizeBytes int64    `json:"size_bytes"`
+	Staged    bool     `json:"staged"`
+
+	// UploadId ULID, 26 uppercase Crockford base32 characters.
+	//
+	// Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
+	UploadId ULID `json:"upload_id"`
+}
+
+// UploadStatus defines model for UploadStatus.
+type UploadStatus struct {
+	ExpiresAtUs   int64  `json:"expires_at_us"`
+	Missing       []int  `json:"missing"`
+	PartSizeBytes int64  `json:"part_size_bytes"`
+	Status        string `json:"status"`
+	TotalParts    int    `json:"total_parts"`
+
+	// UploadId ULID, 26 uppercase Crockford base32 characters.
+	//
+	// Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
+	UploadId ULID           `json:"upload_id"`
+	Uploaded []UploadedPart `json:"uploaded"`
+}
+
+// UploadTicket defines model for UploadTicket.
+type UploadTicket struct {
+	ExpiresAtUs   int64           `json:"expires_at_us"`
+	PartSizeBytes int64           `json:"part_size_bytes"`
+	Parts         []UploadPartURL `json:"parts"`
+	TotalParts    int             `json:"total_parts"`
+
+	// UploadId ULID, 26 uppercase Crockford base32 characters.
+	//
+	// Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
+	UploadId ULID `json:"upload_id"`
+}
+
+// UploadURLs defines model for UploadURLs.
+type UploadURLs struct {
+	Parts []UploadPartURL `json:"parts"`
+}
+
+// UploadedPart defines model for UploadedPart.
+type UploadedPart struct {
+	Etag       string `json:"etag"`
+	PartNumber int    `json:"part_number"`
+	SizeBytes  int64  `json:"size_bytes"`
+}
+
 // Workspace defines model for Workspace.
 type Workspace struct {
 	// CreatedAt RFC 3339, UTC (`Z`), up to microsecond precision.
@@ -766,6 +872,11 @@ type RequestId = string
 //
 // Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
 type SnapshotId = ULID
+
+// UploadId ULID, 26 uppercase Crockford base32 characters.
+//
+// Example: 01JD3X5Q8Z9W2V4T6R8P0N2M4K
+type UploadId = ULID
 
 // WorkspaceId ULID, 26 uppercase Crockford base32 characters.
 //
@@ -880,6 +991,53 @@ type ListSnapshotTreeParams struct {
 	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
 }
 
+// InitUploadParams defines parameters for InitUpload.
+type InitUploadParams struct {
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+
+	// IdempotencyKey Retry key (UUID or ULID recommended); see Conventions.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
+// AbortUploadParams defines parameters for AbortUpload.
+type AbortUploadParams struct {
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+}
+
+// GetUploadParams defines parameters for GetUpload.
+type GetUploadParams struct {
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+}
+
+// CompleteUploadParams defines parameters for CompleteUpload.
+type CompleteUploadParams struct {
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+
+	// IdempotencyKey Retry key (UUID or ULID recommended); see Conventions.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
+// SignUploadPartsParams defines parameters for SignUploadParts.
+type SignUploadPartsParams struct {
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+
+	// IdempotencyKey Retry key (UUID or ULID recommended); see Conventions.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
+// PutUploadPartParams defines parameters for PutUploadPart.
+type PutUploadPartParams struct {
+	PartNumber int `form:"part_number" json:"part_number"`
+
+	// XRequestId Client request ID; reused when valid, otherwise replaced.
+	XRequestId *RequestId `json:"X-Request-Id,omitempty"`
+}
+
 // CreateWorkspaceParams defines parameters for CreateWorkspace.
 type CreateWorkspaceParams struct {
 	// XRequestId Client request ID; reused when valid, otherwise replaced.
@@ -953,6 +1111,15 @@ type CreateProjectJSONRequestBody = CreateProjectRequest
 // RestoreSnapshotJSONRequestBody defines body for RestoreSnapshot for application/json ContentType.
 type RestoreSnapshotJSONRequestBody = RestoreRequest
 
+// InitUploadJSONRequestBody defines body for InitUpload for application/json ContentType.
+type InitUploadJSONRequestBody = InitUploadBody
+
+// CompleteUploadJSONRequestBody defines body for CompleteUpload for application/json ContentType.
+type CompleteUploadJSONRequestBody = CompleteUploadBody
+
+// SignUploadPartsJSONRequestBody defines body for SignUploadParts for application/json ContentType.
+type SignUploadPartsJSONRequestBody = PartNumbers
+
 // CreateWorkspaceJSONRequestBody defines body for CreateWorkspace for application/json ContentType.
 type CreateWorkspaceJSONRequestBody = CreateWorkspaceRequest
 
@@ -985,6 +1152,24 @@ type ServerInterface interface {
 	// ListSnapshotTree List one directory of a snapshot
 	// (GET /api/v1/snapshots/{snapshot_id}/tree)
 	ListSnapshotTree(w http.ResponseWriter, r *http.Request, snapshotId SnapshotId, params ListSnapshotTreeParams)
+	// InitUpload Start a resumable standalone upload
+	// (POST /api/v1/uploads)
+	InitUpload(w http.ResponseWriter, r *http.Request, params InitUploadParams)
+	// AbortUpload Abort the standalone upload and release its reservation
+	// (DELETE /api/v1/uploads/{upload_id})
+	AbortUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId, params AbortUploadParams)
+	// GetUpload Read standalone upload progress
+	// (GET /api/v1/uploads/{upload_id})
+	GetUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId, params GetUploadParams)
+	// CompleteUpload Verify all parts and stage the file
+	// (POST /api/v1/uploads/{upload_id}/complete)
+	CompleteUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId, params CompleteUploadParams)
+	// SignUploadParts Issue URLs for requested part numbers
+	// (POST /api/v1/uploads/{upload_id}/parts)
+	SignUploadParts(w http.ResponseWriter, r *http.Request, uploadId UploadId, params SignUploadPartsParams)
+	// PutUploadPart Send a part to the standalone module relay
+	// (PUT /api/v1/uploads/{upload_id}/parts)
+	PutUploadPart(w http.ResponseWriter, r *http.Request, uploadId UploadId, params PutUploadPartParams)
 	// CreateWorkspace Create a project-level workspace and its main branch
 	// (POST /api/v1/workspaces)
 	CreateWorkspace(w http.ResponseWriter, r *http.Request, params CreateWorkspaceParams)
@@ -1588,6 +1773,367 @@ func (siw *ServerInterfaceWrapper) ListSnapshotTree(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListSnapshotTree(w, r, snapshotId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InitUpload operation middleware
+func (siw *ServerInterfaceWrapper) InitUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params InitUploadParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InitUpload(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AbortUpload operation middleware
+func (siw *ServerInterfaceWrapper) AbortUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AbortUploadParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AbortUpload(w, r, uploadId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUpload operation middleware
+func (siw *ServerInterfaceWrapper) GetUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUploadParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpload(w, r, uploadId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteUpload operation middleware
+func (siw *ServerInterfaceWrapper) CompleteUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CompleteUploadParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteUpload(w, r, uploadId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SignUploadParts operation middleware
+func (siw *ServerInterfaceWrapper) SignUploadParts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SignUploadPartsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SignUploadParts(w, r, uploadId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUploadPart operation middleware
+func (siw *ServerInterfaceWrapper) PutUploadPart(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutUploadPartParams
+
+	// ------------- Required query parameter "part_number" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "part_number", r.URL.Query(), &params.PartNumber, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "part_number"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "part_number", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Request-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Request-Id")]; found {
+		var XRequestId RequestId
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Request-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Request-Id", valueList[0], &XRequestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Request-Id", Err: err})
+			return
+		}
+
+		params.XRequestId = &XRequestId
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUploadPart(w, r, uploadId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2220,6 +2766,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}", wrapper.GetWorkspace)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/branches", wrapper.ListBranches)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/objects", wrapper.PutObject)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads", wrapper.InitUpload)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.AbortUpload)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.GetUpload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads/{upload_id}/parts", wrapper.SignUploadParts)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/uploads/{upload_id}/parts", wrapper.PutUploadPart)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads/{upload_id}/complete", wrapper.CompleteUpload)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/objects/{workspace_id}", wrapper.UploadObject)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/commits", wrapper.CreateCommit)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/workspaces/{workspace_id}/timeline", wrapper.GetTimeline)
@@ -3202,6 +3754,885 @@ func (response ListSnapshotTreedefaultJSONResponse) VisitListSnapshotTreeRespons
 	return err
 }
 
+type InitUploadRequestObject struct {
+	Params InitUploadParams
+	Body   *InitUploadJSONRequestBody
+}
+
+type InitUploadResponseObject interface {
+	VisitInitUploadResponse(w http.ResponseWriter) error
+}
+
+type InitUpload201JSONResponse UploadTicket
+
+func (response InitUpload201JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response InitUpload400JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response InitUpload401JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response InitUpload403JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response InitUpload404JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload409JSONResponse struct{ ConflictJSONResponse }
+
+func (response InitUpload409JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload410JSONResponse struct{ GoneJSONResponse }
+
+func (response InitUpload410JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload413JSONResponse struct{ PayloadTooLargeJSONResponse }
+
+func (response InitUpload413JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response InitUpload415JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUpload422JSONResponse struct {
+	UnprocessableEntityJSONResponse
+}
+
+func (response InitUpload422JSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InitUploaddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response InitUploaddefaultJSONResponse) VisitInitUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortUploadRequestObject struct {
+	UploadId UploadId `json:"upload_id"`
+	Params   AbortUploadParams
+}
+
+type AbortUploadResponseObject interface {
+	VisitAbortUploadResponse(w http.ResponseWriter) error
+}
+
+type AbortUpload204Response struct {
+}
+
+func (response AbortUpload204Response) VisitAbortUploadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type AbortUpload400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response AbortUpload400JSONResponse) VisitAbortUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortUpload401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response AbortUpload401JSONResponse) VisitAbortUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortUpload403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response AbortUpload403JSONResponse) VisitAbortUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortUpload404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response AbortUpload404JSONResponse) VisitAbortUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortUpload409JSONResponse struct{ ConflictJSONResponse }
+
+func (response AbortUpload409JSONResponse) VisitAbortUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortUpload410JSONResponse struct{ GoneJSONResponse }
+
+func (response AbortUpload410JSONResponse) VisitAbortUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AbortUploaddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response AbortUploaddefaultJSONResponse) VisitAbortUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUploadRequestObject struct {
+	UploadId UploadId `json:"upload_id"`
+	Params   GetUploadParams
+}
+
+type GetUploadResponseObject interface {
+	VisitGetUploadResponse(w http.ResponseWriter) error
+}
+
+type GetUpload200JSONResponse UploadStatus
+
+func (response GetUpload200JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetUpload400JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response GetUpload401JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response GetUpload403JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetUpload404JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetUpload409JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload410JSONResponse struct{ GoneJSONResponse }
+
+func (response GetUpload410JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUploaddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetUploaddefaultJSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUploadRequestObject struct {
+	UploadId UploadId `json:"upload_id"`
+	Params   CompleteUploadParams
+	Body     *CompleteUploadJSONRequestBody
+}
+
+type CompleteUploadResponseObject interface {
+	VisitCompleteUploadResponse(w http.ResponseWriter) error
+}
+
+type CompleteUpload200JSONResponse UploadReceipt
+
+func (response CompleteUpload200JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CompleteUpload400JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response CompleteUpload401JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response CompleteUpload403JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CompleteUpload404JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload409JSONResponse struct{ ConflictJSONResponse }
+
+func (response CompleteUpload409JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload410JSONResponse struct{ GoneJSONResponse }
+
+func (response CompleteUpload410JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload413JSONResponse struct{ PayloadTooLargeJSONResponse }
+
+func (response CompleteUpload413JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response CompleteUpload415JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload422JSONResponse struct {
+	UnprocessableEntityJSONResponse
+}
+
+func (response CompleteUpload422JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUploaddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CompleteUploaddefaultJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadPartsRequestObject struct {
+	UploadId UploadId `json:"upload_id"`
+	Params   SignUploadPartsParams
+	Body     *SignUploadPartsJSONRequestBody
+}
+
+type SignUploadPartsResponseObject interface {
+	VisitSignUploadPartsResponse(w http.ResponseWriter) error
+}
+
+type SignUploadParts200JSONResponse UploadURLs
+
+func (response SignUploadParts200JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response SignUploadParts400JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response SignUploadParts401JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response SignUploadParts403JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response SignUploadParts404JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts409JSONResponse struct{ ConflictJSONResponse }
+
+func (response SignUploadParts409JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts410JSONResponse struct{ GoneJSONResponse }
+
+func (response SignUploadParts410JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts413JSONResponse struct{ PayloadTooLargeJSONResponse }
+
+func (response SignUploadParts413JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response SignUploadParts415JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadParts422JSONResponse struct {
+	UnprocessableEntityJSONResponse
+}
+
+func (response SignUploadParts422JSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignUploadPartsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response SignUploadPartsdefaultJSONResponse) VisitSignUploadPartsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPartRequestObject struct {
+	UploadId UploadId `json:"upload_id"`
+	Params   PutUploadPartParams
+	Body     io.Reader
+}
+
+type PutUploadPartResponseObject interface {
+	VisitPutUploadPartResponse(w http.ResponseWriter) error
+}
+
+type PutUploadPart200ResponseHeaders struct {
+	ETag string
+}
+
+type PutUploadPart200Response struct {
+	Headers PutUploadPart200ResponseHeaders
+}
+
+func (response PutUploadPart200Response) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+	w.Header().Set("ETag", fmt.Sprint(response.Headers.ETag))
+	w.WriteHeader(200)
+	return nil
+}
+
+type PutUploadPart400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutUploadPart400JSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response PutUploadPart401JSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutUploadPart403JSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PutUploadPart404JSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutUploadPart409JSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPart410JSONResponse struct{ GoneJSONResponse }
+
+func (response PutUploadPart410JSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUploadPartdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response PutUploadPartdefaultJSONResponse) VisitPutUploadPartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateWorkspaceRequestObject struct {
 	Params CreateWorkspaceParams
 	Body   *CreateWorkspaceJSONRequestBody
@@ -3988,6 +5419,24 @@ type StrictServerInterface interface {
 	// ListSnapshotTree List one directory of a snapshot
 	// (GET /api/v1/snapshots/{snapshot_id}/tree)
 	ListSnapshotTree(ctx context.Context, request ListSnapshotTreeRequestObject) (ListSnapshotTreeResponseObject, error)
+	// InitUpload Start a resumable standalone upload
+	// (POST /api/v1/uploads)
+	InitUpload(ctx context.Context, request InitUploadRequestObject) (InitUploadResponseObject, error)
+	// AbortUpload Abort the standalone upload and release its reservation
+	// (DELETE /api/v1/uploads/{upload_id})
+	AbortUpload(ctx context.Context, request AbortUploadRequestObject) (AbortUploadResponseObject, error)
+	// GetUpload Read standalone upload progress
+	// (GET /api/v1/uploads/{upload_id})
+	GetUpload(ctx context.Context, request GetUploadRequestObject) (GetUploadResponseObject, error)
+	// CompleteUpload Verify all parts and stage the file
+	// (POST /api/v1/uploads/{upload_id}/complete)
+	CompleteUpload(ctx context.Context, request CompleteUploadRequestObject) (CompleteUploadResponseObject, error)
+	// SignUploadParts Issue URLs for requested part numbers
+	// (POST /api/v1/uploads/{upload_id}/parts)
+	SignUploadParts(ctx context.Context, request SignUploadPartsRequestObject) (SignUploadPartsResponseObject, error)
+	// PutUploadPart Send a part to the standalone module relay
+	// (PUT /api/v1/uploads/{upload_id}/parts)
+	PutUploadPart(ctx context.Context, request PutUploadPartRequestObject) (PutUploadPartResponseObject, error)
 	// CreateWorkspace Create a project-level workspace and its main branch
 	// (POST /api/v1/workspaces)
 	CreateWorkspace(ctx context.Context, request CreateWorkspaceRequestObject) (CreateWorkspaceResponseObject, error)
@@ -4277,6 +5726,190 @@ func (sh *strictHandler) ListSnapshotTree(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListSnapshotTreeResponseObject); ok {
 		if err := validResponse.VisitListSnapshotTreeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// InitUpload operation middleware
+func (sh *strictHandler) InitUpload(w http.ResponseWriter, r *http.Request, params InitUploadParams) {
+	var request InitUploadRequestObject
+
+	request.Params = params
+
+	var body InitUploadJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.InitUpload(ctx, request.(InitUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "InitUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(InitUploadResponseObject); ok {
+		if err := validResponse.VisitInitUploadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AbortUpload operation middleware
+func (sh *strictHandler) AbortUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId, params AbortUploadParams) {
+	var request AbortUploadRequestObject
+
+	request.UploadId = uploadId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AbortUpload(ctx, request.(AbortUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AbortUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AbortUploadResponseObject); ok {
+		if err := validResponse.VisitAbortUploadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUpload operation middleware
+func (sh *strictHandler) GetUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId, params GetUploadParams) {
+	var request GetUploadRequestObject
+
+	request.UploadId = uploadId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUpload(ctx, request.(GetUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUploadResponseObject); ok {
+		if err := validResponse.VisitGetUploadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CompleteUpload operation middleware
+func (sh *strictHandler) CompleteUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId, params CompleteUploadParams) {
+	var request CompleteUploadRequestObject
+
+	request.UploadId = uploadId
+	request.Params = params
+
+	var body CompleteUploadJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteUpload(ctx, request.(CompleteUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteUploadResponseObject); ok {
+		if err := validResponse.VisitCompleteUploadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SignUploadParts operation middleware
+func (sh *strictHandler) SignUploadParts(w http.ResponseWriter, r *http.Request, uploadId UploadId, params SignUploadPartsParams) {
+	var request SignUploadPartsRequestObject
+
+	request.UploadId = uploadId
+	request.Params = params
+
+	var body SignUploadPartsJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SignUploadParts(ctx, request.(SignUploadPartsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SignUploadParts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SignUploadPartsResponseObject); ok {
+		if err := validResponse.VisitSignUploadPartsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutUploadPart operation middleware
+func (sh *strictHandler) PutUploadPart(w http.ResponseWriter, r *http.Request, uploadId UploadId, params PutUploadPartParams) {
+	var request PutUploadPartRequestObject
+
+	request.UploadId = uploadId
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutUploadPart(ctx, request.(PutUploadPartRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutUploadPart")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutUploadPartResponseObject); ok {
+		if err := validResponse.VisitPutUploadPartResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
