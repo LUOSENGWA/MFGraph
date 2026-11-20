@@ -40,7 +40,9 @@ type state struct {
 	prefixKeys map[[2]string]string // (backend, prefix key) -> workspace ID
 	branches   map[string]ports.Branch
 	branchRefs map[[2]string]string // (workspace ID, ref name) -> branch ID
-	usage      map[string]int64     // workspace ID -> updated_at_us
+	usage      map[string]ports.Usage
+	uploads    map[string]ports.Upload
+	parts      map[partKey]ports.Part
 	snapshots  map[string]ports.Snapshot
 	packCopies map[blobKey][]ports.ChunkLocation
 	layouts    map[blobKey][]ports.FileChunk
@@ -57,7 +59,9 @@ func newState() *state {
 		prefixKeys: map[[2]string]string{},
 		branches:   map[string]ports.Branch{},
 		branchRefs: map[[2]string]string{},
-		usage:      map[string]int64{},
+		usage:      map[string]ports.Usage{},
+		uploads:    map[string]ports.Upload{},
+		parts:      map[partKey]ports.Part{},
 		snapshots:  map[string]ports.Snapshot{},
 		packCopies: map[blobKey][]ports.ChunkLocation{},
 		layouts:    map[blobKey][]ports.FileChunk{},
@@ -86,6 +90,8 @@ func (s *state) clone() *state {
 		branches:   cloneMap(s.branches),
 		branchRefs: cloneMap(s.branchRefs),
 		usage:      cloneMap(s.usage),
+		uploads:    cloneMap(s.uploads),
+		parts:      cloneMap(s.parts),
 		snapshots:  cloneMap(s.snapshots),
 		packCopies: cloneMap(s.packCopies),
 		layouts:    cloneMap(s.layouts),
@@ -323,7 +329,7 @@ func (s *Store) InsertUsage(_ context.Context, tx ports.Tx, workspaceID string, 
 	if _, dup := st.usage[workspaceID]; dup {
 		return exists("usage of workspace " + workspaceID)
 	}
-	st.usage[workspaceID] = updatedAtUs
+	st.usage[workspaceID] = ports.Usage{}
 	return nil
 }
 

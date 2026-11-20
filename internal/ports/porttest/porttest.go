@@ -54,6 +54,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"Outbox", testOutbox},
 		{"OutboxQueue", testOutboxQueue},
 		{"Usage", testUsage},
+		{"UploadSessions", testUploadSessions},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })

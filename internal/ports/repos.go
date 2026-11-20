@@ -264,6 +264,7 @@ type Store interface {
 	WorkspaceRepo
 	BranchRepo
 	UsageRepo
+	UploadRepo
 	SnapshotRepo
 	BlobRepo
 	IdempotencyRepo

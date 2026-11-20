@@ -522,7 +522,7 @@ func TestModuleModeMigrate(t *testing.T) {
 	}
 	rows.Close()
 	want := []string{"mfgraph/0001_workspaces", "mfgraph/0002_workstreams_branches", "mfgraph/0003_snapshots", "mfgraph/0004_blobs",
-		"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types", "mfgraph/0010_outbox_order", "mfgraph/0011_packed_blobs"}
+		"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types", "mfgraph/0010_outbox_order", "mfgraph/0011_packed_blobs", "mfgraph/0012_upload_completion"}
 	if strings.Join(versions, ",") != strings.Join(want, ",") {
 		t.Fatalf("recorded versions %v", versions)
 	}
