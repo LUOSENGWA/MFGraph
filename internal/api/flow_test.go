@@ -271,6 +271,8 @@ func TestHTTPFlowOnTheService(t *testing.T) {
 	}
 
 	// Restore one path and the whole snapshot.
+	c.wantError("POST", "/snapshots/"+first.SnapshotID+"/restore",
+		`{"branch_id":"`+ws.Main+`","expected_generation":3,"path":null}`, nil, 400, api.CodeInvalidRequest)
 	var restored struct {
 		SnapshotID   string `json:"snapshot_id"`
 		RestoredFrom string `json:"restored_from"`
