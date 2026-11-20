@@ -60,7 +60,7 @@ func New(cfg Config, log *slog.Logger) (*Store, error) {
 }
 
 func (s *Store) Capabilities() ports.Capabilities {
-	return ports.Capabilities{Range: true, Copy: true}
+	return ports.Capabilities{Range: true, Copy: true, Multipart: true, Presign: true}
 }
 
 func storageErr(err error) error {
@@ -68,7 +68,7 @@ func storageErr(err error) error {
 		return err
 	}
 	switch minio.ToErrorResponse(err).Code {
-	case "NoSuchKey", "NoSuchObject", "NoSuchVersion", "NotFound":
+	case "NoSuchUpload", "NoSuchKey", "NoSuchObject", "NoSuchVersion", "NotFound":
 		return fmt.Errorf("%w: %w", ports.ErrNotFound, err)
 	case "InvalidRange", "RequestedRangeNotSatisfiable":
 		return fmt.Errorf("%w: %w", ports.ErrInvalidRange, err)
