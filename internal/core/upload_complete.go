@@ -215,12 +215,16 @@ func (s *Service) endUpload(ctx context.Context, id, status string) error {
 		if status == ports.UploadExpired && u.Expires > s.nowUs() {
 			return nil
 		}
-		if err := s.adjustReservation(ctx, tx, u, -u.Size, 0); err != nil {
-			return err
-		}
-		u.Status = status
-		return s.d.Store.UpdateUpload(ctx, tx, u)
+		return s.releaseUpload(ctx, tx, u, status)
 	})
+}
+
+func (s *Service) releaseUpload(ctx context.Context, tx ports.Tx, u ports.Upload, status string) error {
+	if err := s.adjustReservation(ctx, tx, u, -u.Size, 0); err != nil {
+		return err
+	}
+	u.Status = status
+	return s.d.Store.UpdateUpload(ctx, tx, u)
 }
 
 func (s *Service) AbortUpload(ctx context.Context, p ports.Principal, id string) error {
@@ -268,7 +272,19 @@ func (s *Service) cleanupUpload(ctx context.Context, ws ports.Workspace, id stri
 			}
 		}
 	} else {
-		if err := s.d.Objects.Walk(ctx, sessionDir(ws, id), func(i ports.ObjectInfo) error { return s.d.Objects.Delete(ctx, i.Key) }); err != nil {
+		if native, ok := s.d.Objects.(ports.MultipartStore); ok && u.Status != ports.UploadCompleted && u.Total > 0 {
+			if err := native.AbortMultipart(ctx, assemblyKey(ws, id), ""); err != nil {
+				return err
+			}
+		}
+		if err := s.d.Objects.Walk(ctx, sessionDir(ws, id), func(i ports.ObjectInfo) error {
+			if store, ok := s.d.Objects.(interface {
+				DeleteVersion(context.Context, string, string) error
+			}); ok && i.VersionID != "" {
+				return store.DeleteVersion(ctx, i.Key, i.VersionID)
+			}
+			return s.d.Objects.Delete(ctx, i.Key)
+		}); err != nil {
 			return err
 		}
 	}

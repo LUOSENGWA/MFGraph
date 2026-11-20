@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -135,5 +136,30 @@ func TestS3NativeMultipart(t *testing.T) {
 	b, err := io.ReadAll(r)
 	if err != nil || string(b) != "resumable" {
 		t.Fatalf("completed bytes: %q %v", b, err)
+	}
+}
+
+func TestAbortUnacknowledgedMultipartUsesExactKey(t *testing.T) {
+	f := testStore(t)
+	ctx := context.Background()
+	key := "uploads/one/assembled"
+	keys := []string{key, key, key + "-sibling"}
+	var ids []string
+	for _, k := range keys {
+		id, err := f.StartMultipart(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		t.Cleanup(func() { _ = f.AbortMultipart(ctx, k, id) })
+	}
+	if err := f.AbortMultipart(ctx, key, ""); err != nil {
+		t.Fatal(err)
+	}
+	for i, k := range keys {
+		_, err := f.ListParts(ctx, k, ids[i])
+		if (k == key && !errors.Is(err, ports.ErrNotFound)) || (k != key && err != nil) {
+			t.Fatalf("unexpected allocation state at %q: %v", k, err)
+		}
 	}
 }

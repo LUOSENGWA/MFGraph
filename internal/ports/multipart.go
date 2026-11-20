@@ -22,5 +22,7 @@ type MultipartStore interface {
 	PartURL(ctx context.Context, key, id string, number int, ttl time.Duration) (string, error)
 	ListParts(ctx context.Context, key, id string) ([]Part, error)
 	FinishMultipart(ctx context.Context, key, id string, parts []Part) error
+	// An empty ID reclaims incomplete uploads for this exact private key
+	// after StartMultipart's reply was lost.
 	AbortMultipart(ctx context.Context, key, id string) error
 }

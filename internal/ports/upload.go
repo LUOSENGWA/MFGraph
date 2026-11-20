@@ -15,6 +15,7 @@ type Upload struct {
 }
 
 const (
+	UploadOpening    = "opening"
 	UploadInitiated  = "initiated"
 	Uploading        = "uploading"
 	UploadCompleting = "completing"

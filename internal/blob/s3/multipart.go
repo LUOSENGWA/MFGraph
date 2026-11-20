@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"github.com/minio/minio-go/v7"
+
+	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
 
 var _ ports.MultipartStore = (*Store)(nil)
@@ -69,7 +70,15 @@ func (s *Store) FinishMultipart(ctx context.Context, key, id string, parts []por
 }
 
 func (s *Store) AbortMultipart(ctx context.Context, key, id string) error {
-	err := s.client.AbortMultipartUpload(ctx, s.bucket, key, id)
+	var err error
+	if id == "" {
+		if s.native.Load() < 0 {
+			return nil
+		}
+		err = s.client.RemoveIncompleteUpload(ctx, s.bucket, key)
+	} else {
+		err = s.client.AbortMultipartUpload(ctx, s.bucket, key, id)
+	}
 	if minio.ToErrorResponse(err).Code == "NoSuchUpload" {
 		return nil
 	}

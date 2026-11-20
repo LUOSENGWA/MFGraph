@@ -14,7 +14,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-func useS3(t *testing.T, e env) {
+func useS3(t *testing.T, e env) *minio.Client {
 	t.Helper()
 	endpoint := os.Getenv("MFGRAPH_TEST_S3_ENDPOINT")
 	if endpoint == "" {
@@ -51,6 +51,7 @@ func useS3(t *testing.T, e env) {
 			t.Error(err)
 		}
 	})
+	return c
 }
 
 func TestStandaloneS3(t *testing.T) {

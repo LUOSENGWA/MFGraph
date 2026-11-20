@@ -158,44 +158,74 @@ func (s *Service) InitUpload(ctx context.Context, p ports.Principal, r InitUploa
 	return idempotent(ctx, s, p, "POST /uploads", key, r, func(ctx context.Context, complete completer) (UploadTicket, error) {
 		now := s.nowUs()
 		u := ports.Upload{ID: s.d.IDs.NewID(), WorkspaceID: ws.ID, Path: r.Path, ContentType: r.ContentType, Size: r.Size, PartSize: partSize, Total: total,
-			Checksum: r.Checksum, Backend: ws.StorageBackendID, Owner: p.Ref, OwnerUID: p.PrincipalUID, OwnerType: p.ActorType, Status: ports.UploadInitiated, Created: now, Expires: now + s.cfg.UploadTTL.Microseconds()}
-		native, ok := s.d.Objects.(ports.MultipartStore)
-		if ok && total > 0 {
-			id, err := native.StartMultipart(ctx, assemblyKey(ws, u.ID))
-			if err != nil && !errors.Is(err, ports.ErrUnsupportedMultipart) {
-				return zero, mapErr(err, "multipart")
-			}
-			u.NativeID = id
+			Checksum: r.Checksum, Backend: ws.StorageBackendID, Owner: p.Ref, OwnerUID: p.PrincipalUID, OwnerType: p.ActorType, Status: ports.UploadOpening, Created: now, Expires: now + s.cfg.UploadTTL.Microseconds()}
+		return s.openUpload(ctx, ws, u, complete)
+	})
+}
+
+func (s *Service) openUpload(ctx context.Context, ws ports.Workspace, u ports.Upload, complete completer) (UploadTicket, error) {
+	// Persist the private key and its reservation before S3 can allocate any
+	// parts. A crash before the backend responds leaves a reclaimable row.
+	err := s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := s.d.Store.InsertUpload(ctx, tx, u); err != nil {
+			return err
 		}
-		numbers := make([]int, min(16, total))
+		return s.adjustReservation(ctx, tx, u, u.Size, 0)
+	})
+	if err != nil {
+		return UploadTicket{}, mapErr(err, "upload")
+	}
+	var ticket UploadTicket
+	err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		locked, err := s.d.Store.GetUpload(ctx, tx, u.ID)
+		if err != nil {
+			return err
+		}
+		if locked.Status != ports.UploadOpening || locked.Expires <= s.nowUs() {
+			return uploadExpired()
+		}
+		if native, ok := s.d.Objects.(ports.MultipartStore); ok && u.Total > 0 {
+			u.NativeID, err = native.StartMultipart(ctx, assemblyKey(ws, u.ID))
+			if err != nil && !errors.Is(err, ports.ErrUnsupportedMultipart) {
+				return err
+			}
+		}
+		numbers := make([]int, min(16, u.Total))
 		for i := range numbers {
 			numbers[i] = i + 1
 		}
 		urls, err := s.makePartURLs(ctx, ws, u, numbers)
-		ticket := UploadTicket{ID: u.ID, PartSize: partSize, Total: total, Expires: u.Expires, Parts: urls}
-		if err == nil {
-			err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
-				if err := s.d.Store.InsertUpload(ctx, tx, u); err != nil {
-					return err
-				}
-				if err := s.adjustReservation(ctx, tx, u, u.Size, 0); err != nil {
-					return err
-				}
-				return completeIf(ctx, complete, tx, ticket)
-			})
+		if err != nil {
+			return err
 		}
-		if err != nil && u.NativeID != "" {
-			// A lost COMMIT acknowledgement alone is not proof of rollback.
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			if _, readErr := s.d.Store.GetUpload(cleanup, nil, u.ID); errors.Is(readErr, ports.ErrNotFound) {
-				if abortErr := native.AbortMultipart(cleanup, assemblyKey(ws, u.ID), u.NativeID); abortErr != nil {
-					s.d.Logger.Warn("failed to abort unregistered multipart", "upload_id", u.ID, "err", abortErr)
-				}
-			}
+		u.Status = ports.UploadInitiated
+		if err := s.d.Store.UpdateUpload(ctx, tx, u); err != nil {
+			return err
 		}
-		return ticket, mapErr(err, "upload")
+		ticket = UploadTicket{ID: u.ID, PartSize: u.PartSize, Total: u.Total, Expires: u.Expires, Parts: urls}
+		return completeIf(ctx, complete, tx, ticket)
 	})
+	if err != nil {
+		// In particular a lost COMMIT acknowledgement must leave an issued
+		// ticket intact. Release only an intent that never became active.
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		cancelErr := s.d.Store.WithTx(cleanup, func(ctx context.Context, tx ports.Tx) error {
+			locked, err := s.d.Store.GetUpload(ctx, tx, u.ID)
+			if err != nil || locked.Status != ports.UploadOpening {
+				return err
+			}
+			locked.NativeID = u.NativeID
+			return s.releaseUpload(ctx, tx, locked, ports.UploadAborted)
+		})
+		if cancelErr != nil {
+			s.d.Logger.Warn("upload intent cleanup deferred", "upload_id", u.ID, "err", cancelErr)
+		} else {
+			s.tryCleanup(cleanup, ws, u.ID)
+		}
+		return UploadTicket{}, mapErr(err, "upload")
+	}
+	return ticket, nil
 }
 
 func (s *Service) adjustReservation(ctx context.Context, tx ports.Tx, u ports.Upload, delta, used int64) error {
