@@ -471,7 +471,10 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 				StalledSince: st.StalledSince, LastError: st.LastError}, err
 		}
 	}
+	requests, stopRequests := context.WithCancel(context.Background())
+	defer stopRequests()
 	srv := &http.Server{
+		BaseContext:       func(net.Listener) context.Context { return requests },
 		Handler:           api.NewHandler(opts),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -507,6 +510,11 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	sctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	shutdownErr := srv.Shutdown(sctx)
+	if errors.Is(shutdownErr, context.DeadlineExceeded) {
+		logger.Warn("shutdown budget exhausted; interrupting outstanding requests")
+		stopRequests()
+		shutdownErr = srv.Close()
+	}
 	stopForwarder()
 	select {
 	case <-forwarderDone:

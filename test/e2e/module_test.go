@@ -1185,7 +1185,7 @@ func TestModuleModeSIGTERMUnresponsive(t *testing.T) {
 		s.expect(r, "commit", 201, nil)
 		time.Sleep(time.Second) // the forwarder waits for the silent database
 		took := s.stop()
-		if took > 8*time.Second || s.err != nil && strings.Contains(s.err.Error(), "killed") {
+		if took > 8*time.Second || s.err != nil {
 			t.Fatalf("SIGTERM with a silent ops database: exit %v after %v\n%s", s.err, took, s.logs.String())
 		}
 		var pending int
@@ -1218,8 +1218,11 @@ func TestModuleModeSIGTERMUnresponsive(t *testing.T) {
 		}()
 		time.Sleep(500 * time.Millisecond)
 		took := s.stop()
-		if took > 8*time.Second || s.err != nil && strings.Contains(s.err.Error(), "killed") {
+		if took > 8*time.Second || s.err != nil {
 			t.Fatalf("SIGTERM with a frozen database: exit %v after %v\n%s", s.err, took, s.logs.String())
+		}
+		if !strings.Contains(s.logs.String(), "interrupting outstanding requests") {
+			t.Fatal("missing shutdown warning")
 		}
 		t.Logf("measured: exit %v after %v with a request waiting for a frozen database", s.err, took.Round(time.Millisecond))
 	})
