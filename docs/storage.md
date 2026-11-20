@@ -103,3 +103,13 @@ use the whole-file layout. Blobs already stored as whole files keep their
 identity and remain readable. Packed files also remain readable when these
 settings are removed. The hash and ETag are the SHA-256 of the original file.
 Ranges read and verify the participating chunks and can cross pack boundaries.
+
+### Request limits
+
+Operators can set `MFGRAPH_UPLOAD_CONCURRENCY` for whole-file uploads,
+relayed parts and session completion. `MFGRAPH_TREE_CONCURRENCY` independently
+bounds tree listings, diffs, commits and restores. Both take positive integer
+limits per server process. A full pool returns HTTP 429 with `Retry-After`.
+`MFGRAPH_UPLOAD_TIMEOUT` sets the duration available to receive a streamed
+request body, for example `10m`. An overdue body returns HTTP 408. These
+settings are opt-in. Health checks and lightweight metadata use neither pool.

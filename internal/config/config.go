@@ -30,6 +30,9 @@ const (
 	EnvMigrateOnStart      = "MFGRAPH_MIGRATE_ON_START"
 	EnvKernelMigrations    = "MFGRAPH_KERNEL_MIGRATIONS"
 	EnvStorageRoot         = "MFGRAPH_STORAGE_ROOT"
+	EnvUploadConcurrency   = "MFGRAPH_UPLOAD_CONCURRENCY"
+	EnvTreeConcurrency     = "MFGRAPH_TREE_CONCURRENCY"
+	EnvUploadTimeout       = "MFGRAPH_UPLOAD_TIMEOUT"
 	EnvUploadSessionTTL    = "MFGRAPH_UPLOAD_SESSION_TTL"
 	EnvChunkBytes          = "MFGRAPH_CHUNK_BYTES"
 	EnvPackBytes           = "MFGRAPH_PACK_BYTES"
@@ -66,7 +69,7 @@ var Variables = []string{
 	EnvKernelMigrations, EnvStorageRoot, EnvDataDir, EnvTenantID, EnvMaxUploadBytes, EnvMaxJSONBodyBytes,
 	EnvMaxCommitChanges, EnvAuthTokens, EnvLogLevel, EnvLogFormat, EnvLogPseudonymKey, EnvShutdownTimeout,
 	EnvIdempotencyLease, EnvTrustedHeaderPrefix, EnvInternalTokenHeader, EnvOutboxTable, EnvModuleID, EnvModuleSocket,
-	EnvModuleInternalToken, EnvUploadSessionTTL, EnvChunkBytes, EnvPackBytes, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
+	EnvModuleInternalToken, EnvUploadConcurrency, EnvTreeConcurrency, EnvUploadTimeout, EnvUploadSessionTTL, EnvChunkBytes, EnvPackBytes, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
 }
 
 // Aliases are pairs of names of one setting: the name MFGraph has always
@@ -152,6 +155,8 @@ var (
 
 // Config is the server configuration.
 type Config struct {
+	UploadConcurrency, TreeConcurrency          int
+	UploadTimeout                               time.Duration
 	UploadSessionTTL                            time.Duration
 	PackSizes                                   layout.Sizes
 	BlobBackend, S3Endpoint, S3Bucket, S3Region string
@@ -537,6 +542,22 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("config: %s must be json or text", EnvLogFormat)
 		}
 		c.LogFormat = v
+	}
+	up, err := parsePositive(getenv, EnvUploadConcurrency, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	trees, err := parsePositive(getenv, EnvTreeConcurrency, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	c.UploadConcurrency, c.TreeConcurrency = int(up), int(trees)
+	if v := getenv(EnvUploadTimeout); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return Config{}, fmt.Errorf("config: %s must be a positive duration", EnvUploadTimeout)
+		}
+		c.UploadTimeout = d
 	}
 	if v := getenv(EnvUploadSessionTTL); v != "" {
 		d, err := time.ParseDuration(v)

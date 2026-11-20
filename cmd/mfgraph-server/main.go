@@ -459,7 +459,8 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		Version:       version,
 		Pseudonym:     pseudo.Pseudonym,
 		// The upload limit is MaxUploadBytes (core).
-		MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
+		MaxJSONBodyBytes:  cfg.MaxJSONBodyBytes,
+		UploadConcurrency: cfg.UploadConcurrency, TreeConcurrency: cfg.TreeConcurrency, UploadTimeout: cfg.UploadTimeout,
 	}
 	if cfg.Module() {
 		opts.TrustedHeaderPrefix, opts.NoProjects = cfg.TrustedHeaderPrefix, true

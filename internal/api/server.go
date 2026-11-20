@@ -57,7 +57,9 @@ type Options struct {
 	Pseudonym func(string) string
 	// MaxJSONBodyBytes bounds the body of every request but an upload
 	// (0 = DefaultMaxJSONBodyBytes, 16 MiB).
-	MaxJSONBodyBytes int64
+	MaxJSONBodyBytes                   int64
+	UploadConcurrency, TreeConcurrency int
+	UploadTimeout                      time.Duration
 	// TrustedHeaderPrefix is the prefix of the identity headers in module
 	// mode ("" in standalone mode): the request ID is taken from
 	// <prefix>Request-Id first, and <prefix>Trace-Id is logged as trace_id.
@@ -114,7 +116,7 @@ func NewHandler(o Options) http.Handler {
 	mux := http.NewServeMux()
 	gen.HandlerWithOptions(strict, gen.StdHTTPServerOptions{
 		BaseRouter:  mux,
-		Middlewares: []gen.MiddlewareFunc{requestBody(o.MaxJSONBodyBytes)},
+		Middlewares: []gen.MiddlewareFunc{requestBody(o.MaxJSONBodyBytes), limitWork(o)},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			WriteError(w, r, NewError(CodeInvalidRequest, err.Error(), nil))
 		},
