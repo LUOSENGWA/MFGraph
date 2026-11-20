@@ -48,6 +48,12 @@ type ObjectInfo struct {
 	VersionID string // set when the backend identifies an exact object version
 }
 
+// DirectoryVersionCleaner can reclaim every version and delete marker in a
+// private directory after its upload session is terminal.
+type DirectoryVersionCleaner interface {
+	DeleteDirectoryVersions(ctx context.Context, dir string) error
+}
+
 // ReadLimited reads r up to and including its end, as long as that is at
 // most limit bytes: it reads limit bytes and then probes for one more byte.
 // over reports that r had more (never computing limit+1, which overflows

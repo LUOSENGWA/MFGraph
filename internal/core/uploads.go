@@ -428,8 +428,22 @@ func (s *Service) PutPart(ctx context.Context, p ports.Principal, id string, n i
 	if err != nil {
 		// A terminal cleanup might already have walked the directory while
 		// this request was receiving bytes.
-		if v, e := s.d.Store.GetUpload(ctx, nil, id); e == nil && v.Terminal() {
-			_ = s.d.Objects.Delete(ctx, info.Key)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if v, e := s.d.Store.GetUpload(cleanup, nil, id); e == nil && v.Terminal() {
+			if e := s.deleteSessionBytes(cleanup, ws, id); e != nil {
+				// A previously completed sweep may already be acknowledged.
+				// Requeue this directory so a transient failure can be retried.
+				retryErr := s.d.Store.WithTx(cleanup, func(ctx context.Context, tx ports.Tx) error {
+					v, err := s.d.Store.GetUpload(ctx, tx, id)
+					if err != nil || v.Cleaned == 0 {
+						return err
+					}
+					v.Cleaned = 0
+					return s.d.Store.UpdateUpload(ctx, tx, v)
+				})
+				s.d.Logger.Warn("late upload part cleanup deferred", "upload_id", id, "err", errors.Join(e, retryErr))
+			}
 		}
 	}
 	return part, mapErr(err, "upload part")

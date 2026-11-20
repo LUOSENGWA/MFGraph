@@ -171,3 +171,42 @@ func TestAbortUnacknowledgedMultipartUsesExactKey(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivateDirectoryReclaimsAllVersions(t *testing.T) {
+	f := testStore(t)
+	ctx := context.Background()
+	if err := f.client.EnableVersioning(ctx, f.bucket); err != nil {
+		t.Fatal(err)
+	}
+	dir, sibling := "uploads/a", "uploads/ab"
+	t.Cleanup(func() {
+		for o := range f.client.Client.ListObjectsIter(ctx, f.bucket, minio.ListObjectsOptions{Recursive: true, WithVersions: true}) {
+			if o.Err != nil {
+				t.Error(o.Err)
+				return
+			}
+			if err := f.DeleteVersion(ctx, o.Key, o.VersionID); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	for _, key := range []string{dir + "/part", dir + "/part", dir + "/current", sibling + "/part"} {
+		f.Corrupt(key, []byte("private data"))
+	}
+	if err := f.Delete(ctx, dir+"/part"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.DeleteDirectoryVersions(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	var survivors int
+	for o := range f.client.Client.ListObjectsIter(ctx, f.bucket, minio.ListObjectsOptions{Recursive: true, WithVersions: true}) {
+		if o.Err != nil || o.Key != sibling+"/part" || o.IsDeleteMarker {
+			t.Fatalf("unexpected remaining version at %q: %v", o.Key, o.Err)
+		}
+		survivors++
+	}
+	if survivors != 1 {
+		t.Fatalf("expected the sibling version, got %d", survivors)
+	}
+}

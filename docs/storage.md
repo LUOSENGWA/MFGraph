@@ -98,6 +98,8 @@ When the backend reports that native multipart is unsupported, clients upload
 parts through the server. It verifies the length and SHA-256 on local scratch
 disk before issuing one PUT. Allow scratch space for each concurrent whole
 object or pack. The backend's single-PUT size limit applies to each object.
+For version-aware storage, the account needs permission to list and remove
+object versions so a terminal session can reclaim its private bytes.
 
 ### Fixed chunks and packs
 

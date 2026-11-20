@@ -300,47 +300,17 @@ func (s *Service) cleanupUpload(ctx context.Context, ws ports.Workspace, id stri
 	if !u.Terminal() || u.Cleaned != 0 {
 		return nil
 	}
-	if u.NativeID != "" {
-		native, ok := s.d.Objects.(ports.MultipartStore)
-		if !ok {
-			return ports.ErrStorageUnavailable
-		}
-		key := assemblyKey(ws, id)
-		if err := native.AbortMultipart(ctx, key, u.NativeID); err != nil {
+	native, ok := s.d.Objects.(ports.MultipartStore)
+	if u.NativeID != "" && !ok {
+		return ports.ErrStorageUnavailable
+	}
+	if ok && (u.NativeID != "" || (u.Status != ports.UploadCompleted && u.Total > 0)) {
+		if err := native.AbortMultipart(ctx, assemblyKey(ws, id), u.NativeID); err != nil {
 			return err
 		}
-		i, err := s.d.Objects.Stat(ctx, key)
-		if err != nil && !errors.Is(err, ports.ErrNotFound) {
-			return err
-		}
-		if err == nil {
-			if store, ok := s.d.Objects.(interface {
-				DeleteVersion(context.Context, string, string) error
-			}); ok {
-				err = store.DeleteVersion(ctx, key, i.VersionID)
-			} else {
-				err = s.d.Objects.Delete(ctx, key)
-			}
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		if native, ok := s.d.Objects.(ports.MultipartStore); ok && u.Status != ports.UploadCompleted && u.Total > 0 {
-			if err := native.AbortMultipart(ctx, assemblyKey(ws, id), ""); err != nil {
-				return err
-			}
-		}
-		if err := s.d.Objects.Walk(ctx, sessionDir(ws, id), func(i ports.ObjectInfo) error {
-			if store, ok := s.d.Objects.(interface {
-				DeleteVersion(context.Context, string, string) error
-			}); ok && i.VersionID != "" {
-				return store.DeleteVersion(ctx, i.Key, i.VersionID)
-			}
-			return s.d.Objects.Delete(ctx, i.Key)
-		}); err != nil {
-			return err
-		}
+	}
+	if err := s.deleteSessionBytes(ctx, ws, id); err != nil {
+		return err
 	}
 	return s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
 		u, err := s.d.Store.GetUpload(ctx, tx, id)
@@ -353,6 +323,14 @@ func (s *Service) cleanupUpload(ctx context.Context, ws ports.Workspace, id stri
 		u.Cleaned = s.nowUs()
 		return s.d.Store.UpdateUpload(ctx, tx, u)
 	})
+}
+
+func (s *Service) deleteSessionBytes(ctx context.Context, ws ports.Workspace, id string) error {
+	dir := sessionDir(ws, id)
+	if store, ok := s.d.Objects.(ports.DirectoryVersionCleaner); ok {
+		return store.DeleteDirectoryVersions(ctx, dir)
+	}
+	return s.d.Objects.Walk(ctx, dir, func(i ports.ObjectInfo) error { return s.d.Objects.Delete(ctx, i.Key) })
 }
 
 func (s *Service) tryCleanup(ctx context.Context, ws ports.Workspace, id string) {
