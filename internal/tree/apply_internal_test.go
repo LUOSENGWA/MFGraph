@@ -936,3 +936,28 @@ func BenchmarkApplyOneFileIn100k(b *testing.B) {
 		})
 	}
 }
+
+func TestReadCacheEvictsVerifiedNodes(t *testing.T) {
+	store := MapGetter{}
+	var hashes []contenthash.Hash
+	for i := 0; i < maxCachedNodes+5; i++ {
+		raw := Encode(Node{Kind: KindDir, Entries: []Entry{{Name: fmt.Sprintf("f%d", i), Type: TypeFile, Hash: EmptyRoot, Mode: ModeRegular}}})
+		h := HashOf(raw)
+		store[h] = raw
+		hashes = append(hashes, h)
+	}
+	g := &countingGetter{m: store}
+	r := newApplier(bg, g, EmptyRoot, frozenLimits).r
+	for _, h := range hashes {
+		if _, err := r.node(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(r.cache) > maxCachedNodes || r.bytes > maxCachedNodeBytes || len(r.baseHashes) != len(hashes) {
+		t.Fatal("decoded cache or base-node history is incorrect")
+	}
+	before := g.n.Load()
+	if _, err := r.node(hashes[0]); err != nil || g.n.Load() != before+1 {
+		t.Fatalf("evicted node not reloaded: %v", err)
+	}
+}
