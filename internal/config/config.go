@@ -10,6 +10,7 @@ import (
 
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
+	"github.com/LUOSENGWA/MFGraph/internal/layout"
 )
 
 // Environment variables. The MODULE_* variables and MFGRAPH_DSN,
@@ -29,6 +30,20 @@ const (
 	EnvMigrateOnStart      = "MFGRAPH_MIGRATE_ON_START"
 	EnvKernelMigrations    = "MFGRAPH_KERNEL_MIGRATIONS"
 	EnvStorageRoot         = "MFGRAPH_STORAGE_ROOT"
+	EnvOutboxRetention     = "MFGRAPH_OUTBOX_RETENTION"
+	EnvUploadConcurrency   = "MFGRAPH_UPLOAD_CONCURRENCY"
+	EnvTreeConcurrency     = "MFGRAPH_TREE_CONCURRENCY"
+	EnvUploadTimeout       = "MFGRAPH_UPLOAD_TIMEOUT"
+	EnvUploadSessionTTL    = "MFGRAPH_UPLOAD_SESSION_TTL"
+	EnvChunkBytes          = "MFGRAPH_CHUNK_BYTES"
+	EnvPackBytes           = "MFGRAPH_PACK_BYTES"
+	EnvBlobBackend         = "MFGRAPH_BLOB_BACKEND"
+	EnvS3Endpoint          = "MFGRAPH_S3_ENDPOINT"
+	EnvS3Bucket            = "MFGRAPH_S3_BUCKET"
+	EnvAWSRegion           = "AWS_REGION"
+	EnvAWSAccessKey        = "AWS_ACCESS_KEY_ID"
+	EnvAWSSecretKey        = "AWS_SECRET_ACCESS_KEY"
+	EnvAWSSessionToken     = "AWS_SESSION_TOKEN"
 	EnvDataDir             = "MFGRAPH_DATA_DIR"
 	EnvTenantID            = "MFGRAPH_TENANT_ID"
 	EnvMaxUploadBytes      = "MFGRAPH_MAX_UPLOAD_BYTES"
@@ -55,7 +70,7 @@ var Variables = []string{
 	EnvKernelMigrations, EnvStorageRoot, EnvDataDir, EnvTenantID, EnvMaxUploadBytes, EnvMaxJSONBodyBytes,
 	EnvMaxCommitChanges, EnvAuthTokens, EnvLogLevel, EnvLogFormat, EnvLogPseudonymKey, EnvShutdownTimeout,
 	EnvIdempotencyLease, EnvTrustedHeaderPrefix, EnvInternalTokenHeader, EnvOutboxTable, EnvModuleID, EnvModuleSocket,
-	EnvModuleInternalToken,
+	EnvModuleInternalToken, EnvOutboxRetention, EnvUploadConcurrency, EnvTreeConcurrency, EnvUploadTimeout, EnvUploadSessionTTL, EnvChunkBytes, EnvPackBytes, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
 }
 
 // Aliases are pairs of names of one setting: the name MFGraph has always
@@ -141,6 +156,13 @@ var (
 
 // Config is the server configuration.
 type Config struct {
+	OutboxRetention                             time.Duration
+	UploadConcurrency, TreeConcurrency          int
+	UploadTimeout                               time.Duration
+	UploadSessionTTL                            time.Duration
+	PackSizes                                   layout.Sizes
+	BlobBackend, S3Endpoint, S3Bucket, S3Region string
+	S3AccessKey, S3SecretKey, S3SessionToken    string
 	// Mode is ModeStandalone (default) or ModeModule.
 	Mode string
 	// HTTPAddr is the listen address: host:port (default 127.0.0.1:8094 in
@@ -266,11 +288,25 @@ func (c *Config) SetSocket(path string) error {
 // shutdown timeout of at most 8 s, and a forwarder connection with the
 // character set utf8mb4 (ForwarderDSN).
 func (c Config) CheckServe() error {
+	if c.DBDSN != "" {
+		if _, err := c.MainDSN(); err != nil {
+			return err
+		}
+	}
 	if !c.Module() {
+		if c.BlobBackend == "s3" {
+			if c.S3Endpoint == "" || c.S3Bucket == "" || c.S3AccessKey == "" || c.S3SecretKey == "" {
+				return fmt.Errorf("config: S3 storage needs %s, %s, %s and %s", EnvS3Endpoint, EnvS3Bucket, EnvAWSAccessKey, EnvAWSSecretKey)
+			}
+			return nil
+		}
 		if c.DBDSN != "" && c.StorageRoot == "" {
 			return fmt.Errorf("config: %s is set, so %s is required", EnvDBDSN, EnvStorageRoot)
 		}
 		return nil
+	}
+	if c.BlobBackend == "s3" {
+		return fmt.Errorf("config: %s=s3 is currently available in standalone mode", EnvBlobBackend)
 	}
 	var missing []string
 	if _, ok := c.UnixSocket(); !ok {
@@ -428,6 +464,29 @@ func Load(getenv func(string) string) (Config, error) {
 			}
 		}
 	}
+	if c.PackSizes.Chunk, err = parsePositive(getenv, EnvChunkBytes, 0); err != nil {
+		return Config{}, err
+	}
+	if c.PackSizes.Pack, err = parsePositive(getenv, EnvPackBytes, 0); err != nil {
+		return Config{}, err
+	}
+	if err := c.PackSizes.Validate(); err != nil {
+		return Config{}, fmt.Errorf("config: %s and %s: %w", EnvChunkBytes, EnvPackBytes, err)
+	}
+	if module && c.PackSizes.Enabled() {
+		return Config{}, fmt.Errorf("config: %s and %s control standalone writes", EnvChunkBytes, EnvPackBytes)
+	}
+	c.BlobBackend = getenv(EnvBlobBackend)
+	switch c.BlobBackend {
+	case "", "posix":
+		c.BlobBackend = "posix"
+	case "s3":
+		c.S3Endpoint, c.S3Bucket = getenv(EnvS3Endpoint), getenv(EnvS3Bucket)
+		c.S3Region, c.S3AccessKey = getenv(EnvAWSRegion), getenv(EnvAWSAccessKey)
+		c.S3SecretKey, c.S3SessionToken = getenv(EnvAWSSecretKey), getenv(EnvAWSSessionToken)
+	default:
+		return Config{}, fmt.Errorf("config: %s must be posix or s3", EnvBlobBackend)
+	}
 	if c.StorageRoot, err = alias(getenv, EnvStorageRoot, EnvDataDir); err != nil {
 		return Config{}, err
 	}
@@ -485,6 +544,36 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("config: %s must be json or text", EnvLogFormat)
 		}
 		c.LogFormat = v
+	}
+	if v := getenv(EnvOutboxRetention); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Second {
+			return Config{}, fmt.Errorf("config: %s must be a duration of at least one second", EnvOutboxRetention)
+		}
+		c.OutboxRetention = d
+	}
+	up, err := parsePositive(getenv, EnvUploadConcurrency, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	trees, err := parsePositive(getenv, EnvTreeConcurrency, 0)
+	if err != nil {
+		return Config{}, err
+	}
+	c.UploadConcurrency, c.TreeConcurrency = int(up), int(trees)
+	if v := getenv(EnvUploadTimeout); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return Config{}, fmt.Errorf("config: %s must be a positive duration", EnvUploadTimeout)
+		}
+		c.UploadTimeout = d
+	}
+	if v := getenv(EnvUploadSessionTTL); v != "" {
+		d, err := time.ParseDuration(v)
+		if module || err != nil || d < time.Second {
+			return Config{}, fmt.Errorf("config: %s must be a standalone duration of at least one second", EnvUploadSessionTTL)
+		}
+		c.UploadSessionTTL = d
 	}
 	if v := getenv(EnvShutdownTimeout); v != "" {
 		d, err := time.ParseDuration(v)

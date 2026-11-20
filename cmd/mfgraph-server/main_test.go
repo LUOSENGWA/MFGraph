@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/LUOSENGWA/MFGraph/internal/migrate"
+	"github.com/LUOSENGWA/MFGraph/migrations"
 	"io"
 	"log/slog"
 	"net"
@@ -118,10 +121,10 @@ func TestMigrateCommandMySQL(t *testing.T) {
 		}
 		wait = d
 	}
-	db, err := openDB(context.Background(), dsn)
+	db, err := openDB(context.Background(), config.Config{DBDSN: dsn})
 	for deadline := time.Now().Add(wait); err != nil && time.Now().Before(deadline); {
 		time.Sleep(2 * time.Second)
-		db, err = openDB(context.Background(), dsn)
+		db, err = openDB(context.Background(), config.Config{DBDSN: dsn})
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +142,11 @@ func TestMigrateCommandMySQL(t *testing.T) {
 			t.Fatalf("migrate run %d: exit %d: %s", i+1, code, errOut.String())
 		}
 	}
-	if !strings.Contains(errOut.String(), `"skipped":7`) {
+	ms, err := migrate.Load(migrations.MySQL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), fmt.Sprintf(`"component":"mfgraph","applied":null,"skipped":%d}`, len(ms))) {
 		t.Fatalf("second run did not skip: %s", errOut.String())
 	}
 }

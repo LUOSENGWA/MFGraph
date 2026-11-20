@@ -235,7 +235,9 @@ func newApplier(ctx context.Context, g Getter, base contenthash.Hash, lim limits
 	if base.IsZero() {
 		base = EmptyRoot
 	}
-	return &applier{r: newReader(ctx, g), lim: lim, base: base, root: &modDir{base: base, children: map[string]*mod{}},
+	r := newReader(ctx, g)
+	r.baseHashes = make(map[contenthash.Hash]struct{})
+	return &applier{r: r, lim: lim, base: base, root: &modDir{base: base, children: map[string]*mod{}},
 		nodes: map[contenthash.Hash][]byte{}}
 }
 
@@ -438,7 +440,7 @@ func (a *applier) finish() (Result, error) {
 	}
 	// Nodes read from the base tree are not new.
 	for h := range a.nodes {
-		if _, read := a.r.cache[h]; read || h == a.base {
+		if _, read := a.r.baseHashes[h]; read || h == a.base {
 			delete(a.nodes, h)
 		}
 	}

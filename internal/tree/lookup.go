@@ -23,7 +23,9 @@ const (
 	// maxIndexDepth bounds the dir_index levels of one directory. Format 1
 	// needs 3 levels for 2^30 entries and 6 for more entries than a size
 	// field can count.
-	maxIndexDepth = 8
+	maxIndexDepth      = 8
+	maxCachedNodes     = 64
+	maxCachedNodeBytes = 8 << 20
 )
 
 var (
@@ -46,6 +48,16 @@ type reader struct {
 	ctx   context.Context
 	g     Getter
 	cache map[contenthash.Hash]Node
+	order []cachedNode
+	bytes int
+	// Apply/Graft retain only the hashes after eviction, to omit base nodes
+	// from Result.Nodes. Other reads need no history.
+	baseHashes map[contenthash.Hash]struct{}
+}
+
+type cachedNode struct {
+	hash contenthash.Hash
+	size int
 }
 
 func newReader(ctx context.Context, g Getter) *reader {
@@ -70,7 +82,18 @@ func (r *reader) node(h contenthash.Hash) (Node, error) {
 	if err != nil {
 		return Node{}, err
 	}
+	for len(r.cache) >= maxCachedNodes || r.bytes+len(b) > maxCachedNodeBytes {
+		oldest := r.order[0]
+		delete(r.cache, oldest.hash)
+		r.bytes -= oldest.size
+		r.order = r.order[1:]
+	}
+	r.order = append(r.order, cachedNode{h, len(b)})
+	r.bytes += len(b)
 	r.cache[h] = n
+	if r.baseHashes != nil {
+		r.baseHashes[h] = struct{}{}
+	}
 	return n, nil
 }
 

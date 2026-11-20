@@ -49,7 +49,6 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/api"
 	"github.com/LUOSENGWA/MFGraph/internal/authz"
-	"github.com/LUOSENGWA/MFGraph/internal/blob/posix"
 	"github.com/LUOSENGWA/MFGraph/internal/config"
 	"github.com/LUOSENGWA/MFGraph/internal/core"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
@@ -263,11 +262,16 @@ func listenUnix(path string) (net.Listener, error) {
 
 // openDB opens and pings the database of dsn, which config.Load has parsed
 // already; an error never repeats the DSN.
-func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := sql.Open("mysql", dsn)
+func openDB(ctx context.Context, cfg config.Config) (*sql.DB, error) {
+	dsn, err := cfg.MainDSN()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := mysqldriver.NewConnector(dsn)
 	if err != nil {
 		return nil, errors.New("the database DSN is not valid")
 	}
+	db := sql.OpenDB(conn)
 	db.SetMaxOpenConns(32)
 	db.SetMaxIdleConns(32)
 	db.SetConnMaxLifetime(30 * time.Minute)
@@ -301,7 +305,7 @@ func migrateOnly(ctx context.Context, cfg config.Config, logger *slog.Logger) er
 	if cfg.DBDSN == "" {
 		return errors.New(config.EnvDBDSN + " is required")
 	}
-	db, err := openDB(ctx, cfg.DBDSN)
+	db, err := openDB(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -348,7 +352,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	var svc *core.Service
 	var fwd *outbox.Forwarder
 	if cfg.DBDSN != "" {
-		db, err := openDB(ctx, cfg.DBDSN)
+		db, err := openDB(ctx, cfg)
 		if err != nil {
 			return err
 		}
@@ -358,7 +362,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 				return err
 			}
 		}
-		objects, err := posix.New(cfg.StorageRoot, logger)
+		objects, backendID, err := openStorage(cfg, logger)
 		if err != nil {
 			return err
 		}
@@ -409,11 +413,51 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 			readiness = append(readiness, api.ReadinessCheck{Name: "outbox", Code: api.CodeDBUnavailable, Required: true,
 				Check: fwd.CheckSink})
 		}
-		svc, err = core.New(core.Config{TenantID: cfg.TenantID, MaxUploadBytes: cfg.MaxUploadBytes,
-			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)
+		svc, err = core.New(core.Config{TenantID: cfg.TenantID, StorageBackendID: backendID, PackSizes: cfg.PackSizes, MaxUploadBytes: cfg.MaxUploadBytes,
+			UploadTTL: cfg.UploadSessionTTL, MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)
 		if err != nil {
 			return err
 		}
+		sweepCtx, stopSweep := context.WithCancel(ctx)
+		sweepDone := make(chan struct{})
+		go func() {
+			defer close(sweepDone)
+			tick := time.NewTicker(time.Minute)
+			defer tick.Stop()
+			for {
+				// Older installations can run this binary without migrating
+				// immediately. Wait for the required schema before cleanup.
+				if schema.check(sweepCtx) == nil {
+					if err := svc.ReapUploads(sweepCtx); err != nil && sweepCtx.Err() == nil {
+						logger.Warn("upload session cleanup will retry", "err", err)
+					}
+					now := time.Now()
+					var cutoff int64
+					if cfg.OutboxRetention > 0 {
+						cutoff = now.Add(-cfg.OutboxRetention).UnixMicro()
+					}
+					if _, _, err := store.PruneMetadata(sweepCtx, now.UnixMicro(), cutoff, 500); err != nil && sweepCtx.Err() == nil {
+						logger.Warn("metadata cleanup will retry", "err", err)
+					}
+					const usageBatch = 128
+					for sweepCtx.Err() == nil {
+						n, err := store.BackfillBlobUsage(sweepCtx, now.UnixMicro(), usageBatch)
+						if err != nil && sweepCtx.Err() == nil {
+							logger.Warn("workspace usage backfill will retry", "err", err)
+						}
+						if err != nil || n == 0 {
+							break
+						}
+					}
+				}
+				select {
+				case <-sweepCtx.Done():
+					return
+				case <-tick.C:
+				}
+			}
+		}()
+		defer func() { stopSweep(); <-sweepDone }()
 	} else {
 		logger.Warn("no " + config.EnvDBDSN + " configured: /readyz and every business endpoint answer 503 db_unavailable")
 	}
@@ -435,7 +479,8 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		Version:       version,
 		Pseudonym:     pseudo.Pseudonym,
 		// The upload limit is MaxUploadBytes (core).
-		MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
+		MaxJSONBodyBytes:  cfg.MaxJSONBodyBytes,
+		UploadConcurrency: cfg.UploadConcurrency, TreeConcurrency: cfg.TreeConcurrency, UploadTimeout: cfg.UploadTimeout,
 	}
 	if cfg.Module() {
 		opts.TrustedHeaderPrefix, opts.NoProjects = cfg.TrustedHeaderPrefix, true
@@ -447,7 +492,10 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 				StalledSince: st.StalledSince, LastError: st.LastError}, err
 		}
 	}
+	requests, stopRequests := context.WithCancel(context.Background())
+	defer stopRequests()
 	srv := &http.Server{
+		BaseContext:       func(net.Listener) context.Context { return requests },
 		Handler:           api.NewHandler(opts),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -483,6 +531,11 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 	sctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	shutdownErr := srv.Shutdown(sctx)
+	if errors.Is(shutdownErr, context.DeadlineExceeded) {
+		logger.Warn("shutdown budget exhausted; interrupting outstanding requests")
+		stopRequests()
+		shutdownErr = srv.Close()
+	}
 	stopForwarder()
 	select {
 	case <-forwarderDone:

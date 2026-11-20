@@ -105,11 +105,11 @@ here first.
   (`workspace_created` before `branch_created`; the snapshot event before
   `branch_updated`) and are one microsecond apart in the outbox, and a
   change of a branch is recorded at least two microseconds after its
-  previous change; the outbox is read by its time column and then by row
-  ID, so this order holds whatever the clock and the IDs do.
+  previous change. Within a committed batch the forwarder orders by time and row ID.
 - **Between branches (in this version: between workspaces), events follow
   the order in which their transactions completed,** not the time they
-  record: a change that started earlier but committed later reaches the
+  record. Starting with 0.1.1 a transactional sequence records this order at commit.
+  Previously pending rows drain first in their original timestamp order. A change that started earlier but committed later reaches the
   host table after a change that committed first. A consumer must therefore
   read the host's table in the order of its own row ID (the order of
   insertion) and must not use `created_at` (the time of the change) as a

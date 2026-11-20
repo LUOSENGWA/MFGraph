@@ -6,7 +6,7 @@
 // for its outbox table, and two connections cannot commit in one
 // transaction, so the Forwarder copies the events afterwards:
 //
-//   - in outbox order, by (created_at_us, event_id), one event at a time:
+//   - in transaction commit order (then created_at_us and event_id within each batch), one event at a time:
 //     it stops at the first event it cannot deliver, without skipping it,
 //     and the next attempt starts with that event again. The events of one
 //     branch therefore arrive in the order of its generations (a change of

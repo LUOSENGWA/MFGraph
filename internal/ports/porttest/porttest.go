@@ -49,10 +49,12 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"Snapshots", testSnapshots},
 		{"Timeline", testTimeline},
 		{"Blobs", testBlobs},
+		{"PackedLayout", testPackedLayout},
 		{"Idempotency", testIdempotency},
 		{"Outbox", testOutbox},
 		{"OutboxQueue", testOutboxQueue},
 		{"Usage", testUsage},
+		{"UploadSessions", testUploadSessions},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newStore(t)) })
@@ -595,7 +597,7 @@ func testOutbox(t *testing.T, s Store) {
 	}
 }
 
-// testOutboxQueue: the pending events come in outbox order (time, then
+// testOutboxQueue: the pending events come in commit order (within one transaction, time then
 // ID), without events of an earlier version's kinds; a failed delivery
 // counts a retry and keeps the event pending; a published event stays
 // published and leaves the queue.
@@ -630,16 +632,16 @@ func testOutboxQueue(t *testing.T, s Store) {
 		return strings.Join(out, ",")
 	}
 	got, err := s.PendingEvents(ctx, 100)
-	if err != nil || ids(got) != "02,07,09,05" {
-		t.Fatalf("pending = %s, %v; want 02,07,09,05", ids(got), err)
+	if err != nil || ids(got) != "09,05,02,07" {
+		t.Fatalf("pending = %s, %v; want 09,05,02,07", ids(got), err)
 	}
 	if n, oldest, err := s.PendingCount(ctx); err != nil || n != 4 || oldest != 10 {
 		t.Fatalf("pending count = %d, oldest %d, %v; want 4, 10", n, oldest, err)
 	}
-	if got, _ := s.PendingEvents(ctx, 2); ids(got) != "02,07" {
+	if got, _ := s.PendingEvents(ctx, 2); ids(got) != "09,05" {
 		t.Fatalf("pending with limit 2 = %s", ids(got))
 	}
-	if !reflect.DeepEqual(got[0], ev("01JD3X5Q8Z9W2V4T6R8P0N2E02", ports.EventBranchCreated, 10)) {
+	if !reflect.DeepEqual(got[0], ev("01JD3X5Q8Z9W2V4T6R8P0N2E09", ports.EventCommitCreated, 20)) {
 		t.Fatalf("pending event = %+v", got[0])
 	}
 	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02", 777); err != nil {
@@ -652,7 +654,7 @@ func testOutboxQueue(t *testing.T, s Store) {
 		d.NextRetryAtUs != 888 {
 		t.Fatalf("after two failures: %+v %v", d, err)
 	}
-	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "02,07,09,05" {
+	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "09,05,02,07" {
 		t.Fatalf("a failed event left the queue: %s", ids(got))
 	}
 	for _, id := range []string{"01JD3X5Q8Z9W2V4T6R8P0N2E02", "01JD3X5Q8Z9W2V4T6R8P0N2E07"} {
@@ -719,5 +721,21 @@ func testConcurrentCAS(t *testing.T, s Store) {
 	b, err := s.GetBranch(ctx, nil, brA)
 	if err != nil || len(won) != 1 || b.Generation != 2 || b.HeadSnapshotID != won[0] {
 		t.Fatalf("concurrent CAS: winners %v, branch %+v, %v", won, b, err)
+	}
+}
+
+func testPackedLayout(t *testing.T, s Store) {
+	a, b := contenthash.SumBytes([]byte("abc")), contenthash.SumBytes([]byte("def"))
+	p := ports.Pack{ID: wsA, Key: "packs/one.pack", Hash: contenthash.SumBytes([]byte("abcdef")), Size: 6}
+	packs := []ports.PackWrite{{Pack: p, Chunks: []ports.PackChunk{{Hash: a, Length: 3}, {Hash: b, Offset: 3, Length: 3}}}}
+	file := []ports.FileChunk{{Hash: b, Length: 3}, {Hash: a, Offset: 3, Length: 3}}
+	h := contenthash.SumBytes([]byte("defabc"))
+	tx(t, s, func(tx ports.Tx) error { return s.RecordLayout(ctx, tx, wsA, h, packs, file, 1) })
+	rows, err := s.ChunkLocations(ctx, wsA, h, 2, 4)
+	if err != nil || len(rows) != 2 || rows[0].FileChunk != file[0] || rows[0].PackOffset != 3 || rows[1].FileChunk != file[1] || rows[1].Pack != p {
+		t.Fatalf("file order and pack offsets: %+v %v", rows, err)
+	}
+	if rows, err := s.ChunkLocations(ctx, wsB, h, 0, 6); err != nil || len(rows) != 0 {
+		t.Fatalf("another workspace: %+v %v", rows, err)
 	}
 }

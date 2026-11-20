@@ -91,9 +91,32 @@ POST   /api/v1/uploads/{upload_id}/complete
 DELETE /api/v1/uploads/{upload_id}
 ```
 
-Large files use presigned multipart URLs. The API returns metadata and URLs, not file bytes. All of these are
-below `/uploads/`, the path prefix (like `/objects/` of the whole-file upload) that a proxy can give larger
-upload limits.
+In standalone deployments, initialize with `workspace_id`, `path`, and
+`size_bytes`. The optional `checksum_sha256` verifies the assembled file.
+The response contains the session ID, the negotiated transport part size,
+the expiration time, and an initial batch of part URLs. For a relative URL,
+send the part to the module with the bearer token. For an absolute S3 URL,
+send the bytes directly to that URL and omit the module token. Save the ETag
+from each PUT. After a restart, GET the session and request fresh URLs for
+the numbers in `missing` using `{"part_numbers":[2,3]}`. Complete with
+`{"parts":[{"part_number":1,"etag":"…"}]}` in numeric order. Its receipt
+contains the whole-file `blob_hash`, ready for an ordinary commit.
+
+The standalone transport uses 16 MiB parts unless a smaller hint or the
+10,000-part limit changes the size. This is independent of physical packing.
+S3 part URLs last up to 15 minutes. Sessions last 24 hours by default.
+`MFGRAPH_UPLOAD_SESSION_TTL` changes their lifetime. An expired session
+returns 410 and releases its reservation. A cleanup pass also handles
+abandoned sessions after a restart. Embedded routing awaits host confirmation.
+
+Opening a session reserves the declared size. Successful completion releases
+the reservation and credits the verified file bytes in the same transaction.
+A whole-file PUT credits the bytes when it succeeds. The ledger counts each
+whole-file SHA-256 once per workspace, including staged files. Upload retries,
+switching upload methods, and a later snapshot commit preserve that total.
+Abort and expiry release the reservation. After an upgrade a background pass
+credits previously registered live and staged files in restartable batches.
+The source of the workspace quota ceiling awaits host confirmation.
 
 ## Lock
 

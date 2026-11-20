@@ -416,6 +416,247 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         default:
           $ref: '#/components/responses/Error'
+  /api/v1/uploads:
+    post:
+      tags: [uploads]
+      operationId: initUpload
+      summary: Start a resumable standalone upload
+      description: |
+        Reserve the announced bytes and issue an initial batch of PUT URLs.
+        Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+        upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitUploadBody'
+      responses:
+        '201':
+          description: Start a resumable standalone upload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadTicket'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/uploads/{upload_id}:
+    get:
+      tags: [uploads]
+      operationId: getUpload
+      summary: Read standalone upload progress
+      description: |
+        Returns received part ETags and missing numbers. An expired session returns 410.
+        Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+        upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Read standalone upload progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [uploads]
+      operationId: abortUpload
+      summary: Abort the standalone upload and release its reservation
+      description: |
+        Aborting twice is safe. Completing an upload and aborting it are mutually exclusive.
+        Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+        upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '204':
+          description: Abort the standalone upload and release its reservation.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/uploads/{upload_id}/parts:
+    post:
+      tags: [uploads]
+      operationId: signUploadParts
+      summary: Issue URLs for requested part numbers
+      description: |
+        Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+        Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+        upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartNumbers'
+      responses:
+        '200':
+          description: Issue URLs for requested part numbers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadURLs'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      tags: [uploads]
+      operationId: putUploadPart
+      summary: Send a part to the standalone module relay
+      description: |
+        Use the issued PUT URL, with the expected number of bytes. POSIX part ETags identify their contents.
+        Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+        upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/RequestId'
+        - name: part_number
+          in: query
+          required: true
+          schema: {type: integer, minimum: 1, maximum: 10000}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Send a part to the standalone module relay.
+          headers:
+            ETag:
+              required: true
+              schema: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/v1/uploads/{upload_id}/complete:
+    post:
+      tags: [uploads]
+      operationId: completeUpload
+      summary: Verify all parts and stage the file
+      description: |
+        Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+        Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+        upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+      parameters:
+        - $ref: '#/components/parameters/UploadId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteUploadBody'
+      responses:
+        '200':
+          description: Verify all parts and stage the file.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        default:
+          $ref: '#/components/responses/Error'
   /api/v1/objects/{workspace_id}:
     put:
       tags: [objects]
@@ -429,7 +670,7 @@ paths:
         in a host platform, the host allows 1 GiB and 600 s only below
         `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
         its default limit (8 MiB), which also applies to the other upload
-        path there. Uploads in parts will be added below `{prefix}/uploads/`.
+        path there. Standalone resumable sessions use `{prefix}/uploads/`.
 
         The request body is the exact file content; uploading creates no
         snapshot (reference the returned hash in a commit), content that is
@@ -925,6 +1166,12 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/ULID'
+    UploadId:
+      name: upload_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ULID'
     WorkspaceId:
       name: workspace_id
       in: path
@@ -995,7 +1242,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Gone:
-      description: '`blob_missing`: referenced content is not stored in this workspace.'
+      description: '`blob_missing` for missing content or `upload_expired` for an expired upload session.'
       content:
         application/json:
           schema:
@@ -1040,6 +1287,144 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    InitUploadBody:
+      type: object
+      required: [workspace_id, path, size_bytes]
+      properties:
+        workspace_id:
+          $ref: '#/components/schemas/ULID'
+        path:
+          $ref: '#/components/schemas/FilePath'
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          x-go-type: '*int64'
+        content_type:
+          type: string
+        checksum_sha256:
+          type: string
+          description: Lowercase SHA-256 digest, optionally prefixed with the algorithm name and a colon.
+        part_size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optional transport part-size hint. Independent of chunk and pack sizes.
+    UploadPartURL:
+      type: object
+      required: [part_number, url, method]
+      properties:
+        part_number:
+          type: integer
+        url:
+          type: string
+          description: Use the bearer token only for a same-origin relative relay URL. For an absolute presigned S3 URL send only the part bytes.
+        method:
+          type: string
+    UploadTicket:
+      type: object
+      required: [upload_id, part_size_bytes, total_parts, expires_at_us, parts]
+      properties:
+        upload_id:
+          $ref: '#/components/schemas/ULID'
+        part_size_bytes:
+          type: integer
+          format: int64
+        total_parts:
+          type: integer
+        expires_at_us:
+          type: integer
+          format: int64
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadPartURL'
+    PartNumbers:
+      type: object
+      required: [part_numbers]
+      properties:
+        part_numbers:
+          type: array
+          items:
+            type: integer
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+    UploadURLs:
+      type: object
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadPartURL'
+    UploadedPart:
+      type: object
+      required: [part_number, size_bytes, etag]
+      properties:
+        part_number:
+          type: integer
+        size_bytes:
+          type: integer
+          format: int64
+        etag:
+          type: string
+    UploadStatus:
+      type: object
+      required: [upload_id, status, part_size_bytes, total_parts, expires_at_us, uploaded, missing]
+      properties:
+        upload_id:
+          $ref: '#/components/schemas/ULID'
+        status:
+          type: string
+        part_size_bytes:
+          type: integer
+          format: int64
+        total_parts:
+          type: integer
+        expires_at_us:
+          type: integer
+          format: int64
+        uploaded:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadedPart'
+        missing:
+          type: array
+          items:
+            type: integer
+    PartETag:
+      type: object
+      required: [part_number, etag]
+      properties:
+        part_number:
+          type: integer
+        etag:
+          type: string
+    CompleteUploadBody:
+      type: object
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartETag'
+          maxItems: 10000
+    UploadReceipt:
+      type: object
+      required: [upload_id, path, size_bytes, blob_hash, staged]
+      properties:
+        upload_id:
+          $ref: '#/components/schemas/ULID'
+        path:
+          $ref: '#/components/schemas/FilePath'
+        size_bytes:
+          type: integer
+          format: int64
+        blob_hash:
+          $ref: '#/components/schemas/Hash'
+        staged:
+          type: boolean
     ULID:
       type: string
       description: ULID, 26 uppercase Crockford base32 characters.

@@ -82,3 +82,42 @@ There is no distributed transaction across DB and object storage. A commit is a 
 - bucket versioning is enabled by default: the sweeper deletes **specific version ids** (a plain `DELETE` only adds a delete marker); the grace window doubles as an undelete window; noncurrent versions expire after 30 days;
 - GC never crosses workspaces; `gc_state` (one row per workspace) holds the watermark and the mutex;
 - packs are not compressed in v1; range reads map directly to `offset/length`.
+
+## S3 in a standalone deployment
+
+Set `MFGRAPH_BLOB_BACKEND=s3`, `MFGRAPH_S3_ENDPOINT` (an HTTP or HTTPS
+origin), and `MFGRAPH_S3_BUCKET` (an existing bucket). Supply
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optionally `AWS_SESSION_TOKEN`
+and `AWS_REGION`. The account needs bucket listing and object read, write,
+copy, multipart and removal privileges. A readiness probe creates, reads
+and removes its own small object. Whole-file uploads and downloads go through the server. Standalone multipart
+sessions issue bounded S3 PUT URLs for individual parts. The endpoint and bucket identify the workspace's backend.
+Changing that identity requires migrating the data separately.
+
+When the backend reports that native multipart is unsupported, clients upload
+parts through the server. It verifies the length and SHA-256 on local scratch
+disk before issuing one PUT. Allow scratch space for each concurrent whole
+object or pack. The backend's single-PUT size limit applies to each object.
+For version-aware storage, the account needs permission to list and remove
+object versions so a terminal session can reclaim its private bytes.
+
+### Fixed chunks and packs
+
+Standalone packed writes require **both** `MFGRAPH_CHUNK_BYTES` (4–16 MiB)
+and `MFGRAPH_PACK_BYTES` (64–256 MiB, a multiple of the chunk size). Both
+settings are absent by default. Uploads smaller than a chunk
+use whole-file staging. A commit that references two or more new small files
+groups them into immutable packs. Blobs already stored as whole files keep their
+identity and remain readable. Packed files also remain readable when these
+settings are removed. The hash and ETag are the SHA-256 of the original file.
+Ranges read and verify the participating chunks and can cross pack boundaries.
+
+### Request limits
+
+Operators can set `MFGRAPH_UPLOAD_CONCURRENCY` for whole-file uploads,
+relayed parts and session completion. `MFGRAPH_TREE_CONCURRENCY` independently
+bounds tree listings, diffs, commits and restores. Both take positive integer
+limits per server process. A full pool returns HTTP 429 with `Retry-After`.
+`MFGRAPH_UPLOAD_TIMEOUT` sets the duration available to receive a streamed
+request body, for example `10m`. An overdue body returns HTTP 408. These
+settings are opt-in. Health checks and lightweight metadata use neither pool.

@@ -153,6 +153,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		d := ae.Details
 		body.Details = &d
 	}
+	if status == http.StatusRequestTimeout {
+		w.Header().Set("Connection", "close")
+	}
 	if status == http.StatusUnauthorized && !ae.noChallenge {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="mfgraph"`)
 	}

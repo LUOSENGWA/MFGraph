@@ -1,12 +1,14 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/layout"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
 )
@@ -44,9 +46,41 @@ func (s *Service) PutObject(ctx context.Context, p ports.Principal, req PutObjec
 	if req.ContentLength > s.cfg.MaxUploadBytes {
 		return ports.Blob{}, false, s.tooLarge()
 	}
-	keyOf := func(h contenthash.Hash) string { return storagekey.Join(ws.StoragePrefix, storagekey.ObjectKey(h)) }
-	tmpDir := storagekey.Join(ws.StoragePrefix, "objects")
-	info, _, err := s.d.Objects.PutStream(ctx, tmpDir, req.Body, s.cfg.MaxUploadBytes, expected, keyOf)
+	return s.stage(ctx, ws, req.Body, req.ContentLength, expected, nil)
+}
+
+// stageFinish finalizes an upload in the same transaction as publication of
+// the blob. used is the verified size newly counted for this workspace.
+type stageFinish func(context.Context, ports.Tx, ports.Blob, int64) error
+
+func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader, size int64, expected contenthash.Hash, finish stageFinish) (ports.Blob, bool, error) {
+	blob := ports.Blob{WorkspaceID: ws.ID, Status: ports.BlobStaged, CreatedAtUs: s.nowUs()}
+	var packed layout.Written
+	var err error
+	chunk := s.cfg.PackSizes.Chunk
+	writePack := s.cfg.PackSizes.Enabled() && size >= chunk
+	if chunk > 0 && size < 0 && s.cfg.MaxUploadBytes >= chunk {
+		// Chunked HTTP transfers carry no length. Look at at most one
+		// chunk so small files can still share a pack at commit time.
+		buffered := bufio.NewReaderSize(body, int(chunk))
+		_, err := buffered.Peek(int(chunk))
+		if err != nil && err != io.EOF {
+			return ports.Blob{}, false, mapErr(err, "object")
+		}
+		body, writePack = buffered, err == nil
+	}
+	if writePack {
+		packed, err = layout.Write(ctx, s.d.Objects, s.d.IDs.NewID, ws.StoragePrefix, s.cfg.PackSizes, body, s.cfg.MaxUploadBytes, expected)
+		blob.Hash, blob.Size, blob.Chunking = packed.Hash, packed.Size, layout.Fixed
+	} else {
+		keyOf := func(h contenthash.Hash) string { return storagekey.Join(ws.StoragePrefix, storagekey.ObjectKey(h)) }
+		tmpDir := storagekey.Join(ws.StoragePrefix, "objects")
+		var info ports.ObjectInfo
+		info, _, err = s.d.Objects.PutStream(ctx, tmpDir, body, s.cfg.MaxUploadBytes, expected, keyOf)
+		if err == nil {
+			blob.Hash, blob.Size, blob.StorageKey = info.Hash, info.Size, storagekey.ObjectKey(info.Hash)
+		}
+	}
 	switch {
 	case errors.Is(err, ports.ErrTooLarge):
 		return ports.Blob{}, false, s.tooLarge()
@@ -56,17 +90,80 @@ func (s *Service) PutObject(ctx context.Context, p ports.Principal, req PutObjec
 	case err != nil:
 		return ports.Blob{}, false, mapErr(err, "object")
 	}
-	blob = ports.Blob{WorkspaceID: ws.ID, Hash: info.Hash, Size: info.Size, StorageKey: storagekey.ObjectKey(info.Hash),
-		Status: ports.BlobStaged, CreatedAtUs: s.nowUs()}
-	err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return s.d.Store.InsertBlob(ctx, tx, blob) })
-	if errors.Is(err, ports.ErrAlreadyExists) {
-		old, err := s.d.Store.GetBlob(ctx, nil, ws.ID, info.Hash)
-		return old, false, mapErr(err, "blob")
+	if finish != nil && blob.Size != size {
+		return ports.Blob{}, false, invalid("assembled file size differs from the declared size")
 	}
+	account := func(ctx context.Context, tx ports.Tx, b ports.Blob) error {
+		claimed, err := s.d.Store.ClaimBlobUsage(ctx, tx, ws.ID, b.Hash, s.nowUs())
+		if err != nil {
+			return err
+		}
+		var used int64
+		if claimed {
+			used = b.Size
+		}
+		if finish != nil {
+			return finish(ctx, tx, b, used)
+		}
+		if used > 0 {
+			return s.adjustUsage(ctx, tx, ws.ID, 0, used)
+		}
+		return nil
+	}
+	record := func(ctx context.Context, tx ports.Tx) error {
+		if blob.Chunking == layout.Fixed {
+			if err := s.d.Store.RecordLayout(ctx, tx, ws.ID, blob.Hash, packed.Packs, packed.File, blob.CreatedAtUs); err != nil {
+				return err
+			}
+		}
+		return account(ctx, tx, blob)
+	}
+	var duplicate bool
+	err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := s.d.Store.InsertBlob(ctx, tx, blob); err != nil {
+			duplicate = errors.Is(err, ports.ErrAlreadyExists)
+			return err
+		}
+		return record(ctx, tx)
+	})
+	if !duplicate {
+		return blob, err == nil, mapErr(err, "blob")
+	}
+	old, err := s.d.Store.GetBlob(ctx, nil, ws.ID, blob.Hash)
 	if err != nil {
 		return ports.Blob{}, false, mapErr(err, "blob")
 	}
-	return blob, true, nil
+	if err = s.checkObject(ctx, ws, old); !errors.Is(err, ports.ErrNotFound) {
+		if err == nil {
+			err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return account(ctx, tx, old) })
+		}
+		return old, false, mapErr(err, "object")
+	}
+	// Repair a missing layout even when the current write settings differ.
+	blob.Status, blob.CreatedAtUs = old.Status, old.CreatedAtUs
+	err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := s.d.Store.SetBlobLayout(ctx, tx, blob); err != nil {
+			return err
+		}
+		return record(ctx, tx)
+	})
+	return blob, false, mapErr(err, "blob")
+}
+
+func (s *Service) checkObject(ctx context.Context, ws ports.Workspace, b ports.Blob) error {
+	switch b.Chunking {
+	case layout.Fixed:
+		_, err := layout.Open(ctx, s.d.Store, s.d.Objects, ws, b, 0, -1)
+		return err
+	case "", "whole":
+		i, err := s.d.Objects.Stat(ctx, storageKey(ws, b))
+		if err == nil && i.Size != b.Size {
+			return ports.ErrNotFound
+		}
+		return err
+	default:
+		return ports.ErrStorageUnavailable
+	}
 }
 
 func (s *Service) tooLarge() *Error {

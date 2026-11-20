@@ -52,7 +52,7 @@ mfgraph-server --config etc/module.env migrate
 | `MODULE_SOCKET` | the socket path; the same as `MFGRAPH_HTTP_ADDR=unix:<path>`; `--socket` wins | a socket is required |
 | `MODULE_INTERNAL_TOKEN` | the secret the host's proxy sends in the internal token header | required; any non-empty value without surrounding white space or control characters; shorter than 16 characters gives a warning |
 | `MFGRAPH_DSN` = `MFGRAPH_DB_DSN` | the database of the module | required |
-| `MFGRAPH_OPS_DSN` | the connection of the event forwarder | optional; without it the forwarder uses `MFGRAPH_DSN`. The forwarder's connection always uses the character set utf8mb4: a DSN without `charset` gets `charset=utf8mb4`; another character set, a list such as `utf8,utf8mb4`, a collation of another character set or a `character_set_*`/`collation_*` session variable stops the start |
+| `MFGRAPH_OPS_DSN` | the connection of the event forwarder | optional; without it the forwarder uses `MFGRAPH_DSN`. Both the main and forwarder connections use utf8mb4: a DSN without `charset` gets `charset=utf8mb4`; another character set, a list such as `utf8,utf8mb4`, a collation of another character set or a `character_set_*`/`collation_*` session variable stops the start |
 | `MFGRAPH_DATA_DIR` = `MFGRAPH_STORAGE_ROOT` | the root directory of the object store | required |
 | `MFGRAPH_TENANT_ID` | the fixed tenant of the deployment (a ULID) | required, and not the all-zero default |
 | `MFGRAPH_TRUSTED_HEADER_PREFIX` | the prefix of the identity headers | default `X-Trusted-` |
@@ -153,8 +153,8 @@ VALUES (?, 'mfgraph', ?, 'project', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
   project; `actor_type` and `actor_id` the actor, complete; `payload_json`
   the envelope; `created_at` the time of the change and `available_at`,
   `updated_at` the time of the insert, all UTC `DATETIME(6)`.
-- Order: the forwarder delivers one event at a time, in outbox order (the
-  time column, then the row ID), stops at the first event it cannot deliver
+- Order: the forwarder delivers one event at a time, in transaction commit order (within a transaction,
+  by the time column and then the row ID), stops at the first event it cannot deliver
   and starts with it again next time; it never skips one by itself.
   - Within one branch, events arrive in the order of its generations: a
     change of a branch is recorded at least 2 µs after the previous one,
@@ -262,6 +262,12 @@ SELECT event_id, event_type, created_at_us, payload_json FROM outbox_events WHER
 Setting it back to `pending` delivers it again, after the events that
 followed it. Consumers that need a skipped event must be told.
 
+A maintenance pass removes expired idempotency records in small batches.
+An operator can set `MFGRAPH_OUTBOX_RETENTION` to a duration such as `720h`
+to prune local published events based on their publication time. Pending,
+skipped and host-side rows are retained. Leaving the duration unset keeps
+the full local delivery history.
+
 ## Health
 
 `/healthz` and `/readyz` are at the root of the socket, without
@@ -272,10 +278,10 @@ authentication. `/readyz` checks:
   `details.reason` is `schema_behind` and `details.missing` lists the
   missing migrations (run the migrate command; a schema with migrations the
   binary does not know, from a newer release, is fine);
-- the storage root;
-- in module mode the host's outbox table (check `outbox`, 503 when the
-  forwarder's connection fails or the table does not exist; when the account
-  may only insert, the table is looked up in `information_schema.tables`),
+- a temporary write and removal under the storage root;
+- in module mode the host's outbox table (check `outbox`, 503 when an
+  INSERT into the delivery columns fails, including missing write access).
+  The probe selects zero rows and leaves the host table empty of probe events,
   and the state of delivery: `checks.outbox` is `ok` or `stalled` (still
   200), and the field `outbox` has the backlog (see
   [A stalled forwarder](#a-stalled-forwarder)).

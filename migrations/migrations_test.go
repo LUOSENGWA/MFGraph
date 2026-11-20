@@ -17,14 +17,14 @@ import (
 // packs, chunks, snapshot_entries, project commits, ...) must not appear yet.
 var wantTables = map[string][]string{
 	"kernel": {"principals", "projects"},
-	"mysql": {"blobs", "branches", "idempotency_keys", "outbox_events", "snapshot_parents", "snapshots",
+	"mysql": {"blob_chunks", "blobs", "branches", "chunks", "idempotency_keys", "outbox_events", "outbox_sequence", "packs", "snapshot_parents", "snapshots",
 		"upload_parts", "upload_sessions", "workspace_usage", "workspaces", "workstreams"},
 }
 
 var wantVersions = map[string][]string{
 	"kernel": {"0000_bootstrap", "0001_project_owner"},
 	"mysql": {"0001_workspaces", "0002_workstreams_branches", "0003_snapshots", "0004_blobs",
-		"0006_uploads", "0008_usage_outbox_idempotency", "0009_actor_types"},
+		"0006_uploads", "0008_usage_outbox_idempotency", "0009_actor_types", "0010_outbox_order", "0011_packed_blobs", "0012_upload_completion", "0013_outbox_retention", "0014_blob_usage"},
 }
 
 // actorTypeColumns hold the type a host platform gives an actor, next to
@@ -52,6 +52,7 @@ var byteColumns = map[string]string{
 	"snapshots.scope_path":             "VARBINARY(4096)",
 	"upload_sessions.path":             "VARBINARY(4096)",
 	"workspaces.storage_prefix":        "VARBINARY(942)",
+	"packs.storage_key":                "VARBINARY(1024)",
 	"blobs.storage_key":                "VARBINARY(1024)",
 	"idempotency_keys.idempotency_key": "VARBINARY(128)",
 }

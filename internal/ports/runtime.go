@@ -48,7 +48,7 @@ type Event struct {
 	WorkspaceID string
 	AggregateID string // the business key: snapshot, branch or workspace ID
 	Payload     []byte // the envelope (JSON)
-	CreatedAtUs int64  // epoch microseconds; the outbox is ordered by (CreatedAtUs, ID)
+	CreatedAtUs int64  // epoch microseconds; ordering within the transaction is by (CreatedAtUs, ID)
 }
 
 // Tx is an open unit of work created by a Transactor. It is passed to every
@@ -80,7 +80,7 @@ type EventSink interface {
 type OutboxQueue interface {
 	// PendingEvents returns up to limit committed events that are not
 	// published yet and have a current kind (mfgraph.*), in outbox order:
-	// by CreatedAtUs, then by ID.
+	// by transaction commit order, then by CreatedAtUs and ID within a transaction.
 	PendingEvents(ctx context.Context, limit int) ([]Event, error)
 	// MarkPublished records that an event was delivered; a published event
 	// stays published.
@@ -90,7 +90,7 @@ type OutboxQueue interface {
 	// tries again.
 	MarkFailed(ctx context.Context, id string, nextRetryAtUs int64) error
 	// PendingCount returns how many events PendingEvents would return
-	// without a limit, and the CreatedAtUs of the first of them (0 when
+	// without a limit, and the minimum CreatedAtUs (0 when
 	// there is none): the backlog, for readiness and logs.
 	PendingCount(ctx context.Context) (n, oldestAtUs int64, err error)
 }

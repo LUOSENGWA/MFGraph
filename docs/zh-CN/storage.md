@@ -82,3 +82,23 @@ DB 与对象存储之间没有分布式事务。一次提交是**文件/版本�
 - 默认启用 bucket versioning：sweep 删除**具体 version id**（普通 `DELETE` 只加删除标记）；grace 期同时是撤消窗口；非当前版本 30 天后过期；
 - GC 不跨 workspace；`gc_state`（每 workspace 一行）提供水位与互斥；
 - v1 pack 不压缩；Range 直接映射 `offset/length`。
+
+## 独立部署的存储配置
+
+`MFGRAPH_BLOB_BACKEND=s3` 使用已有 bucket。配置 `MFGRAPH_S3_ENDPOINT`、
+`MFGRAPH_S3_BUCKET` 和 AWS 凭据。已建工作区绑定原后端。整文件上传可继续使用
+`/objects/`，断点续传通过 `/uploads` 创建会话。
+
+支持原生分片的后端会签发单个分片的 PUT 地址。后端明确报告不支持分片时，
+客户端通过服务端续传。服务端用本机临时磁盘校验长度和 SHA-256，再用单次 PUT
+写入后端。临时磁盘需容纳正在写入的整文件或单个 pack，后端的单次 PUT 上限同样适用。
+在支持对象版本的存储中，清理终止会话需要枚举和删除该会话目录里的具体版本及删除标记。
+
+写入固定分块需要同时显式设置 `MFGRAPH_CHUNK_BYTES`（4–16 MiB）和 `MFGRAPH_PACK_BYTES`
+（64–256 MiB，须为分块大小的整数倍）。移除配置后，整文件和 pack 中的旧快照均可读取。
+多个新上传的小文件在同次提交时可共用一个 pack。下载的哈希和 ETag 始终表示整文件。Range 支持跨分块、跨 pack 读取。
+
+`MFGRAPH_UPLOAD_CONCURRENCY` 可限制每个进程同时处理的上传和上传完成请求数，
+`MFGRAPH_TREE_CONCURRENCY` 可独立限制目录浏览、diff、commit 和 restore。
+达到相应上限会返回 429 和 `Retry-After`。可用 `MFGRAPH_UPLOAD_TIMEOUT`
+显式限制模块接收请求体的时长，超时返回 408。健康检查不占用这两类名额。

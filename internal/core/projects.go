@@ -183,11 +183,10 @@ func (s *Service) ListBranches(ctx context.Context, p ports.Principal, workspace
 	if err != nil {
 		return nil, "", err
 	}
-	after := ""
-	if pg.Cursor != "" {
-		if after, err = decodeCursor(cursorBranches, pg.Cursor); err != nil {
-			return nil, "", err
-		}
+	scope := cursorScope(cursorBranches, workspaceID, "")
+	after, err := scope.position(pg.Cursor)
+	if err != nil {
+		return nil, "", err
 	}
 	if _, _, err := s.access(ctx, p, workspaceID, ports.ActionWorkspaceRead); err != nil {
 		return nil, "", err
@@ -199,7 +198,7 @@ func (s *Service) ListBranches(ctx context.Context, p ports.Principal, workspace
 	next := ""
 	if len(bs) > limit {
 		bs = bs[:limit]
-		next = encodeCursor(cursorBranches, bs[limit-1].RefName)
+		next = scope.encode(bs[limit-1].RefName)
 	}
 	return bs, next, nil
 }

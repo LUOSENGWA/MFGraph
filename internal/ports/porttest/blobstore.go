@@ -41,6 +41,27 @@ func RunBlobStore(t *testing.T, newStore func(t *testing.T) (ports.BlobStore, Co
 		return string(b)
 	}
 
+	t.Run("ListDirectory", func(t *testing.T) {
+		s, _ := newStore(t)
+		if !s.Capabilities().List {
+			t.Fatal("missing list capability")
+		}
+		for _, key := range []string{prefix + "/session/part", prefix + "/session/nested/part", prefix + "/session-other/keep"} {
+			if _, err := s.PutIfAbsent(ctx, key, strings.NewReader("x"), 1, hashOf("x")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		seen := map[string]bool{}
+		if err := s.Walk(ctx, prefix+"/session", func(i ports.ObjectInfo) error { seen[i.Key] = true; return s.Delete(ctx, i.Key) }); err != nil {
+			t.Fatal(err)
+		}
+		if len(seen) != 2 || !seen[prefix+"/session/part"] || !seen[prefix+"/session/nested/part"] {
+			t.Fatalf("visited %v", seen)
+		}
+		if _, err := s.Stat(ctx, prefix+"/session-other/keep"); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("PutIfAbsent", func(t *testing.T) {
 		s, _ := newStore(t)
 		data := []byte("hello\n")
@@ -76,6 +97,9 @@ func RunBlobStore(t *testing.T, newStore func(t *testing.T) (ports.BlobStore, Co
 			if _, err := s.Get(ctx, missing, 0, -1); !errors.Is(err, ports.ErrNotFound) {
 				t.Errorf("Get of a missing key: %v", err)
 			}
+		}
+		if err := s.Delete(ctx, "never/created/object"); err != nil {
+			t.Fatalf("delete under absent parents: %v", err)
 		}
 		if err := s.Delete(ctx, key); err != nil {
 			t.Fatal(err)

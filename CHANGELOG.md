@@ -4,6 +4,24 @@ All notable changes will be documented here.
 
 ## [Unreleased]
 
+### M1.0b development
+
+- Standalone deployments can use a scoped S3-compatible bucket and resume uploads after a restart. The same HTTP session routes support POSIX relaying and native S3 part URLs.
+- Explicit chunk and pack sizes enable fixed chunks, immutable packs and shared small-file packs. Existing snapshots and staged whole files remain readable after upgrading.
+- A completed upload credits verified file bytes once per workspace. Both upload methods share the ledger, and the upgrade backfills existing staged and live files.
+- Added crash, resume, Range, two-forwarder and upgrade tests on MySQL and seekdb, with MinIO and RustFS storage fixtures.
+- The primary database connection uses utf8mb4. Read caching is bounded. Operators can configure upload time and concurrency limits, tree concurrency and local published-event retention.
+- The `0.2.0-dev` bundle identifies development builds. The independent Module 0.1.1 release point is commit `c4debc5`.
+
+## Module 0.1.1
+
+- Restore requests reject an explicit null path. Omitting the path still restores the whole snapshot. JSON requests reject malformed UTF-8 and unpaired Unicode surrogates before decoding.
+- Pagination cursors are bound to the resource and filter of the listing. Clients continuing a listing across the upgrade should restart at the first page if it returns `invalid_cursor`.
+- Readiness tests current write access to the storage directory and the host outbox. Repeated deletion of a missing object succeeds even when its parent directories do not exist.
+- Run the additive migration `0010_outbox_order` before starting this version. Events committed by the new writer retain their transaction order while delivery is offline. Previously queued rows are delivered first in their recorded order.
+
+## Module 0.1.0
+
 ### M1.0a module: the same binary as a module of a host platform
 
 - `MFGRAPH_MODE=module` runs the server as a module process: a Unix domain socket only, `--config FILE` (KEY=VALUE, no expansion) and `--socket PATH` before or after the command, the host's variable names (`MODULE_ID`, `MODULE_SOCKET`, `MODULE_INTERNAL_TOKEN`, `MFGRAPH_DSN`, `MFGRAPH_OPS_DSN`, `MFGRAPH_DATA_DIR`, `MFGRAPH_ROUTE_PREFIX`, ...) as aliases of the existing ones, and refusals at start for missing or contradictory settings. See [module mode](docs/module-mode.md).

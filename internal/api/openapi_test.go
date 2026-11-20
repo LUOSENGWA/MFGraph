@@ -42,6 +42,8 @@ func TestOpenAPIValid(t *testing.T) {
 // change and must be reflected here.
 var wantOperations = []string{
 	"GET /healthz", "GET /readyz",
+	"POST /api/v1/uploads", "GET /api/v1/uploads/{upload_id}", "DELETE /api/v1/uploads/{upload_id}",
+	"PUT /api/v1/uploads/{upload_id}/parts", "POST /api/v1/uploads/{upload_id}/parts", "POST /api/v1/uploads/{upload_id}/complete",
 	"POST /api/v1/projects", "GET /api/v1/projects/{project_id}",
 	"POST /api/v1/workspaces", "GET /api/v1/workspaces/{workspace_id}",
 	"GET /api/v1/workspaces/{workspace_id}/branches", "PUT /api/v1/workspaces/{workspace_id}/objects",

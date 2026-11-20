@@ -99,7 +99,7 @@ type ClientInterface interface {
 	// in a host platform, the host allows 1 GiB and 600 s only below
 	// `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
 	// its default limit (8 MiB), which also applies to the other upload
-	// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+	// path there. Standalone resumable sessions use `{prefix}/uploads/`.
 	//
 	// The request body is the exact file content; uploading creates no
 	// snapshot (reference the returned hash in a commit), content that is
@@ -269,6 +269,101 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/snapshots/{snapshot_id}/tree (the `ListSnapshotTree` operationId).
 	ListSnapshotTree(ctx context.Context, snapshotId SnapshotId, params *ListSnapshotTreeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InitUploadWithBody Start a resumable standalone upload
+	//
+	// Reserve the announced bytes and issue an initial batch of PUT URLs.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+	InitUploadWithBody(ctx context.Context, params *InitUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InitUpload Start a resumable standalone upload
+	//
+	// Reserve the announced bytes and issue an initial batch of PUT URLs.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+	InitUpload(ctx context.Context, params *InitUploadParams, body InitUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AbortUpload Abort the standalone upload and release its reservation
+	//
+	// Aborting twice is safe. Completing an upload and aborting it are mutually exclusive.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `AbortUpload` operationId).
+	AbortUpload(ctx context.Context, uploadId UploadId, params *AbortUploadParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUpload Read standalone upload progress
+	//
+	// Returns received part ETags and missing numbers. An expired session returns 410.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+	GetUpload(ctx context.Context, uploadId UploadId, params *GetUploadParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteUploadWithBody Verify all parts and stage the file
+	//
+	// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUploadWithBody(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteUpload Verify all parts and stage the file
+	//
+	// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUpload(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SignUploadPartsWithBody Issue URLs for requested part numbers
+	//
+	// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+	SignUploadPartsWithBody(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SignUploadParts Issue URLs for requested part numbers
+	//
+	// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+	SignUploadParts(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, body SignUploadPartsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutUploadPartWithBody Send a part to the standalone module relay
+	//
+	// Use the issued PUT URL, with the expected number of bytes. POSIX part ETags identify their contents.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/uploads/{upload_id}/parts (the `PutUploadPart` operationId).
+	PutUploadPartWithBody(ctx context.Context, uploadId UploadId, params *PutUploadPartParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateWorkspaceWithBody Create a project-level workspace and its main branch
 	//
@@ -481,7 +576,7 @@ type ClientInterface interface {
 // in a host platform, the host allows 1 GiB and 600 s only below
 // `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
 // its default limit (8 MiB), which also applies to the other upload
-// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+// path there. Standalone resumable sessions use `{prefix}/uploads/`.
 //
 // The request body is the exact file content; uploading creates no
 // snapshot (reference the returned hash in a commit), content that is
@@ -742,6 +837,191 @@ func (c *Client) RestoreSnapshot(ctx context.Context, snapshotId SnapshotId, par
 // Corresponds with GET /api/v1/snapshots/{snapshot_id}/tree (the `ListSnapshotTree` operationId).
 func (c *Client) ListSnapshotTree(ctx context.Context, snapshotId SnapshotId, params *ListSnapshotTreeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSnapshotTreeRequest(c.Server, snapshotId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InitUploadWithBody Start a resumable standalone upload
+//
+// Reserve the announced bytes and issue an initial batch of PUT URLs.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+func (c *Client) InitUploadWithBody(ctx context.Context, params *InitUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInitUploadRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InitUpload Start a resumable standalone upload
+//
+// Reserve the announced bytes and issue an initial batch of PUT URLs.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+func (c *Client) InitUpload(ctx context.Context, params *InitUploadParams, body InitUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInitUploadRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AbortUpload Abort the standalone upload and release its reservation
+//
+// Aborting twice is safe. Completing an upload and aborting it are mutually exclusive.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `AbortUpload` operationId).
+func (c *Client) AbortUpload(ctx context.Context, uploadId UploadId, params *AbortUploadParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAbortUploadRequest(c.Server, uploadId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUpload Read standalone upload progress
+//
+// Returns received part ETags and missing numbers. An expired session returns 410.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+func (c *Client) GetUpload(ctx context.Context, uploadId UploadId, params *GetUploadParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUploadRequest(c.Server, uploadId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteUploadWithBody Verify all parts and stage the file
+//
+// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *Client) CompleteUploadWithBody(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteUploadRequestWithBody(c.Server, uploadId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteUpload Verify all parts and stage the file
+//
+// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *Client) CompleteUpload(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteUploadRequest(c.Server, uploadId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SignUploadPartsWithBody Issue URLs for requested part numbers
+//
+// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+func (c *Client) SignUploadPartsWithBody(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSignUploadPartsRequestWithBody(c.Server, uploadId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SignUploadParts Issue URLs for requested part numbers
+//
+// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+func (c *Client) SignUploadParts(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, body SignUploadPartsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSignUploadPartsRequest(c.Server, uploadId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutUploadPartWithBody Send a part to the standalone module relay
+//
+// Use the issued PUT URL, with the expected number of bytes. POSIX part ETags identify their contents.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/uploads/{upload_id}/parts (the `PutUploadPart` operationId).
+func (c *Client) PutUploadPartWithBody(ctx context.Context, uploadId UploadId, params *PutUploadPartParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutUploadPartRequestWithBody(c.Server, uploadId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1646,6 +1926,390 @@ func NewListSnapshotTreeRequest(server string, snapshotId SnapshotId, params *Li
 	return req, nil
 }
 
+// NewInitUploadRequest calls the generic InitUpload builder with application/json body
+func NewInitUploadRequest(server string, params *InitUploadParams, body InitUploadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewInitUploadRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewInitUploadRequestWithBody constructs an http.Request for the InitUpload method, with any body, and a specified content type
+func NewInitUploadRequestWithBody(server string, params *InitUploadParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XRequestId != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", *params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Request-Id", headerParam0)
+		}
+
+		if params.IdempotencyKey != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam1)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewAbortUploadRequest constructs an http.Request for the AbortUpload method
+func NewAbortUploadRequest(server string, uploadId UploadId, params *AbortUploadParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XRequestId != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", *params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Request-Id", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetUploadRequest constructs an http.Request for the GetUpload method
+func NewGetUploadRequest(server string, uploadId UploadId, params *GetUploadParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XRequestId != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", *params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Request-Id", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewCompleteUploadRequest calls the generic CompleteUpload builder with application/json body
+func NewCompleteUploadRequest(server string, uploadId UploadId, params *CompleteUploadParams, body CompleteUploadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCompleteUploadRequestWithBody(server, uploadId, params, "application/json", bodyReader)
+}
+
+// NewCompleteUploadRequestWithBody constructs an http.Request for the CompleteUpload method, with any body, and a specified content type
+func NewCompleteUploadRequestWithBody(server string, uploadId UploadId, params *CompleteUploadParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s/complete", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XRequestId != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", *params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Request-Id", headerParam0)
+		}
+
+		if params.IdempotencyKey != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam1)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewSignUploadPartsRequest calls the generic SignUploadParts builder with application/json body
+func NewSignUploadPartsRequest(server string, uploadId UploadId, params *SignUploadPartsParams, body SignUploadPartsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSignUploadPartsRequestWithBody(server, uploadId, params, "application/json", bodyReader)
+}
+
+// NewSignUploadPartsRequestWithBody constructs an http.Request for the SignUploadParts method, with any body, and a specified content type
+func NewSignUploadPartsRequestWithBody(server string, uploadId UploadId, params *SignUploadPartsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s/parts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XRequestId != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", *params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Request-Id", headerParam0)
+		}
+
+		if params.IdempotencyKey != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam1)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPutUploadPartRequestWithBody constructs an http.Request for the PutUploadPart method, with any body, and a specified content type
+func NewPutUploadPartRequestWithBody(server string, uploadId UploadId, params *PutUploadPartParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s/parts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "part_number", params.PartNumber, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XRequestId != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Request-Id", *params.XRequestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Request-Id", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewCreateWorkspaceRequest calls the generic CreateWorkspace builder with application/json body
 func NewCreateWorkspaceRequest(server string, params *CreateWorkspaceParams, body CreateWorkspaceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2221,7 +2885,7 @@ type ClientWithResponsesInterface interface {
 	// in a host platform, the host allows 1 GiB and 600 s only below
 	// `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
 	// its default limit (8 MiB), which also applies to the other upload
-	// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+	// path there. Standalone resumable sessions use `{prefix}/uploads/`.
 	//
 	// The request body is the exact file content; uploading creates no
 	// snapshot (reference the returned hash in a commit), content that is
@@ -2401,6 +3065,105 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/snapshots/{snapshot_id}/tree (the `ListSnapshotTree` operationId).
 	ListSnapshotTreeWithResponse(ctx context.Context, snapshotId SnapshotId, params *ListSnapshotTreeParams, reqEditors ...RequestEditorFn) (*ListSnapshotTreeResponse, error)
+
+	// InitUploadWithBodyWithResponse Start a resumable standalone upload
+	//
+	// Reserve the announced bytes and issue an initial batch of PUT URLs.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+	InitUploadWithBodyWithResponse(ctx context.Context, params *InitUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InitUploadResponse, error)
+
+	// InitUploadWithResponse Start a resumable standalone upload
+	//
+	// Reserve the announced bytes and issue an initial batch of PUT URLs.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+	InitUploadWithResponse(ctx context.Context, params *InitUploadParams, body InitUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*InitUploadResponse, error)
+
+	// AbortUploadWithResponse Abort the standalone upload and release its reservation
+	//
+	// Aborting twice is safe. Completing an upload and aborting it are mutually exclusive.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `AbortUpload` operationId).
+	AbortUploadWithResponse(ctx context.Context, uploadId UploadId, params *AbortUploadParams, reqEditors ...RequestEditorFn) (*AbortUploadResponse, error)
+
+	// GetUploadWithResponse Read standalone upload progress
+	//
+	// Returns received part ETags and missing numbers. An expired session returns 410.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+	GetUploadWithResponse(ctx context.Context, uploadId UploadId, params *GetUploadParams, reqEditors ...RequestEditorFn) (*GetUploadResponse, error)
+
+	// CompleteUploadWithBodyWithResponse Verify all parts and stage the file
+	//
+	// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUploadWithBodyWithResponse(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error)
+
+	// CompleteUploadWithResponse Verify all parts and stage the file
+	//
+	// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUploadWithResponse(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error)
+
+	// SignUploadPartsWithBodyWithResponse Issue URLs for requested part numbers
+	//
+	// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+	SignUploadPartsWithBodyWithResponse(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignUploadPartsResponse, error)
+
+	// SignUploadPartsWithResponse Issue URLs for requested part numbers
+	//
+	// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+	SignUploadPartsWithResponse(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, body SignUploadPartsJSONRequestBody, reqEditors ...RequestEditorFn) (*SignUploadPartsResponse, error)
+
+	// PutUploadPartWithBodyWithResponse Send a part to the standalone module relay
+	//
+	// Use the issued PUT URL, with the expected number of bytes. POSIX part ETags identify their contents.
+	// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+	// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/uploads/{upload_id}/parts (the `PutUploadPart` operationId).
+	PutUploadPartWithBodyWithResponse(ctx context.Context, uploadId UploadId, params *PutUploadPartParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutUploadPartResponse, error)
 
 	// CreateWorkspaceWithBodyWithResponse Create a project-level workspace and its main branch
 	//
@@ -3285,6 +4048,602 @@ func (r ListSnapshotTreeResponse) ContentType() string {
 	return ""
 }
 
+type InitUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *UploadTicket
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Conflict
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *Gone
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *PayloadTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnprocessableEntity
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r InitUploadResponse) GetJSON201() *UploadTicket {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r InitUploadResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r InitUploadResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r InitUploadResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r InitUploadResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r InitUploadResponse) GetJSON409() *Conflict {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r InitUploadResponse) GetJSON410() *Gone {
+	return r.JSON410
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r InitUploadResponse) GetJSON413() *PayloadTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r InitUploadResponse) GetJSON415() *UnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r InitUploadResponse) GetJSON422() *UnprocessableEntity {
+	return r.JSON422
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r InitUploadResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r InitUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r InitUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InitUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r InitUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AbortUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Conflict
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *Gone
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AbortUploadResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AbortUploadResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AbortUploadResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AbortUploadResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AbortUploadResponse) GetJSON409() *Conflict {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r AbortUploadResponse) GetJSON410() *Gone {
+	return r.JSON410
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r AbortUploadResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AbortUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AbortUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AbortUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AbortUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UploadStatus
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Conflict
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *Gone
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUploadResponse) GetJSON200() *UploadStatus {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUploadResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUploadResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUploadResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetUploadResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r GetUploadResponse) GetJSON409() *Conflict {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r GetUploadResponse) GetJSON410() *Gone {
+	return r.JSON410
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetUploadResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CompleteUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UploadReceipt
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Conflict
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *Gone
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *PayloadTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnprocessableEntity
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CompleteUploadResponse) GetJSON200() *UploadReceipt {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CompleteUploadResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CompleteUploadResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CompleteUploadResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CompleteUploadResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CompleteUploadResponse) GetJSON409() *Conflict {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r CompleteUploadResponse) GetJSON410() *Gone {
+	return r.JSON410
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r CompleteUploadResponse) GetJSON413() *PayloadTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CompleteUploadResponse) GetJSON415() *UnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r CompleteUploadResponse) GetJSON422() *UnprocessableEntity {
+	return r.JSON422
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CompleteUploadResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SignUploadPartsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UploadURLs
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Conflict
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *Gone
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *PayloadTooLarge
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnprocessableEntity
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SignUploadPartsResponse) GetJSON200() *UploadURLs {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SignUploadPartsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SignUploadPartsResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SignUploadPartsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SignUploadPartsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SignUploadPartsResponse) GetJSON409() *Conflict {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r SignUploadPartsResponse) GetJSON410() *Gone {
+	return r.JSON410
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r SignUploadPartsResponse) GetJSON413() *PayloadTooLarge {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r SignUploadPartsResponse) GetJSON415() *UnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r SignUploadPartsResponse) GetJSON422() *UnprocessableEntity {
+	return r.JSON422
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r SignUploadPartsResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SignUploadPartsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SignUploadPartsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SignUploadPartsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SignUploadPartsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PutUploadPartResponse200Headers the declared response headers of an HTTP 200 response for PutUploadPart
+type PutUploadPartResponse200Headers struct {
+	ETag string
+}
+
+type PutUploadPartResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Conflict
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *Gone
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *PutUploadPartResponse200Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PutUploadPartResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutUploadPartResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutUploadPartResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PutUploadPartResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PutUploadPartResponse) GetJSON409() *Conflict {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r PutUploadPartResponse) GetJSON410() *Gone {
+	return r.JSON410
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r PutUploadPartResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PutUploadPartResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutUploadPartResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutUploadPartResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutUploadPartResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateWorkspaceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3895,7 +5254,7 @@ func (r GetReadyzResponse) ContentType() string {
 // in a host platform, the host allows 1 GiB and 600 s only below
 // `{prefix}/objects/` and `{prefix}/uploads/`, while other paths keep
 // its default limit (8 MiB), which also applies to the other upload
-// path there. Uploads in parts will be added below `{prefix}/uploads/`.
+// path there. Standalone resumable sessions use `{prefix}/uploads/`.
 //
 // The request body is the exact file content; uploading creates no
 // snapshot (reference the returned hash in a commit), content that is
@@ -4134,6 +5493,159 @@ func (c *ClientWithResponses) ListSnapshotTreeWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseListSnapshotTreeResponse(rsp)
+}
+
+// InitUploadWithBodyWithResponse Start a resumable standalone upload
+//
+// Reserve the announced bytes and issue an initial batch of PUT URLs.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+func (c *ClientWithResponses) InitUploadWithBodyWithResponse(ctx context.Context, params *InitUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InitUploadResponse, error) {
+	rsp, err := c.InitUploadWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInitUploadResponse(rsp)
+}
+
+// InitUploadWithResponse Start a resumable standalone upload
+//
+// Reserve the announced bytes and issue an initial batch of PUT URLs.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads (the `InitUpload` operationId).
+func (c *ClientWithResponses) InitUploadWithResponse(ctx context.Context, params *InitUploadParams, body InitUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*InitUploadResponse, error) {
+	rsp, err := c.InitUpload(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInitUploadResponse(rsp)
+}
+
+// AbortUploadWithResponse Abort the standalone upload and release its reservation
+//
+// Aborting twice is safe. Completing an upload and aborting it are mutually exclusive.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `AbortUpload` operationId).
+func (c *ClientWithResponses) AbortUploadWithResponse(ctx context.Context, uploadId UploadId, params *AbortUploadParams, reqEditors ...RequestEditorFn) (*AbortUploadResponse, error) {
+	rsp, err := c.AbortUpload(ctx, uploadId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAbortUploadResponse(rsp)
+}
+
+// GetUploadWithResponse Read standalone upload progress
+//
+// Returns received part ETags and missing numbers. An expired session returns 410.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+func (c *ClientWithResponses) GetUploadWithResponse(ctx context.Context, uploadId UploadId, params *GetUploadParams, reqEditors ...RequestEditorFn) (*GetUploadResponse, error) {
+	rsp, err := c.GetUpload(ctx, uploadId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUploadResponse(rsp)
+}
+
+// CompleteUploadWithBodyWithResponse Verify all parts and stage the file
+//
+// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *ClientWithResponses) CompleteUploadWithBodyWithResponse(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error) {
+	rsp, err := c.CompleteUploadWithBody(ctx, uploadId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteUploadResponse(rsp)
+}
+
+// CompleteUploadWithResponse Verify all parts and stage the file
+//
+// Supply every ETag in part-number order. Repeating the same completed manifest returns its receipt without moving any branch.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *ClientWithResponses) CompleteUploadWithResponse(ctx context.Context, uploadId UploadId, params *CompleteUploadParams, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error) {
+	rsp, err := c.CompleteUpload(ctx, uploadId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteUploadResponse(rsp)
+}
+
+// SignUploadPartsWithBodyWithResponse Issue URLs for requested part numbers
+//
+// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+func (c *ClientWithResponses) SignUploadPartsWithBodyWithResponse(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignUploadPartsResponse, error) {
+	rsp, err := c.SignUploadPartsWithBody(ctx, uploadId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignUploadPartsResponse(rsp)
+}
+
+// SignUploadPartsWithResponse Issue URLs for requested part numbers
+//
+// Request a fresh batch when signatures expire. Use a fresh idempotency key to renew a signed URL.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/parts (the `SignUploadParts` operationId).
+func (c *ClientWithResponses) SignUploadPartsWithResponse(ctx context.Context, uploadId UploadId, params *SignUploadPartsParams, body SignUploadPartsJSONRequestBody, reqEditors ...RequestEditorFn) (*SignUploadPartsResponse, error) {
+	rsp, err := c.SignUploadParts(ctx, uploadId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignUploadPartsResponse(rsp)
+}
+
+// PutUploadPartWithBodyWithResponse Send a part to the standalone module relay
+//
+// Use the issued PUT URL, with the expected number of bytes. POSIX part ETags identify their contents.
+// Errors: invalid_request, unauthenticated, forbidden, not_found, conflict,
+// upload_expired, idempotency_key_reuse, invalid_path, file_too_large, request_too_large.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/uploads/{upload_id}/parts (the `PutUploadPart` operationId).
+func (c *ClientWithResponses) PutUploadPartWithBodyWithResponse(ctx context.Context, uploadId UploadId, params *PutUploadPartParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutUploadPartResponse, error) {
+	rsp, err := c.PutUploadPartWithBody(ctx, uploadId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutUploadPartResponse(rsp)
 }
 
 // CreateWorkspaceWithBodyWithResponse Create a project-level workspace and its main branch
@@ -5013,6 +6525,524 @@ func ParseListSnapshotTreeResponse(rsp *http.Response) (*ListSnapshotTreeRespons
 		}
 		response.JSONDefault = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseInitUploadResponse parses an HTTP response from a InitUploadWithResponse call
+func ParseInitUploadResponse(rsp *http.Response) (*InitUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InitUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest UploadTicket
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Gone
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest PayloadTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAbortUploadResponse parses an HTTP response from a AbortUploadWithResponse call
+func ParseAbortUploadResponse(rsp *http.Response) (*AbortUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AbortUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Gone
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUploadResponse parses an HTTP response from a GetUploadWithResponse call
+func ParseGetUploadResponse(rsp *http.Response) (*GetUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UploadStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Gone
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCompleteUploadResponse parses an HTTP response from a CompleteUploadWithResponse call
+func ParseCompleteUploadResponse(rsp *http.Response) (*CompleteUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UploadReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Gone
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest PayloadTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSignUploadPartsResponse parses an HTTP response from a SignUploadPartsWithResponse call
+func ParseSignUploadPartsResponse(rsp *http.Response) (*SignUploadPartsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SignUploadPartsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UploadURLs
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Gone
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest PayloadTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutUploadPartResponse parses an HTTP response from a PutUploadPartWithResponse call
+func ParsePutUploadPartResponse(rsp *http.Response) (*PutUploadPartResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutUploadPartResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Gone
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers PutUploadPartResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

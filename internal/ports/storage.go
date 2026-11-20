@@ -40,11 +40,18 @@ type Capabilities struct {
 
 // ObjectInfo is the metadata of a stored object.
 type ObjectInfo struct {
-	Key     string
-	Size    int64
-	Hash    contenthash.Hash // zero when the backend does not know it
-	ETag    string           // backend ETag, if any
-	ModTime time.Time
+	Key       string
+	Size      int64
+	Hash      contenthash.Hash // zero when the backend does not know it
+	ETag      string           // backend ETag, if any
+	ModTime   time.Time
+	VersionID string // set when the backend identifies an exact object version
+}
+
+// DirectoryVersionCleaner can reclaim every version and delete marker in a
+// private directory after its upload session is terminal.
+type DirectoryVersionCleaner interface {
+	DeleteDirectoryVersions(ctx context.Context, dir string) error
 }
 
 // ReadLimited reads r up to and including its end, as long as that is at
@@ -87,6 +94,9 @@ func ReadLimited(r io.Reader, w io.Writer, limit int64) (n int64, over bool, err
 // bytes, with a warning in the log.
 type BlobStore interface {
 	Capabilities() Capabilities
+
+	// Walk visits the current objects below a directory, excluding sibling prefixes.
+	Walk(ctx context.Context, dir string, visit func(ObjectInfo) error) error
 
 	// PutIfAbsent stores the size bytes read from r under key. The SHA-256 of
 	// the bytes must equal h and their number must equal size, otherwise

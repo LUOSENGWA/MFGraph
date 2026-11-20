@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/api/gen"
 )
@@ -34,6 +35,11 @@ func oldServer(t *testing.T) string {
 	if commit == "" {
 		commit = upgradeBase
 	}
+	return buildHistoricalServer(t, commit)
+}
+
+func buildHistoricalServer(t *testing.T, commit string) string {
+	t.Helper()
 	unavailable := func(why string, err error) string {
 		t.Helper()
 		if os.Getenv("MFGRAPH_E2E_REQUIRE_UPGRADE") == "1" {
@@ -79,7 +85,7 @@ func oldServer(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	bin := filepath.Join(dir, "mfgraph-server-"+commit[:7])
+	bin := filepath.Join(dir, "mfgraph-server-old")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/mfgraph-server")
 	build.Dir = dir
 	build.Env = append(os.Environ(), "GOFLAGS=-mod=readonly", "GOWORK=off")
@@ -138,7 +144,7 @@ func schemaOf(t *testing.T, dsn string) string {
 //     uploads, commits, an idempotent commit, a restore);
 //  2. this server on that schema without migrating: /readyz 503
 //     schema_behind with mfgraph/0009_actor_types, and an ERROR line;
-//  3. migrate applies 0009 only;
+//  3. migrate applies the outstanding migrations;
 //  4. this server serves the old data and replays the old idempotent
 //     commit; the schema equals that of a fresh installation;
 //  5. rollback: the old server runs on the new schema without automatic
@@ -175,7 +181,7 @@ func TestUpgradeFromMain(t *testing.T) {
 	}
 	_ = json.Unmarshal(r.body, &envl)
 	if r.status != 503 || envl.Code != "db_unavailable" || envl.Details["check"] != "db" || envl.Details["reason"] != "schema_behind" ||
-		fmt.Sprint(envl.Details["missing"]) != "[mfgraph/0009_actor_types]" {
+		fmt.Sprint(envl.Details["missing"]) != "[mfgraph/0009_actor_types mfgraph/0010_outbox_order mfgraph/0011_packed_blobs mfgraph/0012_upload_completion mfgraph/0013_outbox_retention mfgraph/0014_blob_usage]" {
 		t.Fatalf("readyz before migrate: %d %s", r.status, r.body)
 	}
 	if !strings.Contains(n.logs.String(), "level=ERROR") || !strings.Contains(n.logs.String(), "schema is behind this build") {
@@ -183,11 +189,11 @@ func TestUpgradeFromMain(t *testing.T) {
 	}
 	n.stop()
 
-	// 3. migrate: 0009 only.
+	// 3. migrate: the outstanding migrations.
 	cmd := exec.Command(serverBin, "migrate")
 	cmd.Env = append(os.Environ(), "MFGRAPH_DB_DSN="+e["MFGRAPH_DB_DSN"])
 	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), `"component":"mfgraph","applied":["0009_actor_types"],"skipped":6`) {
+	if err != nil || !strings.Contains(string(out), `"component":"mfgraph","applied":["0009_actor_types","0010_outbox_order","0011_packed_blobs","0012_upload_completion","0013_outbox_retention","0014_blob_usage"],"skipped":6`) {
 		t.Fatalf("migrate: %v\n%s", err, out)
 	}
 
@@ -248,4 +254,54 @@ func TestUpgradeFromMain(t *testing.T) {
 	}
 	t.Logf("measured: upgraded from %s with data; schema = fresh installation; rollback works only without automatic migration",
 		upgradeBase[:7])
+}
+
+// Exercise the shipping module format, including bytes uploaded in the old
+// binary but only committed after the new storage layout is enabled.
+// A release audit can supply the precise patch revision being validated.
+func TestUpgradeStoredContentToPacks(t *testing.T) {
+	e := newEnv(t)
+	rev := os.Getenv("MFGRAPH_E2E_PATCH_FROM")
+	if rev == "" {
+		rev = "aad5f73"
+	}
+	old := startBinary(t, buildHistoricalServer(t, rev), e)
+	c := old.client(tokenA)
+	sd := seed(t, c)
+	a, b := c.upload(sd.ws.WorkspaceId, "staged by previous release A"), c.upload(sd.ws.WorkspaceId, "staged by previous release B")
+	old.stop()
+	e["MFGRAPH_CHUNK_BYTES"], e["MFGRAPH_PACK_BYTES"] = "4194304", "67108864"
+	current := start(t, e)
+	c = current.client(tokenA)
+	db, err := sql.Open("mysql", e["MFGRAPH_DB_DSN"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	wantUsed := len(contentA + contentB + "staged by previous release A" + "staged by previous release B")
+	for deadline := time.Now().Add(8 * time.Second); ; time.Sleep(30 * time.Millisecond) {
+		var used, reserved int
+		err := db.QueryRow("SELECT used_bytes,reserved_bytes FROM workspace_usage WHERE workspace_id=?", sd.ws.WorkspaceId).Scan(&used, &reserved)
+		if err == nil && used == wantUsed && reserved == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("upgraded live and staged content: used=%d reserved=%d want=%d err=%v", used, reserved, wantUsed, err)
+		}
+	}
+	r := c.file(sd.first.SnapshotId, "a.txt", nil)
+	if r.status != 200 || string(r.body) != contentA {
+		t.Fatal("old snapshot could not be downloaded")
+	}
+	added := c.commit(sd.ws.WorkspaceId, sd.branch.BranchId, sd.first.Generation, put("a-new", a), put("b-new", b))
+	current.stop()
+	delete(e, "MFGRAPH_CHUNK_BYTES")
+	delete(e, "MFGRAPH_PACK_BYTES")
+	c = start(t, e).client(tokenA)
+	for _, item := range []struct{ id, path, content string }{{sd.first.SnapshotId, "a.txt", contentA}, {added.SnapshotId, "a-new", "staged by previous release A"}, {added.SnapshotId, "b-new", "staged by previous release B"}} {
+		r := c.file(item.id, item.path, nil)
+		if r.status != 200 || string(r.body) != item.content || r.header.Get("ETag") != "\""+sha(item.content)+"\"" {
+			t.Fatalf("file changed across upgrade %s: %d %q", item.path, r.status, r.body)
+		}
+	}
 }

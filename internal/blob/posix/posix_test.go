@@ -3,6 +3,7 @@ package posix_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -103,5 +104,19 @@ func TestKeysStayBelowTheRoot(t *testing.T) {
 	}
 	if err := s.Check(ctx); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestReadinessAfterRootBecomesReadOnly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write a mode-0555 directory")
+	}
+	s, root := newStore(t, nil)
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o750) })
+	if err := s.Check(context.Background()); !errors.Is(err, ports.ErrStorageUnavailable) {
+		t.Fatalf("read-only root: %v", err)
 	}
 }

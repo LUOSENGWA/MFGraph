@@ -40,8 +40,13 @@ type state struct {
 	prefixKeys map[[2]string]string // (backend, prefix key) -> workspace ID
 	branches   map[string]ports.Branch
 	branchRefs map[[2]string]string // (workspace ID, ref name) -> branch ID
-	usage      map[string]int64     // workspace ID -> updated_at_us
+	usage      map[string]ports.Usage
+	counted    map[blobKey]bool
+	uploads    map[string]ports.Upload
+	parts      map[partKey]ports.Part
 	snapshots  map[string]ports.Snapshot
+	packCopies map[blobKey][]ports.ChunkLocation
+	layouts    map[blobKey][]ports.FileChunk
 	blobs      map[blobKey]ports.Blob
 	idem       map[idemKey]ports.IdempotencyRecord
 	events     []ports.Event
@@ -55,8 +60,13 @@ func newState() *state {
 		prefixKeys: map[[2]string]string{},
 		branches:   map[string]ports.Branch{},
 		branchRefs: map[[2]string]string{},
-		usage:      map[string]int64{},
+		usage:      map[string]ports.Usage{},
+		counted:    map[blobKey]bool{},
+		uploads:    map[string]ports.Upload{},
+		parts:      map[partKey]ports.Part{},
 		snapshots:  map[string]ports.Snapshot{},
+		packCopies: map[blobKey][]ports.ChunkLocation{},
+		layouts:    map[blobKey][]ports.FileChunk{},
 		blobs:      map[blobKey]ports.Blob{},
 		idem:       map[idemKey]ports.IdempotencyRecord{},
 		delivery:   map[string]ports.EventDelivery{},
@@ -82,7 +92,12 @@ func (s *state) clone() *state {
 		branches:   cloneMap(s.branches),
 		branchRefs: cloneMap(s.branchRefs),
 		usage:      cloneMap(s.usage),
+		counted:    cloneMap(s.counted),
+		uploads:    cloneMap(s.uploads),
+		parts:      cloneMap(s.parts),
 		snapshots:  cloneMap(s.snapshots),
+		packCopies: cloneMap(s.packCopies),
+		layouts:    cloneMap(s.layouts),
 		blobs:      cloneMap(s.blobs),
 		idem:       cloneMap(s.idem),
 		events:     append([]ports.Event(nil), s.events...),
@@ -108,6 +123,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx port
 	s.mu.RLock()
 	work := s.cur.clone()
 	s.mu.RUnlock()
+	oldEvents := len(work.events)
 	tx := &storeTx{store: s, st: work}
 	defer func() { tx.done = true }()
 	if err := fn(ctx, tx); err != nil {
@@ -116,6 +132,13 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx port
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	batch := work.events[oldEvents:]
+	sort.SliceStable(batch, func(i, j int) bool {
+		if batch[i].CreatedAtUs != batch[j].CreatedAtUs {
+			return batch[i].CreatedAtUs < batch[j].CreatedAtUs
+		}
+		return batch[i].ID < batch[j].ID
+	})
 	s.mu.Lock()
 	s.cur = work
 	s.mu.Unlock()
@@ -309,7 +332,7 @@ func (s *Store) InsertUsage(_ context.Context, tx ports.Tx, workspaceID string, 
 	if _, dup := st.usage[workspaceID]; dup {
 		return exists("usage of workspace " + workspaceID)
 	}
-	st.usage[workspaceID] = updatedAtUs
+	st.usage[workspaceID] = ports.Usage{}
 	return nil
 }
 
@@ -559,12 +582,6 @@ func (s *Store) PendingEvents(_ context.Context, limit int) ([]ports.Event, erro
 			out = append(out, ev)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].CreatedAtUs != out[j].CreatedAtUs {
-			return out[i].CreatedAtUs < out[j].CreatedAtUs
-		}
-		return out[i].ID < out[j].ID
-	})
 	if len(out) > limit {
 		out = out[:limit]
 	}

@@ -76,9 +76,10 @@ workstreams/<workstream_id>/<branch_name>
 - `mysql/0006_uploads.sql`
 - `mysql/0008_usage_outbox_idempotency.sql`
 - `mysql/0009_actor_types.sql`：在身份引用旁边新增可为空的 `VARCHAR(16)` 身份类型列：`snapshots.author_type` 和 `on_behalf_of_type`、`idempotency_keys.actor_type`、`workspaces.owner_type`；宿主平台给出操作者类型时（模块模式）写入，独立部署为 `NULL`
+- `mysql/0010_outbox_order.sql` 保存事件批次的事务提交顺序，并为待投递事件建立索引。
 
 编号 0005 和 0007 预留。后续切片以新文件增加锁、packs/chunks、可选路径索引（`snapshot_entries`）、派生工件、project commit、fencing 和 GC 状态。已执行的文件不可修改：执行器在 `schema_migrations(component, version, checksum, applied_at_us)` 中记录每个文件的 SHA-256，发现变化即拒绝继续。后来的迁移也可以用 `ALTER TABLE ... ADD COLUMN`（可为 NULL）或 `ADD KEY` 扩展已有的表，每条语句只加一列或一个索引；列或索引已经存在的语句会被跳过，因此中断的执行可以重跑。
 
-仓储实现（`internal/store/mysql`）只使用 MySQL 8.0 与 seekdb 都支持的写法：不用 CTE、窗口函数、JSON 函数、`SKIP LOCKED`/`NOWAIT`、`RETURNING` 和生成列；分页用键集条件而不是 `OFFSET`；VARBINARY 列按字节传入和读取。提交在插入快照和 outbox 事件的同一个事务里用 `UPDATE branches SET head_snapshot_id = ?, generation = generation + 1 ... WHERE branch_id = ? AND workspace_id = ? AND generation = ?` 移动分支 head。outbox 的一行在 `event_id` 里保存自己的 ULID，在 `event_type` 里保存事件种类，在 `payload_json` 里保存[事件 envelope](../events.md)（英文；含派生出的 64 位事件 ID）；模块模式下，转发器按 `(created_at_us, event_id)` 读取待投递的行，投递后标为 `published`。永远投递不出去的行可以由运维手工标成 `skipped`（见[模块模式](../module-mode.md#a-stalled-forwarder)，英文）：转发器只读 `pending` 的行，被跳过的行留在表里。
+仓储实现（`internal/store/mysql`）只使用 MySQL 8.0 与 seekdb 都支持的写法：不用 CTE、窗口函数、JSON 函数、`SKIP LOCKED`/`NOWAIT`、`RETURNING` 和生成列；分页用键集条件而不是 `OFFSET`；VARBINARY 列按字节传入和读取。提交在插入快照和 outbox 事件的同一个事务里用 `UPDATE branches SET head_snapshot_id = ?, generation = generation + 1 ... WHERE branch_id = ? AND workspace_id = ? AND generation = ?` 移动分支 head。outbox 的一行在 `event_id` 里保存自己的 ULID，在 `event_type` 里保存事件种类，在 `payload_json` 里保存[事件 envelope](../events.md)（英文；含派生出的 64 位事件 ID）；模块模式下，转发器按 `(commit_seq, created_at_us, event_id)` 读取待投递的行，投递后标为 `published`。永远投递不出去的行可以由运维手工标成 `skipped`（见[模块模式](../module-mode.md#a-stalled-forwarder)，英文）：转发器只读 `pending` 的行，被跳过的行留在表里。
 
 使用 expand/contract；不要把破坏性 DDL 与代码切换放在同一个 release。

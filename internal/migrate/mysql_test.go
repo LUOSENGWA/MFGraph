@@ -74,8 +74,8 @@ func TestMySQL(t *testing.T) {
 	}
 
 	// 0. Empty database: Missing lists everything and creates nothing.
-	if got, err := migrate.Missing(ctx, target, plans); err != nil || len(got) != 9 || got[0] != "kernel/0000_bootstrap" ||
-		got[8] != "mfgraph/0009_actor_types" {
+	if got, err := migrate.Missing(ctx, target, plans); err != nil || len(got) != 14 || got[0] != "kernel/0000_bootstrap" ||
+		got[13] != "mfgraph/0014_blob_usage" {
 		t.Fatalf("missing on an empty database: %v %v", got, err)
 	}
 	if tables := listTables(t, db, dbName); len(tables) != 0 {
@@ -90,11 +90,11 @@ func TestMySQL(t *testing.T) {
 	if got, err := migrate.Missing(ctx, target, plans); err != nil || len(got) != 0 {
 		t.Fatalf("missing after the first run: %v %v", got, err)
 	}
-	if got := append(rs[0].Applied, rs[1].Applied...); len(got) != 9 || len(rs[0].Skipped)+len(rs[1].Skipped) != 0 {
+	if got := append(rs[0].Applied, rs[1].Applied...); len(got) != 14 || len(rs[0].Skipped)+len(rs[1].Skipped) != 0 {
 		t.Fatalf("first run applied %v", got)
 	}
 	tables := listTables(t, db, dbName)
-	want := []string{"blobs", "branches", "idempotency_keys", "outbox_events", "principals", "projects", "schema_migrations",
+	want := []string{"blob_chunks", "blobs", "branches", "chunks", "idempotency_keys", "outbox_events", "outbox_sequence", "packs", "principals", "projects", "schema_migrations",
 		"snapshot_parents", "snapshots", "upload_parts", "upload_sessions", "workspace_usage", "workspaces", "workstreams"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v\nwant %v", tables, want)
@@ -107,7 +107,7 @@ func TestMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
-	if len(rs[0].Applied)+len(rs[1].Applied) != 0 || len(rs[0].Skipped)+len(rs[1].Skipped) != 9 {
+	if len(rs[0].Applied)+len(rs[1].Applied) != 0 || len(rs[0].Skipped)+len(rs[1].Skipped) != 14 {
 		t.Fatalf("second run: %+v", rs)
 	}
 
@@ -417,6 +417,7 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 		"workstreams.default_branch_name": "varbinary(255)", "workspaces.scope_path": "varbinary(4096)",
 		"snapshots.scope_path": "varbinary(4096)", "upload_sessions.path": "varbinary(4096)",
 		"workspaces.storage_prefix": "varbinary(942)", "blobs.storage_key": "varbinary(1024)",
+		"packs.storage_key":                "varbinary(1024)",
 		"idempotency_keys.idempotency_key": "varbinary(128)",
 		// Actor references.
 		"projects.owner_ref":   "varbinary(255)",

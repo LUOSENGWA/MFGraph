@@ -23,6 +23,22 @@ dependency, and none of its source code is copied or changed.
 | github.com/oapi-codegen/runtime | v1.9.0 | Apache-2.0 | support code of the generated HTTP server |
 | github.com/apapsch/go-jsonmerge/v2 | v2.0.0 | MIT | dependency of oapi-codegen/runtime |
 | github.com/google/uuid | v1.6.0 | BSD-3-Clause | dependency of oapi-codegen/runtime |
+| github.com/minio/minio-go/v7 | v7.4.1 | Apache-2.0 | S3 client |
+| github.com/cespare/xxhash/v2 | v2.3.0 | MIT | dependency of the S3 client |
+| github.com/dustin/go-humanize | v1.0.1 | MIT | dependency of the S3 client |
+| github.com/klauspost/cpuid/v2 | v2.4.0 | MIT | dependency of the S3 client |
+| github.com/klauspost/crc32 | v1.3.0 | BSD | dependency of the S3 client |
+| github.com/minio/crc64nvme | v1.1.1 | Apache-2.0 | dependency of the S3 client |
+| github.com/minio/md5-simd | v1.1.2 | Apache-2.0 | dependency of the S3 client |
+| github.com/philhofer/fwd | v1.2.0 | MIT | dependency of the S3 client |
+| github.com/rs/xid | v1.6.0 | MIT | dependency of the S3 client |
+| github.com/tinylib/msgp | v1.6.4 | MIT | dependency of the S3 client |
+| github.com/zeebo/xxh3 | v1.1.0 | BSD | dependency of the S3 client |
+| go.yaml.in/yaml/v3 | v3.0.5 | Apache-2.0 and MIT | dependency of the S3 client |
+| golang.org/x/crypto | v0.57.0 | BSD | dependency of the S3 client |
+| golang.org/x/net | v0.60.0 | BSD | dependency of the S3 client |
+| golang.org/x/sys | v0.48.0 | BSD | dependency of the S3 client |
+| gopkg.in/ini.v1 | v1.67.3 | Apache-2.0 | dependency of the S3 client |
 
 ## Tests only
 
