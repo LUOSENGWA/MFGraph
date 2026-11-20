@@ -296,15 +296,43 @@ func (s *Service) UploadURLs(ctx context.Context, p ports.Principal, id string, 
 	})
 }
 
-func (s *Service) currentParts(ctx context.Context, ws ports.Workspace, u ports.Upload) ([]ports.Part, error) {
-	if u.NativeID == "" || u.Terminal() || u.Status == ports.UploadCompleting {
-		return s.d.Store.UploadParts(ctx, nil, u.ID)
+// For a live relay session the ledger identifies the accepted ETags and an
+// exact directory listing verifies which of those parts still exist.
+func (s *Service) currentParts(ctx context.Context, ws ports.Workspace, u ports.Upload) ([]ports.Part, *ports.Part, error) {
+	if u.NativeID != "" && !u.Terminal() && u.Status != ports.UploadCompleting {
+		native, ok := s.d.Objects.(ports.MultipartStore)
+		if !ok {
+			return nil, nil, ports.ErrStorageUnavailable
+		}
+		parts, err := native.ListParts(ctx, assemblyKey(ws, u.ID), u.NativeID)
+		return parts, nil, err
 	}
-	native, ok := s.d.Objects.(ports.MultipartStore)
-	if !ok {
-		return nil, ports.ErrStorageUnavailable
+	parts, err := s.d.Store.UploadParts(ctx, nil, u.ID)
+	if err != nil || u.NativeID != "" || u.Terminal() || len(parts) == 0 {
+		return parts, nil, err
 	}
-	return native.ListParts(ctx, assemblyKey(ws, u.ID), u.NativeID)
+	sizes := make(map[string]int64, len(parts))
+	for _, p := range parts {
+		sizes[sessionPartKey(ws, u.ID, p.ETag)] = -1
+	}
+	err = s.d.Objects.Walk(ctx, sessionDir(ws, u.ID), func(i ports.ObjectInfo) error {
+		if _, ok := sizes[i.Key]; ok {
+			sizes[i.Key] = i.Size
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	var missing *ports.Part
+	present := slices.DeleteFunc(parts, func(p ports.Part) bool {
+		lost := sizes[sessionPartKey(ws, u.ID, p.ETag)] != p.Size
+		if lost && missing == nil {
+			missing = &p
+		}
+		return lost
+	})
+	return present, missing, nil
 }
 
 func (s *Service) UploadStatus(ctx context.Context, p ports.Principal, id string) (UploadStatus, error) {
@@ -312,23 +340,31 @@ func (s *Service) UploadStatus(ctx context.Context, p ports.Principal, id string
 	if err != nil {
 		return UploadStatus{}, err
 	}
-	parts, err := s.currentParts(ctx, ws, u)
+	parts, lost, err := s.currentParts(ctx, ws, u)
 	if errors.Is(err, ports.ErrNotFound) && u.NativeID != "" {
 		// Native completion may have just removed the backend session.
 		u, err = s.d.Store.GetUpload(ctx, nil, id)
 		if err == nil {
-			parts, err = s.currentParts(ctx, ws, u)
+			parts, lost, err = s.currentParts(ctx, ws, u)
+		}
+	}
+	if err == nil && lost != nil && u.Status == ports.UploadCompleting {
+		u, err = s.reopenRelay(ctx, ws, u, *lost)
+		if err == nil && u.Terminal() {
+			parts, err = s.d.Store.UploadParts(ctx, nil, u.ID)
 		}
 	}
 	if err != nil {
 		return UploadStatus{}, mapErr(err, "upload parts")
 	}
 	seen := make(map[int]bool, len(parts))
-	for _, v := range parts {
-		if v.Number >= 1 && v.Number <= u.Total && v.Size == expectedPartSize(u, v.Number) {
-			seen[v.Number] = true
+	parts = slices.DeleteFunc(parts, func(v ports.Part) bool {
+		if v.Number < 1 || v.Number > u.Total || v.Size != expectedPartSize(u, v.Number) {
+			return true
 		}
-	}
+		seen[v.Number] = true
+		return false
+	})
 	status := UploadStatus{Session: u, Uploaded: parts}
 	for n := 1; n <= u.Total; n++ {
 		if !seen[n] {

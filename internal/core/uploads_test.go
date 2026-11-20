@@ -3,14 +3,17 @@ package core_test
 import (
 	"context"
 	"errors"
-	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
-	"github.com/LUOSENGWA/MFGraph/internal/core"
-	"github.com/LUOSENGWA/MFGraph/internal/ports"
-	"github.com/LUOSENGWA/MFGraph/internal/ports/memory"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/core"
+	"github.com/LUOSENGWA/MFGraph/internal/ports"
+	"github.com/LUOSENGWA/MFGraph/internal/ports/memory"
+	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
 )
 
 func TestResumableSession(t *testing.T) {
@@ -116,4 +119,52 @@ func TestRetryFrozenUpload(t *testing.T) {
 	wantCode(t, "frozen", err, core.CodeConflict)
 	_, err = e.svc.CompleteUpload(ctx, alice, u.ID, []ports.Part{p}, "k")
 	e.must(err)
+}
+
+func TestResumeRepairsLostRelayParts(t *testing.T) {
+	for _, test := range []string{"missing", "truncated", "corrupt-same-size", "missing-after-freeze"} {
+		t.Run(test, func(t *testing.T) {
+			e := newEnvStore(t, core.Config{}, func(store *memory.Store) ports.Store {
+				return &failUploadResult{Store: store, fail: test == "missing-after-freeze"}
+			})
+			w := e.workspace(alice).Workspace
+			ticket, err := e.svc.InitUpload(ctx, alice, core.InitUploadRequest{WorkspaceID: w.ID, Path: "media", Size: 3}, "")
+			e.must(err)
+			write := func() ports.Part {
+				p, err := e.svc.PutPart(ctx, alice, ticket.ID, 1, strings.NewReader("abc"), 3)
+				e.must(err)
+				return p
+			}
+			part := write()
+			key := storagekey.Join(w.StoragePrefix, "uploads/"+ticket.ID+"/"+part.ETag)
+			if test == "missing-after-freeze" {
+				_, err = e.svc.CompleteUpload(ctx, alice, ticket.ID, []ports.Part{part}, "")
+				if !errors.Is(err, ports.ErrDBUnavailable) {
+					t.Fatalf("expected an interrupted completion: %v", err)
+				}
+			}
+			switch test {
+			case "truncated":
+				e.objs.Corrupt(key, []byte("a"))
+			case "corrupt-same-size":
+				e.objs.Corrupt(key, []byte("xyz"))
+			default:
+				e.must(e.objs.Delete(ctx, key))
+			}
+			if test != "missing-after-freeze" {
+				_, err = e.svc.CompleteUpload(ctx, alice, ticket.ID, []ports.Part{part}, "")
+				wantCode(t, "unavailable part", err, core.CodeConflict)
+			}
+			status, err := e.svc.UploadStatus(ctx, alice, ticket.ID)
+			e.must(err)
+			if status.Session.Status != ports.Uploading || len(status.Uploaded) != 0 || !slices.Equal(status.Missing, []int{1}) {
+				t.Fatalf("cannot resume the missing part: %+v", status)
+			}
+			receipt, err := e.svc.CompleteUpload(ctx, alice, ticket.ID, []ports.Part{write()}, "")
+			e.must(err)
+			if receipt.Hash != "sha256:"+part.ETag {
+				t.Fatalf("repaired receipt: %+v", receipt)
+			}
+		})
+	}
 }

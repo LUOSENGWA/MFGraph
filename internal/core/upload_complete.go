@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -18,10 +19,10 @@ func receipt(u ports.Upload) UploadReceipt {
 // multipart session. After a crash the same manifest can continue from either
 // the native upload or the completed private object.
 func (s *Service) freezeUpload(ctx context.Context, ws ports.Workspace, u ports.Upload, want []ports.Part, digest string) (ports.Upload, error) {
-	var remote []ports.Part
-	var remoteErr error
-	if u.NativeID != "" && !u.Terminal() && u.Status != ports.UploadCompleting {
-		remote, remoteErr = s.currentParts(ctx, ws, u)
+	var present []ports.Part
+	var listErr error
+	if !u.Terminal() && u.Status != ports.UploadCompleting {
+		present, _, listErr = s.currentParts(ctx, ws, u)
 	}
 	err := s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
 		var err error
@@ -41,20 +42,23 @@ func (s *Service) freezeUpload(ctx context.Context, ws ports.Workspace, u ports.
 		if err := s.activeUpload(u); err != nil {
 			return err
 		}
-		stored := remote
+		if listErr != nil {
+			return listErr
+		}
+		if err := verifyManifest(u, want, present); err != nil {
+			return err
+		}
 		if u.NativeID == "" {
-			stored, err = s.d.Store.UploadParts(ctx, tx, u.ID)
+			// A concurrent PUT may have replaced one part after listing.
+			stored, err := s.d.Store.UploadParts(ctx, tx, u.ID)
+			if err != nil {
+				return err
+			}
+			if err := verifyManifest(u, want, stored); err != nil {
+				return err
+			}
 		} else {
-			err = remoteErr
-		}
-		if err != nil {
-			return err
-		}
-		if err := verifyManifest(u, want, stored); err != nil {
-			return err
-		}
-		if u.NativeID != "" {
-			for _, part := range stored {
+			for _, part := range present {
 				if err := s.d.Store.SaveUploadPart(ctx, tx, u.ID, part, s.nowUs()); err != nil {
 					return err
 				}
@@ -98,20 +102,59 @@ func (s *Service) assembly(ctx context.Context, ws ports.Workspace, u ports.Uplo
 
 func (s *Service) copyParts(ctx context.Context, ws ports.Workspace, u ports.Upload, parts []ports.Part, out io.Writer) error {
 	for _, part := range parts {
-		r, err := s.d.Objects.Get(ctx, sessionPartKey(ws, u.ID, part.ETag), 0, -1)
-		if err != nil {
+		if err := s.copyPart(ctx, ws, u, part, out); err != nil {
 			return err
-		}
-		h := contenthash.NewHasher()
-		n, copyErr := io.Copy(io.MultiWriter(out, h), r)
-		if err := errors.Join(copyErr, r.Close()); err != nil {
-			return err
-		}
-		if n != expectedPartSize(u, part.Number) || h.Sum().Hex() != part.ETag {
-			return invalidReason(ReasonChecksumMismatch, "a stored part does not match its ETag or size")
 		}
 	}
 	return nil
+}
+
+type lostPart struct{ part ports.Part }
+
+func (e *lostPart) Error() string {
+	return fmt.Sprintf("stored part %d needs to be uploaded again", e.part.Number)
+}
+
+func (s *Service) copyPart(ctx context.Context, ws ports.Workspace, u ports.Upload, part ports.Part, out io.Writer) error {
+	r, err := s.d.Objects.Get(ctx, sessionPartKey(ws, u.ID, part.ETag), 0, -1)
+	if errors.Is(err, ports.ErrNotFound) {
+		return &lostPart{part}
+	}
+	if err != nil {
+		return err
+	}
+	h := contenthash.NewHasher()
+	n, over, copyErr := ports.ReadLimited(r, io.MultiWriter(out, h), expectedPartSize(u, part.Number))
+	if err := errors.Join(copyErr, r.Close()); err != nil {
+		return err
+	}
+	if over || n != expectedPartSize(u, part.Number) || h.Sum().Hex() != part.ETag {
+		return &lostPart{part}
+	}
+	return nil
+}
+
+// Reopen only when the accepted manifest is still frozen and its private
+// bytes are still damaged. Transient IO failures leave the manifest intact.
+func (s *Service) reopenRelay(ctx context.Context, ws ports.Workspace, u ports.Upload, part ports.Part) (ports.Upload, error) {
+	manifest := u.Manifest
+	err := s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		var err error
+		u, err = s.d.Store.GetUpload(ctx, tx, u.ID)
+		if err != nil || u.Status != ports.UploadCompleting || u.Manifest != manifest {
+			return err
+		}
+		var lost *lostPart
+		if err := s.copyPart(ctx, ws, u, part, io.Discard); !errors.As(err, &lost) {
+			return err
+		}
+		if err := s.d.Objects.Delete(ctx, sessionPartKey(ws, u.ID, part.ETag)); err != nil {
+			return err
+		}
+		u.Status, u.Manifest = ports.Uploading, ""
+		return s.d.Store.UpdateUpload(ctx, tx, u)
+	})
+	return u, err
 }
 
 func (s *Service) CompleteUpload(ctx context.Context, p ports.Principal, id string, parts []ports.Part, key string) (UploadReceipt, error) {
@@ -190,6 +233,17 @@ func (s *Service) CompleteUpload(ctx context.Context, p ports.Principal, id stri
 			// A simultaneous completion may already have cleaned the parts.
 			if v, readErr := s.d.Store.GetUpload(ctx, nil, id); readErr == nil && v.Status == ports.UploadCompleted && v.Manifest == digest {
 				return repeat(ctx, v)
+			}
+			var lost *lostPart
+			if errors.As(err, &lost) {
+				v, recoverErr := s.reopenRelay(ctx, ws, frozen, lost.part)
+				if recoverErr != nil {
+					return zero, mapErr(recoverErr, "upload part")
+				}
+				if v.Status == ports.UploadCompleted && v.Manifest == digest {
+					return repeat(ctx, v)
+				}
+				return zero, uploadConflict(lost.Error())
 			}
 			return zero, mapErr(err, "upload assembly")
 		}
