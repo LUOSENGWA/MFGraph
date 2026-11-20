@@ -34,6 +34,11 @@ func oldServer(t *testing.T) string {
 	if commit == "" {
 		commit = upgradeBase
 	}
+	return buildHistoricalServer(t, commit)
+}
+
+func buildHistoricalServer(t *testing.T, commit string) string {
+	t.Helper()
 	unavailable := func(why string, err error) string {
 		t.Helper()
 		if os.Getenv("MFGRAPH_E2E_REQUIRE_UPGRADE") == "1" {
@@ -79,7 +84,7 @@ func oldServer(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	bin := filepath.Join(dir, "mfgraph-server-"+commit[:7])
+	bin := filepath.Join(dir, "mfgraph-server-old")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/mfgraph-server")
 	build.Dir = dir
 	build.Env = append(os.Environ(), "GOFLAGS=-mod=readonly", "GOWORK=off")
@@ -248,4 +253,38 @@ func TestUpgradeFromMain(t *testing.T) {
 	}
 	t.Logf("measured: upgraded from %s with data; schema = fresh installation; rollback works only without automatic migration",
 		upgradeBase[:7])
+}
+
+// Exercise the shipping module format, including bytes uploaded in the old
+// binary but only committed after the new storage layout is enabled.
+// A release audit can supply the precise patch revision being validated.
+func TestUpgradeStoredContentToPacks(t *testing.T) {
+	e := newEnv(t)
+	rev := os.Getenv("MFGRAPH_E2E_PATCH_FROM")
+	if rev == "" {
+		rev = "aad5f73"
+	}
+	old := startBinary(t, buildHistoricalServer(t, rev), e)
+	c := old.client(tokenA)
+	sd := seed(t, c)
+	a, b := c.upload(sd.ws.WorkspaceId, "staged by previous release A"), c.upload(sd.ws.WorkspaceId, "staged by previous release B")
+	old.stop()
+	e["MFGRAPH_CHUNK_BYTES"], e["MFGRAPH_PACK_BYTES"] = "4194304", "67108864"
+	current := start(t, e)
+	c = current.client(tokenA)
+	r := c.file(sd.first.SnapshotId, "a.txt", nil)
+	if r.status != 200 || string(r.body) != contentA {
+		t.Fatal("old snapshot could not be downloaded")
+	}
+	added := c.commit(sd.ws.WorkspaceId, sd.branch.BranchId, sd.first.Generation, put("a-new", a), put("b-new", b))
+	current.stop()
+	delete(e, "MFGRAPH_CHUNK_BYTES")
+	delete(e, "MFGRAPH_PACK_BYTES")
+	c = start(t, e).client(tokenA)
+	for _, item := range []struct{ id, path, content string }{{sd.first.SnapshotId, "a.txt", contentA}, {added.SnapshotId, "a-new", "staged by previous release A"}, {added.SnapshotId, "b-new", "staged by previous release B"}} {
+		r := c.file(item.id, item.path, nil)
+		if r.status != 200 || string(r.body) != item.content || r.header.Get("ETag") != "\""+sha(item.content)+"\"" {
+			t.Fatalf("file changed across upgrade %s: %d %q", item.path, r.status, r.body)
+		}
+	}
 }
