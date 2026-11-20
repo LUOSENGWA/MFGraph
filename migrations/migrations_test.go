@@ -24,7 +24,7 @@ var wantTables = map[string][]string{
 var wantVersions = map[string][]string{
 	"kernel": {"0000_bootstrap", "0001_project_owner"},
 	"mysql": {"0001_workspaces", "0002_workstreams_branches", "0003_snapshots", "0004_blobs",
-		"0006_uploads", "0008_usage_outbox_idempotency", "0009_actor_types", "0010_outbox_order", "0011_packed_blobs", "0012_upload_completion"},
+		"0006_uploads", "0008_usage_outbox_idempotency", "0009_actor_types", "0010_outbox_order", "0011_packed_blobs", "0012_upload_completion", "0013_outbox_retention"},
 }
 
 // actorTypeColumns hold the type a host platform gives an actor, next to

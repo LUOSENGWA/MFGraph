@@ -180,7 +180,7 @@ func TestUpgradeFromMain(t *testing.T) {
 	}
 	_ = json.Unmarshal(r.body, &envl)
 	if r.status != 503 || envl.Code != "db_unavailable" || envl.Details["check"] != "db" || envl.Details["reason"] != "schema_behind" ||
-		fmt.Sprint(envl.Details["missing"]) != "[mfgraph/0009_actor_types mfgraph/0010_outbox_order mfgraph/0011_packed_blobs mfgraph/0012_upload_completion]" {
+		fmt.Sprint(envl.Details["missing"]) != "[mfgraph/0009_actor_types mfgraph/0010_outbox_order mfgraph/0011_packed_blobs mfgraph/0012_upload_completion mfgraph/0013_outbox_retention]" {
 		t.Fatalf("readyz before migrate: %d %s", r.status, r.body)
 	}
 	if !strings.Contains(n.logs.String(), "level=ERROR") || !strings.Contains(n.logs.String(), "schema is behind this build") {
@@ -192,7 +192,7 @@ func TestUpgradeFromMain(t *testing.T) {
 	cmd := exec.Command(serverBin, "migrate")
 	cmd.Env = append(os.Environ(), "MFGRAPH_DB_DSN="+e["MFGRAPH_DB_DSN"])
 	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), `"component":"mfgraph","applied":["0009_actor_types","0010_outbox_order","0011_packed_blobs","0012_upload_completion"],"skipped":6`) {
+	if err != nil || !strings.Contains(string(out), `"component":"mfgraph","applied":["0009_actor_types","0010_outbox_order","0011_packed_blobs","0012_upload_completion","0013_outbox_retention"],"skipped":6`) {
 		t.Fatalf("migrate: %v\n%s", err, out)
 	}
 

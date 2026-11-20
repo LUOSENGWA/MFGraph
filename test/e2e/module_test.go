@@ -502,7 +502,7 @@ func tcpListeners(pid int) int {
 // ---- appendix B rows -------------------------------------------------------
 
 var moduleVersions = []string{"mfgraph/0001_workspaces", "mfgraph/0002_workstreams_branches", "mfgraph/0003_snapshots", "mfgraph/0004_blobs",
-	"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types", "mfgraph/0010_outbox_order", "mfgraph/0011_packed_blobs", "mfgraph/0012_upload_completion"}
+	"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types", "mfgraph/0010_outbox_order", "mfgraph/0011_packed_blobs", "mfgraph/0012_upload_completion", "mfgraph/0013_outbox_retention"}
 
 // Row 6: migrate (with --config before the command) runs twice; the module's
 // versions are recorded; the kernel tables are not created.

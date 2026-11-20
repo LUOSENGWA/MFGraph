@@ -262,6 +262,12 @@ SELECT event_id, event_type, created_at_us, payload_json FROM outbox_events WHER
 Setting it back to `pending` delivers it again, after the events that
 followed it. Consumers that need a skipped event must be told.
 
+A maintenance pass removes expired idempotency records in small batches.
+An operator can set `MFGRAPH_OUTBOX_RETENTION` to a duration such as `720h`
+to prune local published events based on their publication time. Pending,
+skipped and host-side rows are retained. Leaving the duration unset keeps
+the full local delivery history.
+
 ## Health
 
 `/healthz` and `/readyz` are at the root of the socket, without

@@ -418,26 +418,36 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 		if err != nil {
 			return err
 		}
-		if !cfg.Module() {
-			sweepCtx, stopSweep := context.WithCancel(ctx)
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				tick := time.NewTicker(time.Minute)
-				defer tick.Stop()
-				for {
+		sweepCtx, stopSweep := context.WithCancel(ctx)
+		sweepDone := make(chan struct{})
+		go func() {
+			defer close(sweepDone)
+			tick := time.NewTicker(time.Minute)
+			defer tick.Stop()
+			for {
+				// Older installations can run this binary without migrating
+				// immediately. Wait for the required schema before cleanup.
+				if schema.check(sweepCtx) == nil {
 					if err := svc.ReapUploads(sweepCtx); err != nil && sweepCtx.Err() == nil {
 						logger.Warn("upload session cleanup will retry", "err", err)
 					}
-					select {
-					case <-sweepCtx.Done():
-						return
-					case <-tick.C:
+					now := time.Now()
+					var cutoff int64
+					if cfg.OutboxRetention > 0 {
+						cutoff = now.Add(-cfg.OutboxRetention).UnixMicro()
+					}
+					if _, _, err := store.PruneMetadata(sweepCtx, now.UnixMicro(), cutoff, 500); err != nil && sweepCtx.Err() == nil {
+						logger.Warn("metadata cleanup will retry", "err", err)
 					}
 				}
-			}()
-			defer func() { stopSweep(); <-done }()
-		}
+				select {
+				case <-sweepCtx.Done():
+					return
+				case <-tick.C:
+				}
+			}
+		}()
+		defer func() { stopSweep(); <-sweepDone }()
 	} else {
 		logger.Warn("no " + config.EnvDBDSN + " configured: /readyz and every business endpoint answer 503 db_unavailable")
 	}
