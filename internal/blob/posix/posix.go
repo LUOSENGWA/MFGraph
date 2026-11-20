@@ -89,7 +89,7 @@ func (s *Store) Check(ctx context.Context) error {
 
 // Capabilities implements ports.BlobStore.
 func (s *Store) Capabilities() ports.Capabilities {
-	return ports.Capabilities{Range: true, AtomicRename: true}
+	return ports.Capabilities{Range: true, AtomicRename: true, List: true}
 }
 
 // path maps a key to a file name. Keys are '/'-separated relative keys

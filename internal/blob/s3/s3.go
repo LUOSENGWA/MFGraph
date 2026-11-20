@@ -60,7 +60,7 @@ func New(cfg Config, log *slog.Logger) (*Store, error) {
 }
 
 func (s *Store) Capabilities() ports.Capabilities {
-	return ports.Capabilities{Range: true, Copy: true, Multipart: true, Presign: true}
+	return ports.Capabilities{Range: true, Copy: true, Multipart: true, Presign: true, List: true}
 }
 
 func storageErr(err error) error {
@@ -82,7 +82,7 @@ func (s *Store) Stat(ctx context.Context, key string) (ports.ObjectInfo, error) 
 	if err != nil {
 		return ports.ObjectInfo{}, storageErr(err)
 	}
-	return ports.ObjectInfo{Key: key, Size: i.Size, ETag: i.ETag, ModTime: i.LastModified}, nil
+	return ports.ObjectInfo{Key: key, Size: i.Size, ETag: i.ETag, ModTime: i.LastModified, VersionID: i.VersionID}, nil
 }
 
 func (s *Store) Get(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
