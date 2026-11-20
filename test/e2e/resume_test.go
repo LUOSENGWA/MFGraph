@@ -147,7 +147,7 @@ func testResumable(t *testing.T, backend string, large bool) {
 	defer db.Close()
 	var used, reserved int64
 	var head string
-	if err := db.QueryRow("SELECT used_bytes,reserved_bytes FROM workspace_usage WHERE workspace_id=?", ws).Scan(&used, &reserved); err != nil || used < size || reserved != 0 {
+	if err := db.QueryRow("SELECT used_bytes,reserved_bytes FROM workspace_usage WHERE workspace_id=?", ws).Scan(&used, &reserved); err != nil || used != size+int64(len(contentA+contentB)) || reserved != 0 {
 		t.Fatalf("ledger %d/%d %v", used, reserved, err)
 	}
 	if err := db.QueryRow("SELECT head_snapshot_id FROM branches WHERE branch_id=?", sd.branch.BranchId).Scan(&head); err != nil || head != sd.first.SnapshotId {

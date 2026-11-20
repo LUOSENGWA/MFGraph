@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/api/gen"
 )
@@ -272,6 +273,22 @@ func TestUpgradeStoredContentToPacks(t *testing.T) {
 	e["MFGRAPH_CHUNK_BYTES"], e["MFGRAPH_PACK_BYTES"] = "4194304", "67108864"
 	current := start(t, e)
 	c = current.client(tokenA)
+	db, err := sql.Open("mysql", e["MFGRAPH_DB_DSN"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	wantUsed := len(contentA + contentB + "staged by previous release A" + "staged by previous release B")
+	for deadline := time.Now().Add(8 * time.Second); ; time.Sleep(30 * time.Millisecond) {
+		var used, reserved int
+		err := db.QueryRow("SELECT used_bytes,reserved_bytes FROM workspace_usage WHERE workspace_id=?", sd.ws.WorkspaceId).Scan(&used, &reserved)
+		if err == nil && used == wantUsed && reserved == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("upgraded live and staged content: used=%d reserved=%d want=%d err=%v", used, reserved, wantUsed, err)
+		}
+	}
 	r := c.file(sd.first.SnapshotId, "a.txt", nil)
 	if r.status != 200 || string(r.body) != contentA {
 		t.Fatal("old snapshot could not be downloaded")

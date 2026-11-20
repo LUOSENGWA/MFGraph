@@ -2,11 +2,12 @@ package mysql_test
 
 import (
 	"context"
-	"github.com/LUOSENGWA/MFGraph/internal/store/mysql"
 	"testing"
+
+	"github.com/LUOSENGWA/MFGraph/internal/store/mysql"
 )
 
-func TestBoundedMetadataRetention(t *testing.T) {
+func TestMySQLBoundedMetadataRetention(t *testing.T) {
 	db := openTestDB(t)
 	for _, x := range []struct {
 		id, status, kind string

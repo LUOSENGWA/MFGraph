@@ -439,6 +439,16 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 					if _, _, err := store.PruneMetadata(sweepCtx, now.UnixMicro(), cutoff, 500); err != nil && sweepCtx.Err() == nil {
 						logger.Warn("metadata cleanup will retry", "err", err)
 					}
+					const usageBatch = 128
+					for sweepCtx.Err() == nil {
+						n, err := store.BackfillBlobUsage(sweepCtx, now.UnixMicro(), usageBatch)
+						if err != nil && sweepCtx.Err() == nil {
+							logger.Warn("workspace usage backfill will retry", "err", err)
+						}
+						if err != nil || n == 0 {
+							break
+						}
+					}
 				}
 				select {
 				case <-sweepCtx.Done():
