@@ -77,7 +77,7 @@ func openTestDB(t *testing.T) *sql.DB {
 }
 
 var tables = []string{"projects", "principals", "workspaces", "workstreams", "branches", "snapshots", "snapshot_parents",
-	"blobs", "upload_sessions", "upload_parts", "workspace_usage", "outbox_events", "outbox_sequence", "idempotency_keys"}
+	"blobs", "upload_sessions", "upload_parts", "workspace_usage", "outbox_events", "outbox_sequence", "idempotency_keys", "blob_chunks", "chunks", "packs"}
 
 // TestMySQLContract runs the repository contract tests (ports/porttest) on
 // MySQL 8.0 or seekdb. The subtests share one migrated database whose

@@ -134,6 +134,7 @@ type Blob struct {
 	StorageKey  string
 	Status      string
 	CreatedAtUs int64
+	Chunking    string // empty or "whole" for legacy rows, "fixed" for packed content
 }
 
 // IdempotencyRecord is a row of idempotency_keys, keyed by (ActorRef,
@@ -225,6 +226,7 @@ type SnapshotRepo interface {
 
 // BlobRepo stores the content objects of workspaces.
 type BlobRepo interface {
+	PackRepo
 	// InsertBlob returns ErrAlreadyExists when (WorkspaceID, Hash) exists.
 	InsertBlob(ctx context.Context, tx Tx, b Blob) error
 	GetBlob(ctx context.Context, tx Tx, workspaceID string, h contenthash.Hash) (Blob, error)

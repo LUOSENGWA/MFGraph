@@ -139,7 +139,7 @@ func TestMigrateCommandMySQL(t *testing.T) {
 			t.Fatalf("migrate run %d: exit %d: %s", i+1, code, errOut.String())
 		}
 	}
-	if !strings.Contains(errOut.String(), `"skipped":8`) {
+	if !strings.Contains(errOut.String(), `"skipped":9`) {
 		t.Fatalf("second run did not skip: %s", errOut.String())
 	}
 }

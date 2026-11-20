@@ -518,8 +518,8 @@ func (s *Store) InsertBlob(ctx context.Context, tx ports.Tx, b ports.Blob) error
 		return err
 	}
 	_, err = q.ExecContext(ctx, `INSERT INTO blobs (workspace_id, blob_hash, hash_algo, size_bytes, storage_key, status,
-		created_at_us) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		b.WorkspaceID, b.Hash.Hex(), b.Hash.Algorithm(), b.Size, []byte(b.StorageKey), b.Status, b.CreatedAtUs)
+		created_at_us, chunking) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.WorkspaceID, b.Hash.Hex(), b.Hash.Algorithm(), b.Size, []byte(b.StorageKey), b.Status, b.CreatedAtUs, nullString(b.Chunking))
 	return wrap(err)
 }
 
@@ -527,18 +527,19 @@ func scanBlob(sc scanner) (ports.Blob, error) {
 	var b ports.Blob
 	var hex, algo string
 	var key []byte
-	if err := sc.Scan(&b.WorkspaceID, &hex, &algo, &b.Size, &key, &b.Status, &b.CreatedAtUs); err != nil {
+	var layout sql.NullString
+	if err := sc.Scan(&b.WorkspaceID, &hex, &algo, &b.Size, &key, &b.Status, &b.CreatedAtUs, &layout); err != nil {
 		return ports.Blob{}, err
 	}
 	h, err := parseHash(algo, hex)
 	if err != nil {
 		return ports.Blob{}, err
 	}
-	b.Hash, b.StorageKey = h, string(key)
+	b.Hash, b.StorageKey, b.Chunking = h, string(key), layout.String
 	return b, nil
 }
 
-const blobCols = `workspace_id, blob_hash, hash_algo, size_bytes, storage_key, status, created_at_us`
+const blobCols = `workspace_id, blob_hash, hash_algo, size_bytes, storage_key, status, created_at_us, chunking`
 
 // GetBlob implements ports.BlobRepo.
 func (s *Store) GetBlob(ctx context.Context, tx ports.Tx, workspaceID string, h contenthash.Hash) (ports.Blob, error) {

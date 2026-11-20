@@ -42,6 +42,8 @@ type state struct {
 	branchRefs map[[2]string]string // (workspace ID, ref name) -> branch ID
 	usage      map[string]int64     // workspace ID -> updated_at_us
 	snapshots  map[string]ports.Snapshot
+	packCopies map[blobKey][]ports.ChunkLocation
+	layouts    map[blobKey][]ports.FileChunk
 	blobs      map[blobKey]ports.Blob
 	idem       map[idemKey]ports.IdempotencyRecord
 	events     []ports.Event
@@ -57,6 +59,8 @@ func newState() *state {
 		branchRefs: map[[2]string]string{},
 		usage:      map[string]int64{},
 		snapshots:  map[string]ports.Snapshot{},
+		packCopies: map[blobKey][]ports.ChunkLocation{},
+		layouts:    map[blobKey][]ports.FileChunk{},
 		blobs:      map[blobKey]ports.Blob{},
 		idem:       map[idemKey]ports.IdempotencyRecord{},
 		delivery:   map[string]ports.EventDelivery{},
@@ -83,6 +87,8 @@ func (s *state) clone() *state {
 		branchRefs: cloneMap(s.branchRefs),
 		usage:      cloneMap(s.usage),
 		snapshots:  cloneMap(s.snapshots),
+		packCopies: cloneMap(s.packCopies),
+		layouts:    cloneMap(s.layouts),
 		blobs:      cloneMap(s.blobs),
 		idem:       cloneMap(s.idem),
 		events:     append([]ports.Event(nil), s.events...),

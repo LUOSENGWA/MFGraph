@@ -49,6 +49,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"Snapshots", testSnapshots},
 		{"Timeline", testTimeline},
 		{"Blobs", testBlobs},
+		{"PackedLayout", testPackedLayout},
 		{"Idempotency", testIdempotency},
 		{"Outbox", testOutbox},
 		{"OutboxQueue", testOutboxQueue},
@@ -719,5 +720,21 @@ func testConcurrentCAS(t *testing.T, s Store) {
 	b, err := s.GetBranch(ctx, nil, brA)
 	if err != nil || len(won) != 1 || b.Generation != 2 || b.HeadSnapshotID != won[0] {
 		t.Fatalf("concurrent CAS: winners %v, branch %+v, %v", won, b, err)
+	}
+}
+
+func testPackedLayout(t *testing.T, s Store) {
+	a, b := contenthash.SumBytes([]byte("abc")), contenthash.SumBytes([]byte("def"))
+	p := ports.Pack{ID: wsA, Key: "packs/one.pack", Hash: contenthash.SumBytes([]byte("abcdef")), Size: 6}
+	packs := []ports.PackWrite{{Pack: p, Chunks: []ports.PackChunk{{Hash: a, Length: 3}, {Hash: b, Offset: 3, Length: 3}}}}
+	file := []ports.FileChunk{{Hash: b, Length: 3}, {Hash: a, Offset: 3, Length: 3}}
+	h := contenthash.SumBytes([]byte("defabc"))
+	tx(t, s, func(tx ports.Tx) error { return s.RecordLayout(ctx, tx, wsA, h, packs, file, 1) })
+	rows, err := s.ChunkLocations(ctx, wsA, h, 2, 4)
+	if err != nil || len(rows) != 2 || rows[0].FileChunk != file[0] || rows[0].PackOffset != 3 || rows[1].FileChunk != file[1] || rows[1].Pack != p {
+		t.Fatalf("file order and pack offsets: %+v %v", rows, err)
+	}
+	if rows, err := s.ChunkLocations(ctx, wsB, h, 0, 6); err != nil || len(rows) != 0 {
+		t.Fatalf("another workspace: %+v %v", rows, err)
 	}
 }
