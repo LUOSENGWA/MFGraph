@@ -18,6 +18,12 @@
 - **M1.1**: hardening — roles, branches by name, a full CLI.
 - exit: 1 GiB upload without server-side buffering; no half snapshot after kill -9; two concurrent commits → one CAS win; lock fencing; GC never deletes committed snapshots; POSIX + S3 contract tests green.
 
+### M1.0b development status
+
+Standalone S3 and resumable uploads, explicit fixed-size chunk and pack storage, and whole-file snapshot upgrades are implemented. The storage matrix covers POSIX, MinIO and RustFS. A force-killed service can resume a session or replay its completion. Active sessions reserve space. A workspace quota ceiling still requires an authoritative source.
+
+The embedded part route, direct access to object storage, lock events and administrative access, checkpoints, project-level restore and MCP integration await host decisions. The full locking and object garbage collection milestones remain open. The local cleanup pass currently handles abandoned upload sessions, expired idempotency records, and published outbox rows with an explicit retention period.
+
 ### M1.0a: what it does
 
 - **Projects and workspaces.** `POST /projects` creates a project in the configured tenant; its creator is its only owner. `POST /workspaces` creates a project-level workspace with its `main` branch (generation 1, no head) and its usage row in one transaction; the storage prefix is `tenants/<tenant>/projects/<project>/workspaces/<workspace>`.

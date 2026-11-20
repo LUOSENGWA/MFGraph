@@ -18,6 +18,12 @@
 - **M1.1**：硬化——角色、按名字创建分支、完整 CLI。
 - 门：1 GiB 上传服务端不缓冲；kill -9 后无半成品 snapshot；两并发 commit 只有一个 CAS 成功；锁 fencing；GC 不删已提交快照；POSIX + S3 contract test 全绿。
 
+### M1.0b 开发进展
+
+独立部署已接入 S3、分片续传、显式启用的固定分块与 pack，以及整文件旧快照的升级读取。存储测试覆盖 POSIX、MinIO、RustFS。服务被强制终止后可继续上传，重复完成同一会话可取回原结果。进行中的会话会预留空间。工作区配额上限的数据来源仍待确定。
+
+嵌入模式的分片路由、客户端能否直连对象存储、锁事件和管理权限、checkpoint、项目级恢复及 MCP 对接待宿主确认。锁与对象 GC 的完整里程碑仍待实现。目前的清理覆盖遗弃上传会话、过期幂等记录，以及显式配置保留期的已投递 outbox 行。
+
 ### M1.0a：能做什么
 
 - **项目与工作区。** `POST /projects` 在配置的租户下创建项目，创建者是唯一拥有者。`POST /workspaces` 在一个事务里创建项目级工作区、它的 `main` 分支（generation 1、无 head）和用量行；存储前缀为 `tenants/<tenant>/projects/<project>/workspaces/<workspace>`。
