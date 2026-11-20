@@ -219,6 +219,9 @@ func (s *Service) access(ctx context.Context, p ports.Principal, workspaceID str
 	if err := s.check(ctx, p, action, res, "workspace"); err != nil {
 		return ports.Workspace{}, ports.Project{}, err
 	}
+	if ws.StorageBackendID != s.cfg.StorageBackendID {
+		return ports.Workspace{}, ports.Project{}, mapErr(ports.ErrStorageUnavailable, "workspace storage backend")
+	}
 	return ws, proj, nil
 }
 

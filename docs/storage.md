@@ -82,3 +82,14 @@ There is no distributed transaction across DB and object storage. A commit is a 
 - bucket versioning is enabled by default: the sweeper deletes **specific version ids** (a plain `DELETE` only adds a delete marker); the grace window doubles as an undelete window; noncurrent versions expire after 30 days;
 - GC never crosses workspaces; `gc_state` (one row per workspace) holds the watermark and the mutex;
 - packs are not compressed in v1; range reads map directly to `offset/length`.
+
+## S3 in a standalone deployment
+
+Set `MFGRAPH_BLOB_BACKEND=s3`, `MFGRAPH_S3_ENDPOINT` (an HTTP or HTTPS
+origin), and `MFGRAPH_S3_BUCKET` (an existing bucket). Supply
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optionally `AWS_SESSION_TOKEN`
+and `AWS_REGION`. The account needs bucket listing and object read, write,
+copy, multipart and removal privileges. A readiness probe creates, reads
+and removes its own small object. Client uploads and downloads go through
+the server. The endpoint and bucket identify the workspace's backend.
+Changing that identity requires migrating the data separately.

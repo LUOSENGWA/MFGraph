@@ -49,7 +49,6 @@ import (
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/api"
 	"github.com/LUOSENGWA/MFGraph/internal/authz"
-	"github.com/LUOSENGWA/MFGraph/internal/blob/posix"
 	"github.com/LUOSENGWA/MFGraph/internal/config"
 	"github.com/LUOSENGWA/MFGraph/internal/core"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
@@ -358,7 +357,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 				return err
 			}
 		}
-		objects, err := posix.New(cfg.StorageRoot, logger)
+		objects, backendID, err := openStorage(cfg, logger)
 		if err != nil {
 			return err
 		}
@@ -409,7 +408,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 			readiness = append(readiness, api.ReadinessCheck{Name: "outbox", Code: api.CodeDBUnavailable, Required: true,
 				Check: fwd.CheckSink})
 		}
-		svc, err = core.New(core.Config{TenantID: cfg.TenantID, MaxUploadBytes: cfg.MaxUploadBytes,
+		svc, err = core.New(core.Config{TenantID: cfg.TenantID, StorageBackendID: backendID, MaxUploadBytes: cfg.MaxUploadBytes,
 			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)
 		if err != nil {
 			return err

@@ -29,6 +29,13 @@ const (
 	EnvMigrateOnStart      = "MFGRAPH_MIGRATE_ON_START"
 	EnvKernelMigrations    = "MFGRAPH_KERNEL_MIGRATIONS"
 	EnvStorageRoot         = "MFGRAPH_STORAGE_ROOT"
+	EnvBlobBackend         = "MFGRAPH_BLOB_BACKEND"
+	EnvS3Endpoint          = "MFGRAPH_S3_ENDPOINT"
+	EnvS3Bucket            = "MFGRAPH_S3_BUCKET"
+	EnvAWSRegion           = "AWS_REGION"
+	EnvAWSAccessKey        = "AWS_ACCESS_KEY_ID"
+	EnvAWSSecretKey        = "AWS_SECRET_ACCESS_KEY"
+	EnvAWSSessionToken     = "AWS_SESSION_TOKEN"
 	EnvDataDir             = "MFGRAPH_DATA_DIR"
 	EnvTenantID            = "MFGRAPH_TENANT_ID"
 	EnvMaxUploadBytes      = "MFGRAPH_MAX_UPLOAD_BYTES"
@@ -55,7 +62,7 @@ var Variables = []string{
 	EnvKernelMigrations, EnvStorageRoot, EnvDataDir, EnvTenantID, EnvMaxUploadBytes, EnvMaxJSONBodyBytes,
 	EnvMaxCommitChanges, EnvAuthTokens, EnvLogLevel, EnvLogFormat, EnvLogPseudonymKey, EnvShutdownTimeout,
 	EnvIdempotencyLease, EnvTrustedHeaderPrefix, EnvInternalTokenHeader, EnvOutboxTable, EnvModuleID, EnvModuleSocket,
-	EnvModuleInternalToken,
+	EnvModuleInternalToken, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
 }
 
 // Aliases are pairs of names of one setting: the name MFGraph has always
@@ -141,6 +148,8 @@ var (
 
 // Config is the server configuration.
 type Config struct {
+	BlobBackend, S3Endpoint, S3Bucket, S3Region string
+	S3AccessKey, S3SecretKey, S3SessionToken    string
 	// Mode is ModeStandalone (default) or ModeModule.
 	Mode string
 	// HTTPAddr is the listen address: host:port (default 127.0.0.1:8094 in
@@ -267,10 +276,19 @@ func (c *Config) SetSocket(path string) error {
 // character set utf8mb4 (ForwarderDSN).
 func (c Config) CheckServe() error {
 	if !c.Module() {
+		if c.BlobBackend == "s3" {
+			if c.S3Endpoint == "" || c.S3Bucket == "" || c.S3AccessKey == "" || c.S3SecretKey == "" {
+				return fmt.Errorf("config: S3 storage needs %s, %s, %s and %s", EnvS3Endpoint, EnvS3Bucket, EnvAWSAccessKey, EnvAWSSecretKey)
+			}
+			return nil
+		}
 		if c.DBDSN != "" && c.StorageRoot == "" {
 			return fmt.Errorf("config: %s is set, so %s is required", EnvDBDSN, EnvStorageRoot)
 		}
 		return nil
+	}
+	if c.BlobBackend == "s3" {
+		return fmt.Errorf("config: %s=s3 is currently available in standalone mode", EnvBlobBackend)
 	}
 	var missing []string
 	if _, ok := c.UnixSocket(); !ok {
@@ -427,6 +445,17 @@ func Load(getenv func(string) string) (Config, error) {
 				return Config{}, err
 			}
 		}
+	}
+	c.BlobBackend = getenv(EnvBlobBackend)
+	switch c.BlobBackend {
+	case "", "posix":
+		c.BlobBackend = "posix"
+	case "s3":
+		c.S3Endpoint, c.S3Bucket = getenv(EnvS3Endpoint), getenv(EnvS3Bucket)
+		c.S3Region, c.S3AccessKey = getenv(EnvAWSRegion), getenv(EnvAWSAccessKey)
+		c.S3SecretKey, c.S3SessionToken = getenv(EnvAWSSecretKey), getenv(EnvAWSSessionToken)
+	default:
+		return Config{}, fmt.Errorf("config: %s must be posix or s3", EnvBlobBackend)
 	}
 	if c.StorageRoot, err = alias(getenv, EnvStorageRoot, EnvDataDir); err != nil {
 		return Config{}, err
