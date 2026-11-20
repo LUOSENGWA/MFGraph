@@ -253,3 +253,26 @@ jobs:
         run: |
           python3 packaging/host-module/test_check_host_names.py
           python3 packaging/host-module/check_host_names.py
+
+  s3:
+    name: S3 storage on ${{ matrix.backend }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        backend: [minio, rustfs]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: docker compose -f deploy/compose.storage-test.yml up -d ${{ matrix.backend }}
+      - run: make dev-db-up
+      - name: Wait for object storage
+        run: |
+          for attempt in {1..60}; do
+            if curl -fsS http://127.0.0.1:19000/health || curl -fsS http://127.0.0.1:19000/minio/health/live; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - run: make test-s3

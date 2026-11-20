@@ -183,3 +183,12 @@ dev-db-reset:
 
 clean:
 	rm -rf $(BIN)
+
+# Run against one dedicated test S3 service from deploy/compose.storage-test.yml.
+# The suites create uniquely named buckets and drop them during test cleanup.
+S3_TEST_ENDPOINT ?= http://127.0.0.1:19000
+S3_TEST_ENV = MFGRAPH_TEST_S3_ENDPOINT='$(S3_TEST_ENDPOINT)' MFGRAPH_TEST_S3_ACCESS_KEY=mfgraph-test MFGRAPH_TEST_S3_SECRET_KEY=mfgraph-test-storage
+.PHONY: test-s3
+test-s3:
+	$(S3_TEST_ENV) $(GO) test -count=1 -v ./internal/blob/s3
+	$(S3_TEST_ENV) MFGRAPH_E2E_DB_DSN='$(MYSQL_TEST_DSN)' MFGRAPH_E2E_REQUIRE_DB=1 $(GO) test -count=1 -tags e2e -run 'TestStandaloneS3' -v ./test/e2e

@@ -1,0 +1,28 @@
+# S3 contract fixtures. All credentials and buckets are local to these services.
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.3
+    environment:
+      RUSTFS_ACCESS_KEY: mfgraph-test
+      RUSTFS_SECRET_KEY: mfgraph-test-storage
+    ports:
+      - "127.0.0.1:${MFGRAPH_TEST_S3_PORT:-19000}:9000"
+
+  minio:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM golang:1.26.1 AS build
+        WORKDIR /tmp
+        RUN go mod download github.com/minio/minio@v0.0.0-20251015172955-9e49d5e7a648
+        WORKDIR /go/pkg/mod/github.com/minio/minio@v0.0.0-20251015172955-9e49d5e7a648
+        RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -o /minio .
+        FROM scratch
+        COPY --from=build /minio /minio
+        ENTRYPOINT ["/minio"]
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: mfgraph-test
+      MINIO_ROOT_PASSWORD: mfgraph-test-storage
+    ports:
+      - "127.0.0.1:${MFGRAPH_TEST_S3_PORT:-19000}:9000"
