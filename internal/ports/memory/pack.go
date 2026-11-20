@@ -44,3 +44,19 @@ func (s *Store) ChunkLocations(_ context.Context, ws string, h contenthash.Hash,
 	}
 	return out, nil
 }
+
+func (s *Store) SetBlobLayout(_ context.Context, tx ports.Tx, b ports.Blob) error {
+	st, err := s.write(tx)
+	if err != nil {
+		return err
+	}
+	key := blobKey{b.WorkspaceID, b.Hash}
+	old, ok := st.blobs[key]
+	if !ok {
+		return ports.ErrNotFound
+	}
+	old.StorageKey, old.Chunking = b.StorageKey, b.Chunking
+	st.blobs[key] = old
+	delete(st.layouts, key)
+	return nil
+}

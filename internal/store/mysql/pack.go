@@ -78,3 +78,19 @@ func (s *Store) ChunkLocations(ctx context.Context, ws string, h contenthash.Has
 	}
 	return out, wrap(rows.Err())
 }
+
+// SetBlobLayout locks the existing blob and removes any old logical offsets.
+// The caller inserts the replacement offsets in this transaction. Live status
+// and the original creation time are preserved.
+func (s *Store) SetBlobLayout(ctx context.Context, tx ports.Tx, b ports.Blob) error {
+	q, err := s.writer(tx)
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, "UPDATE blobs SET storage_key=?, chunking=? WHERE workspace_id=? AND blob_hash=?", []byte(b.StorageKey), nullString(b.Chunking), b.WorkspaceID, b.Hash.Hex())
+	if err != nil {
+		return wrap(err)
+	}
+	_, err = q.ExecContext(ctx, "DELETE FROM blob_chunks WHERE workspace_id=? AND blob_hash=?", b.WorkspaceID, b.Hash.Hex())
+	return wrap(err)
+}

@@ -227,9 +227,9 @@ func (s *Service) checkBlobs(ctx context.Context, ws ports.Workspace, hashes []c
 		return nil, blobMissing(ReasonNotUploaded, "content not uploaded to this workspace", missing)
 	}
 	for _, h := range hashes {
-		info, err := s.d.Objects.Stat(ctx, storageKey(ws, blobs[h]))
+		err := s.checkObject(ctx, ws, blobs[h])
 		switch {
-		case errors.Is(err, ports.ErrNotFound) || err == nil && info.Size != blobs[h].Size:
+		case errors.Is(err, ports.ErrNotFound):
 			missing = append(missing, h.String())
 		case err != nil:
 			return nil, mapErr(err, "object")

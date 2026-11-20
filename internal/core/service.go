@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/layout"
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"github.com/LUOSENGWA/MFGraph/internal/tree"
@@ -34,6 +35,7 @@ const (
 
 // Config holds the settings of the use cases.
 type Config struct {
+	PackSizes layout.Sizes // explicit opt-in for new packed writes
 	// TenantID is the tenant of every project and workspace (a ULID; in a
 	// standalone deployment MFGRAPH_TENANT_ID).
 	TenantID string
@@ -83,6 +85,9 @@ type Service struct {
 
 // New returns a Service; zero settings get their defaults.
 func New(cfg Config, d Deps) (*Service, error) {
+	if err := cfg.PackSizes.Validate(); err != nil {
+		return nil, err
+	}
 	if !isULID(cfg.TenantID) {
 		return nil, fmt.Errorf("core: tenant ID %q is not a ULID", cfg.TenantID)
 	}

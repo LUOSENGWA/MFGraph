@@ -408,7 +408,7 @@ func serve(ctx context.Context, cfg config.Config, ln net.Listener, logger *slog
 			readiness = append(readiness, api.ReadinessCheck{Name: "outbox", Code: api.CodeDBUnavailable, Required: true,
 				Check: fwd.CheckSink})
 		}
-		svc, err = core.New(core.Config{TenantID: cfg.TenantID, StorageBackendID: backendID, MaxUploadBytes: cfg.MaxUploadBytes,
+		svc, err = core.New(core.Config{TenantID: cfg.TenantID, StorageBackendID: backendID, PackSizes: cfg.PackSizes, MaxUploadBytes: cfg.MaxUploadBytes,
 			MaxCommitChanges: cfg.MaxCommitChanges, IdempotencyLease: cfg.IdempotencyLease, HostOwnsProjects: cfg.Module()}, deps)
 		if err != nil {
 			return err

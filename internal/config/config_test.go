@@ -187,3 +187,18 @@ func TestUploadLimitRange(t *testing.T) {
 		}
 	}
 }
+
+func TestPackedWritesRequireExplicitSizes(t *testing.T) {
+	for _, settings := range []map[string]string{
+		{config.EnvChunkBytes: "4194304"}, {config.EnvPackBytes: "67108864"},
+		{config.EnvChunkBytes: "4194304", config.EnvPackBytes: "67108865"},
+	} {
+		if _, err := config.Load(env(settings)); err == nil {
+			t.Fatalf("invalid packed layout accepted: %v", settings)
+		}
+	}
+	cfg, err := config.Load(env(nil))
+	if err != nil || cfg.PackSizes.Enabled() {
+		t.Fatalf("implicit layout: %+v %v", cfg.PackSizes, err)
+	}
+}

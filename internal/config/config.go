@@ -10,6 +10,7 @@ import (
 
 	"github.com/LUOSENGWA/MFGraph/internal/actorref"
 	"github.com/LUOSENGWA/MFGraph/internal/ids"
+	"github.com/LUOSENGWA/MFGraph/internal/layout"
 )
 
 // Environment variables. The MODULE_* variables and MFGRAPH_DSN,
@@ -29,6 +30,8 @@ const (
 	EnvMigrateOnStart      = "MFGRAPH_MIGRATE_ON_START"
 	EnvKernelMigrations    = "MFGRAPH_KERNEL_MIGRATIONS"
 	EnvStorageRoot         = "MFGRAPH_STORAGE_ROOT"
+	EnvChunkBytes          = "MFGRAPH_CHUNK_BYTES"
+	EnvPackBytes           = "MFGRAPH_PACK_BYTES"
 	EnvBlobBackend         = "MFGRAPH_BLOB_BACKEND"
 	EnvS3Endpoint          = "MFGRAPH_S3_ENDPOINT"
 	EnvS3Bucket            = "MFGRAPH_S3_BUCKET"
@@ -62,7 +65,7 @@ var Variables = []string{
 	EnvKernelMigrations, EnvStorageRoot, EnvDataDir, EnvTenantID, EnvMaxUploadBytes, EnvMaxJSONBodyBytes,
 	EnvMaxCommitChanges, EnvAuthTokens, EnvLogLevel, EnvLogFormat, EnvLogPseudonymKey, EnvShutdownTimeout,
 	EnvIdempotencyLease, EnvTrustedHeaderPrefix, EnvInternalTokenHeader, EnvOutboxTable, EnvModuleID, EnvModuleSocket,
-	EnvModuleInternalToken, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
+	EnvModuleInternalToken, EnvChunkBytes, EnvPackBytes, EnvBlobBackend, EnvS3Endpoint, EnvS3Bucket, EnvAWSRegion, EnvAWSAccessKey, EnvAWSSecretKey, EnvAWSSessionToken,
 }
 
 // Aliases are pairs of names of one setting: the name MFGraph has always
@@ -148,6 +151,7 @@ var (
 
 // Config is the server configuration.
 type Config struct {
+	PackSizes                                   layout.Sizes
 	BlobBackend, S3Endpoint, S3Bucket, S3Region string
 	S3AccessKey, S3SecretKey, S3SessionToken    string
 	// Mode is ModeStandalone (default) or ModeModule.
@@ -445,6 +449,18 @@ func Load(getenv func(string) string) (Config, error) {
 				return Config{}, err
 			}
 		}
+	}
+	if c.PackSizes.Chunk, err = parsePositive(getenv, EnvChunkBytes, 0); err != nil {
+		return Config{}, err
+	}
+	if c.PackSizes.Pack, err = parsePositive(getenv, EnvPackBytes, 0); err != nil {
+		return Config{}, err
+	}
+	if err := c.PackSizes.Validate(); err != nil {
+		return Config{}, fmt.Errorf("config: %s and %s: %w", EnvChunkBytes, EnvPackBytes, err)
+	}
+	if module && c.PackSizes.Enabled() {
+		return Config{}, fmt.Errorf("config: %s and %s control standalone writes", EnvChunkBytes, EnvPackBytes)
 	}
 	c.BlobBackend = getenv(EnvBlobBackend)
 	switch c.BlobBackend {

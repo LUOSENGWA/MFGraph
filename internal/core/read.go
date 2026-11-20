@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/layout"
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"github.com/LUOSENGWA/MFGraph/internal/storagekey"
@@ -160,6 +161,33 @@ func (f *File) Open(ctx context.Context, offset, length int64) (io.ReadCloser, e
 	missing := func() error {
 		return blobMissing(ReasonMissingInStorage, "the content of the file is missing from storage or damaged",
 			[]string{f.Entry.Hash.String()})
+	}
+	b, err := f.s.d.Store.GetBlob(ctx, nil, f.ws.ID, f.Entry.Hash)
+	if err != nil && !errors.Is(err, ports.ErrNotFound) {
+		return nil, mapErr(err, "blob")
+	}
+	if err == nil {
+		if b.Size != f.Entry.Size {
+			return nil, missing()
+		}
+		switch b.Chunking {
+		case layout.Fixed:
+			rc, err := layout.Open(ctx, f.s.d.Store, f.s.d.Objects, f.ws, b, offset, length)
+			if err == nil {
+				err = rc.Prime()
+			}
+			if errors.Is(err, ports.ErrNotFound) {
+				return nil, missing()
+			}
+			if err != nil {
+				return nil, mapErr(err, "pack")
+			}
+			return rc, nil
+		case "", "whole":
+			key = storageKey(f.ws, b)
+		default:
+			return nil, mapErr(ports.ErrStorageUnavailable, "blob layout")
+		}
 	}
 	info, err := f.s.d.Objects.Stat(ctx, key)
 	switch {

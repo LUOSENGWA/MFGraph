@@ -36,6 +36,7 @@ type ChunkLocation struct {
 }
 
 type PackRepo interface {
+	SetBlobLayout(ctx context.Context, tx Tx, b Blob) error
 	// RecordLayout shares the transaction that first registers the blob.
 	RecordLayout(context.Context, Tx, string, contenthash.Hash, []PackWrite, []FileChunk, int64) error
 	// ChunkLocations returns all replicas overlapping [start,end), ordered

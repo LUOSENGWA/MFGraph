@@ -50,8 +50,9 @@ func isStdlib(p string) bool { return !strings.Contains(strings.SplitN(p, "/", 2
 func TestDependencyRule(t *testing.T) {
 	pure := []string{"internal/contenthash", "internal/pathx", "internal/tree", "internal/storagekey"}
 	rules := map[string][]string{
-		"internal/core":  append([]string{"internal/ports"}, pure...),
-		"internal/ports": {"internal/contenthash"},
+		"internal/core":   append([]string{"internal/ports", "internal/layout"}, pure...),
+		"internal/ports":  {"internal/contenthash"},
+		"internal/layout": {"internal/ports", "internal/contenthash", "internal/storagekey"},
 	}
 	for _, p := range pure {
 		rules[p] = append([]string{"golang.org/x/text/"}, pure...)
