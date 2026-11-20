@@ -124,6 +124,17 @@ func TestRequestBodyContentTypeAndTrailingData(t *testing.T) {
 	if rec := post("application/json", "{\"name\":\"a\"}\n\t \r\n"); rec.Code != 201 {
 		t.Errorf("white space after the value: %d %s", rec.Code, rec.Body)
 	}
+	for _, name := range []string{"caf\xe9", `\uD800`, `\uDC00`, `\uD800\u0041`} {
+		rec := post("application/json", `{"name":"`+name+`"}`)
+		if rec.Code != 400 || errorOf(t, rec).Code != api.CodeInvalidRequest {
+			t.Errorf("invalid Unicode %q: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	for _, name := range []string{"café", `\uD83D\uDE00`, `\\ud800`, `\uFFFD`} {
+		if rec := post("application/json", `{"name":"`+name+`"}`); rec.Code != 201 {
+			t.Errorf("valid Unicode %q: %d %s", name, rec.Code, rec.Body)
+		}
+	}
 	// Bodies that are not JSON are refused by the generated decoder.
 	for _, body := range []string{"", "{", "nope"} {
 		if rec := post("application/json", body); rec.Code != 400 {

@@ -8,7 +8,9 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // DefaultMaxJSONBodyBytes is the default limit of a request body other than
@@ -86,6 +88,10 @@ func requestBody(limit int64) func(http.Handler) http.Handler {
 				WriteError(w, r, NewError(CodeInvalidRequest, "the request body could not be read", nil))
 				return
 			}
+			if !validJSONUnicode(body) {
+				WriteError(w, r, NewError(CodeInvalidRequest, "the JSON body contains invalid Unicode", nil))
+				return
+			}
 			if hasTrailingData(body) {
 				WriteError(w, r, NewError(CodeInvalidRequest, "the request body has data after the JSON value", nil))
 				return
@@ -95,6 +101,40 @@ func requestBody(limit int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// encoding/json substitutes U+FFFD for malformed UTF-8 and lone UTF-16
+// surrogates. Reject both before a path or an identity can change spelling.
+// JSON syntax, including the spelling of other escapes, is checked by the decoder.
+func validJSONUnicode(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	for len(b) > 0 {
+		i := bytes.IndexByte(b, '\\')
+		if i < 0 || len(b)-i < 2 {
+			break
+		}
+		b = b[i+1:]
+		if b[0] != 'u' || len(b) < 5 {
+			b = b[1:]
+			continue
+		}
+		n, err := strconv.ParseUint(string(b[1:5]), 16, 16)
+		b = b[5:]
+		if err != nil || n < 0xd800 || n > 0xdfff {
+			continue
+		}
+		if n > 0xdbff || len(b) < 6 || b[0] != '\\' || b[1] != 'u' {
+			return false
+		}
+		low, err := strconv.ParseUint(string(b[2:6]), 16, 16)
+		if err != nil || low < 0xdc00 || low > 0xdfff {
+			return false
+		}
+		b = b[6:]
+	}
+	return true
 }
 
 // isJSONMediaType accepts application/json, optionally with charset=utf-8
