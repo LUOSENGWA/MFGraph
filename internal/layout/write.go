@@ -53,11 +53,11 @@ func Write(ctx context.Context, objects ports.BlobStore, newID func() string, pr
 	if limit < 0 {
 		return out, ports.ErrTooLarge
 	}
-	tmp, err := os.CreateTemp("", "mfgraph-pack-*")
+	tmp, clean, err := scratchPack()
 	if err != nil {
 		return out, err
 	}
-	defer func() { tmp.Close(); os.Remove(tmp.Name()) }()
+	defer clean()
 	hash := contenthash.NewHasher()
 	limited := &io.LimitedReader{R: input, N: limit}
 	src := io.TeeReader(limited, hash)
@@ -116,6 +116,18 @@ func Write(ctx context.Context, objects ports.BlobStore, newID func() string, pr
 		return out, ports.ErrHashMismatch
 	}
 	return out, nil
+}
+
+// An unlinked scratch file is reclaimed even when a writer is killed.
+func scratchPack() (*os.File, func(), error) {
+	f, err := os.CreateTemp("", "mfgraph-pack-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := os.Remove(f.Name()); err != nil {
+		return f, func() { f.Close(); os.Remove(f.Name()) }, nil
+	}
+	return f, func() { f.Close() }, nil
 }
 
 func packKey(h contenthash.Hash) string { return "packs/" + h.Hex() + ".pack" }

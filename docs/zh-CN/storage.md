@@ -91,7 +91,7 @@ DB 与对象存储之间没有分布式事务。一次提交是**文件/版本�
 
 写入固定分块需要同时显式设置 `MFGRAPH_CHUNK_BYTES`（4–16 MiB）和 `MFGRAPH_PACK_BYTES`
 （64–256 MiB，须为分块大小的整数倍）。移除配置后，整文件和 pack 中的旧快照均可读取。
-下载的哈希和 ETag 始终表示整文件。Range 支持跨分块、跨 pack 读取。
+多个新上传的小文件在同次提交时可共用一个 pack。下载的哈希和 ETag 始终表示整文件。Range 支持跨分块、跨 pack 读取。
 
 `MFGRAPH_UPLOAD_CONCURRENCY` 可限制每个进程同时处理的上传和上传完成请求数，
 `MFGRAPH_TREE_CONCURRENCY` 可独立限制目录浏览、diff、commit 和 restore。

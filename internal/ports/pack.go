@@ -36,6 +36,8 @@ type ChunkLocation struct {
 }
 
 type PackRepo interface {
+	// RecordSmallPack converts still-staged whole blobs to single-chunk layouts in the commit transaction.
+	RecordSmallPack(ctx context.Context, tx Tx, workspace string, pack PackWrite, at int64) error
 	SetBlobLayout(ctx context.Context, tx Tx, b Blob) error
 	// RecordLayout shares the transaction that first registers the blob.
 	RecordLayout(context.Context, Tx, string, contenthash.Hash, []PackWrite, []FileChunk, int64) error

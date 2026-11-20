@@ -60,3 +60,25 @@ func (s *Store) SetBlobLayout(_ context.Context, tx ports.Tx, b ports.Blob) erro
 	delete(st.layouts, key)
 	return nil
 }
+
+func (s *Store) RecordSmallPack(ctx context.Context, tx ports.Tx, ws string, pack ports.PackWrite, at int64) error {
+	st, err := s.write(tx)
+	if err != nil {
+		return err
+	}
+	packs := []ports.PackWrite{pack}
+	for _, c := range pack.Chunks {
+		key := blobKey{ws, c.Hash}
+		b, ok := st.blobs[key]
+		if !ok || b.Status != ports.BlobStaged || (b.Chunking != "" && b.Chunking != "whole") {
+			continue
+		}
+		b.Chunking, b.StorageKey = "fixed", ""
+		st.blobs[key] = b
+		if err := s.RecordLayout(ctx, tx, ws, b.Hash, packs, []ports.FileChunk{{Hash: b.Hash, Length: b.Size}}, at); err != nil {
+			return err
+		}
+		packs = nil
+	}
+	return nil
+}

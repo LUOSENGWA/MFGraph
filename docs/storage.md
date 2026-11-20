@@ -99,7 +99,8 @@ Changing that identity requires migrating the data separately.
 Standalone packed writes require **both** `MFGRAPH_CHUNK_BYTES` (4–16 MiB)
 and `MFGRAPH_PACK_BYTES` (64–256 MiB, a multiple of the chunk size). Both
 settings are absent by default. Known-length uploads smaller than a chunk
-use the whole-file layout. Blobs already stored as whole files keep their
+use whole-file staging. A commit that references two or more new small files
+groups them into immutable packs. Blobs already stored as whole files keep their
 identity and remain readable. Packed files also remain readable when these
 settings are removed. The hash and ETag are the SHA-256 of the original file.
 Ranges read and verify the participating chunks and can cross pack boundaries.

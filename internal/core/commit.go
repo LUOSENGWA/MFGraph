@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/layout"
 	"github.com/LUOSENGWA/MFGraph/internal/pathx"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"github.com/LUOSENGWA/MFGraph/internal/tree"
@@ -204,9 +205,16 @@ func (s *Service) Commit(ctx context.Context, p ports.Principal, workspaceID str
 		if err := s.putNodes(ctx, ws.ID, res.Nodes); err != nil {
 			return CommitResult{}, err
 		}
+		packs, err := layout.SmallPacks(ctx, s.d.Objects, s.d.IDs.NewID, ws.StoragePrefix, s.cfg.PackSizes, blobs)
+		if errors.Is(err, ports.ErrHashMismatch) || errors.Is(err, ports.ErrNotFound) {
+			return CommitResult{}, blobMissing(ReasonMissingInStorage, "staged content changed during packing", nil)
+		}
+		if err != nil {
+			return CommitResult{}, mapErr(err, "small-file pack")
+		}
 		return s.record(ctx, p, ws, branch, head, record{
 			root: res.Root, delta: res.Delta, trigger: ports.TriggerManual, message: req.Message,
-			live: hashes, event: ports.EventCommitCreated,
+			live: hashes, smallPacks: packs, event: ports.EventCommitCreated,
 		}, complete)
 	})
 }
@@ -282,6 +290,7 @@ func (s *Service) putNodes(ctx context.Context, workspaceID string, nodes map[co
 
 // record is a new snapshot to record.
 type record struct {
+	smallPacks   []ports.PackWrite
 	root         contenthash.Hash
 	delta        tree.Stats
 	counts       *tree.Stats // the new counts, when not base + delta
@@ -361,6 +370,11 @@ func (s *Service) record(ctx context.Context, p ports.Principal, ws ports.Worksp
 		}
 		if err := s.d.Store.InsertSnapshot(ctx, tx, snap); err != nil {
 			return err
+		}
+		for _, pack := range r.smallPacks {
+			if err := s.d.Store.RecordSmallPack(ctx, tx, ws.ID, pack, now); err != nil {
+				return err
+			}
 		}
 		if len(r.live) > 0 {
 			if err := s.d.Store.MarkBlobsLive(ctx, tx, ws.ID, r.live); err != nil {

@@ -567,7 +567,7 @@ func (s *Store) GetBlobs(ctx context.Context, tx ports.Tx, workspaceID string, h
 			args = append(args, h.Hex())
 		}
 		rows, err := q.QueryContext(ctx, `SELECT `+blobCols+` FROM blobs WHERE workspace_id = ? AND blob_hash IN (`+
-			placeholders(len(chunk))+`)`, args...)
+			placeholders(len(chunk))+`) ORDER BY blob_hash`+lockSuffix(tx), args...)
 		if err != nil {
 			return nil, wrap(err)
 		}
