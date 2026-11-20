@@ -18,6 +18,22 @@ import sys
 
 # module path -> (expected license families, how it is used)
 ALLOWED = {
+    "github.com/minio/minio-go/v7": ({"Apache-2.0"}, "runtime: S3 client"),
+    "github.com/cespare/xxhash/v2": ({"MIT"}, "runtime: dependency of the S3 client"),
+    "github.com/dustin/go-humanize": ({"MIT"}, "runtime: dependency of the S3 client"),
+    "github.com/klauspost/cpuid/v2": ({"MIT"}, "runtime: dependency of the S3 client"),
+    "github.com/klauspost/crc32": ({"BSD"}, "runtime: dependency of the S3 client"),
+    "github.com/minio/crc64nvme": ({"Apache-2.0"}, "runtime: dependency of the S3 client"),
+    "github.com/minio/md5-simd": ({"Apache-2.0"}, "runtime: dependency of the S3 client"),
+    "github.com/philhofer/fwd": ({"MIT"}, "runtime: dependency of the S3 client"),
+    "github.com/rs/xid": ({"MIT"}, "runtime: dependency of the S3 client"),
+    "github.com/tinylib/msgp": ({"MIT"}, "runtime: dependency of the S3 client"),
+    "github.com/zeebo/xxh3": ({"BSD"}, "runtime: dependency of the S3 client"),
+    "go.yaml.in/yaml/v3": ({"Apache-2.0", "MIT"}, "runtime: dependency of the S3 client"),
+    "golang.org/x/crypto": ({"BSD"}, "runtime: dependency of the S3 client"),
+    "golang.org/x/net": ({"BSD"}, "runtime: dependency of the S3 client"),
+    "golang.org/x/sys": ({"BSD"}, "runtime: dependency of the S3 client"),
+    "gopkg.in/ini.v1": ({"Apache-2.0"}, "runtime: dependency of the S3 client"),
     "golang.org/x/text": ({"BSD"}, "runtime: Unicode NFC and case folding"),
     "github.com/klauspost/compress": ({"BSD"}, "runtime: zstd for stored tree nodes"),
     "github.com/oklog/ulid/v2": ({"Apache-2.0"}, "runtime: ULIDs"),
