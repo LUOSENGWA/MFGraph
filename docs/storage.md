@@ -105,7 +105,7 @@ object versions so a terminal session can reclaim its private bytes.
 
 Standalone packed writes require **both** `MFGRAPH_CHUNK_BYTES` (4–16 MiB)
 and `MFGRAPH_PACK_BYTES` (64–256 MiB, a multiple of the chunk size). Both
-settings are absent by default. Known-length uploads smaller than a chunk
+settings are absent by default. Uploads smaller than a chunk
 use whole-file staging. A commit that references two or more new small files
 groups them into immutable packs. Blobs already stored as whole files keep their
 identity and remain readable. Packed files also remain readable when these

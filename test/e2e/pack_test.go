@@ -5,8 +5,11 @@ package e2e
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/LUOSENGWA/MFGraph/internal/api/gen"
 )
 
 func TestPackedContent(t *testing.T)             { testPackedContent(t, false) }
@@ -38,7 +41,11 @@ func testPackedContent(t *testing.T, remote bool) {
 		(SELECT SUM(size_bytes) FROM packs)`).Scan(&packs, &chunks, &refs, &bytes); err != nil || packs != 1 || chunks != 2 || refs != 3 || bytes != 2*n {
 		t.Fatalf("expected two unique physical chunks for three logical chunks: %d %d %d %d %v", packs, chunks, refs, bytes, err)
 	}
-	smallA, smallB := c.upload(sd.ws.WorkspaceId, "small-A"), c.upload(sd.ws.WorkspaceId, "small-B")
+	smallA := c.upload(sd.ws.WorkspaceId, "small-A")
+	var streamed gen.StagedObject
+	r := c.do("PUT", "/api/v1/objects/"+sd.ws.WorkspaceId, io.NopCloser(strings.NewReader("small-B")), map[string]string{"Content-Type": "application/octet-stream"})
+	c.expect(r, "small file without Content-Length", 201, &streamed)
+	smallB := streamed.Hash
 	next := c.commit(sd.ws.WorkspaceId, sd.branch.BranchId, commit.Generation, put("a-small", smallA), put("b-small", smallB))
 	var shared int
 	if err := db.QueryRow(`SELECT COUNT(DISTINCT c.pack_id) FROM blob_chunks b JOIN chunks c ON b.workspace_id=c.workspace_id AND b.chunk_hash=c.chunk_hash

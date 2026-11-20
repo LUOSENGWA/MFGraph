@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -56,7 +57,19 @@ func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader,
 	blob := ports.Blob{WorkspaceID: ws.ID, Status: ports.BlobStaged, CreatedAtUs: s.nowUs()}
 	var packed layout.Written
 	var err error
-	if s.cfg.PackSizes.Enabled() && (size < 0 || size >= s.cfg.PackSizes.Chunk) {
+	chunk := s.cfg.PackSizes.Chunk
+	writePack := s.cfg.PackSizes.Enabled() && size >= chunk
+	if chunk > 0 && size < 0 && s.cfg.MaxUploadBytes >= chunk {
+		// Chunked HTTP transfers carry no length. Look at at most one
+		// chunk so small files can still share a pack at commit time.
+		buffered := bufio.NewReaderSize(body, int(chunk))
+		_, err := buffered.Peek(int(chunk))
+		if err != nil && err != io.EOF {
+			return ports.Blob{}, false, mapErr(err, "object")
+		}
+		body, writePack = buffered, err == nil
+	}
+	if writePack {
 		packed, err = layout.Write(ctx, s.d.Objects, s.d.IDs.NewID, ws.StoragePrefix, s.cfg.PackSizes, body, s.cfg.MaxUploadBytes, expected)
 		blob.Hash, blob.Size, blob.Chunking = packed.Hash, packed.Size, layout.Fixed
 	} else {
