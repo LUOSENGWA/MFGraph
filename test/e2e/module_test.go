@@ -507,7 +507,7 @@ func TestModuleModeMigrate(t *testing.T) {
 	m := newModuleEnv(t)
 	first, second := m.migrate(), m.migrate()
 	if !strings.Contains(first, `"component":"mfgraph"`) || strings.Contains(first+second, `"component":"kernel"`) ||
-		!strings.Contains(second, `"applied":null,"skipped":7`) {
+		!strings.Contains(second, `"applied":null,"skipped":8`) {
 		t.Fatalf("migrate logs:\n%s\n%s", first, second)
 	}
 	var versions []string
@@ -522,7 +522,7 @@ func TestModuleModeMigrate(t *testing.T) {
 	}
 	rows.Close()
 	want := []string{"mfgraph/0001_workspaces", "mfgraph/0002_workstreams_branches", "mfgraph/0003_snapshots", "mfgraph/0004_blobs",
-		"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types"}
+		"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types", "mfgraph/0010_outbox_order"}
 	if strings.Join(versions, ",") != strings.Join(want, ",") {
 		t.Fatalf("recorded versions %v", versions)
 	}
@@ -549,7 +549,7 @@ func TestModuleModeMigrateOnlyDSN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []string{`"component":"mfgraph","applied":["0001_workspaces",`, `"component":"mfgraph","applied":null,"skipped":7`} {
+	for i, want := range []string{`"component":"mfgraph","applied":["0001_workspaces",`, `"component":"mfgraph","applied":null,"skipped":8`} {
 		cmd := exec.Command(serverBin, "--config", moduleEnvFile, "migrate")
 		cmd.Env = []string{"MFGRAPH_DSN=" + m.env["MFGRAPH_DSN"]}
 		out, err := cmd.CombinedOutput()
@@ -560,7 +560,7 @@ func TestModuleModeMigrateOnlyDSN(t *testing.T) {
 	}
 	var mfgraph, others, kernel int
 	if err := m.db.QueryRow(`SELECT SUM(component = 'mfgraph'), SUM(component <> 'mfgraph') FROM schema_migrations`).Scan(&mfgraph,
-		&others); err != nil || mfgraph != 7 || others != 0 {
+		&others); err != nil || mfgraph != 8 || others != 0 {
 		t.Fatalf("recorded versions: mfgraph %d, others %d, %v", mfgraph, others, err)
 	}
 	if err := m.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()

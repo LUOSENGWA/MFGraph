@@ -595,7 +595,7 @@ func testOutbox(t *testing.T, s Store) {
 	}
 }
 
-// testOutboxQueue: the pending events come in outbox order (time, then
+// testOutboxQueue: the pending events come in commit order (within one transaction, time then
 // ID), without events of an earlier version's kinds; a failed delivery
 // counts a retry and keeps the event pending; a published event stays
 // published and leaves the queue.
@@ -630,16 +630,16 @@ func testOutboxQueue(t *testing.T, s Store) {
 		return strings.Join(out, ",")
 	}
 	got, err := s.PendingEvents(ctx, 100)
-	if err != nil || ids(got) != "02,07,09,05" {
-		t.Fatalf("pending = %s, %v; want 02,07,09,05", ids(got), err)
+	if err != nil || ids(got) != "09,05,02,07" {
+		t.Fatalf("pending = %s, %v; want 09,05,02,07", ids(got), err)
 	}
 	if n, oldest, err := s.PendingCount(ctx); err != nil || n != 4 || oldest != 10 {
 		t.Fatalf("pending count = %d, oldest %d, %v; want 4, 10", n, oldest, err)
 	}
-	if got, _ := s.PendingEvents(ctx, 2); ids(got) != "02,07" {
+	if got, _ := s.PendingEvents(ctx, 2); ids(got) != "09,05" {
 		t.Fatalf("pending with limit 2 = %s", ids(got))
 	}
-	if !reflect.DeepEqual(got[0], ev("01JD3X5Q8Z9W2V4T6R8P0N2E02", ports.EventBranchCreated, 10)) {
+	if !reflect.DeepEqual(got[0], ev("01JD3X5Q8Z9W2V4T6R8P0N2E09", ports.EventCommitCreated, 20)) {
 		t.Fatalf("pending event = %+v", got[0])
 	}
 	if err := s.MarkFailed(ctx, "01JD3X5Q8Z9W2V4T6R8P0N2E02", 777); err != nil {
@@ -652,7 +652,7 @@ func testOutboxQueue(t *testing.T, s Store) {
 		d.NextRetryAtUs != 888 {
 		t.Fatalf("after two failures: %+v %v", d, err)
 	}
-	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "02,07,09,05" {
+	if got, _ := s.PendingEvents(ctx, 100); ids(got) != "09,05,02,07" {
 		t.Fatalf("a failed event left the queue: %s", ids(got))
 	}
 	for _, id := range []string{"01JD3X5Q8Z9W2V4T6R8P0N2E02", "01JD3X5Q8Z9W2V4T6R8P0N2E07"} {

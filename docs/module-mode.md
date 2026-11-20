@@ -153,8 +153,8 @@ VALUES (?, 'mfgraph', ?, 'project', ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
   project; `actor_type` and `actor_id` the actor, complete; `payload_json`
   the envelope; `created_at` the time of the change and `available_at`,
   `updated_at` the time of the insert, all UTC `DATETIME(6)`.
-- Order: the forwarder delivers one event at a time, in outbox order (the
-  time column, then the row ID), stops at the first event it cannot deliver
+- Order: the forwarder delivers one event at a time, in transaction commit order (within a transaction,
+  by the time column and then the row ID), stops at the first event it cannot deliver
   and starts with it again next time; it never skips one by itself.
   - Within one branch, events arrive in the order of its generations: a
     change of a branch is recorded at least 2 µs after the previous one,

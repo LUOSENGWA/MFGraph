@@ -37,9 +37,10 @@ func New(db *sql.DB) *Store { return &Store{db: db} }
 func (s *Store) Ping(ctx context.Context) error { return wrap(s.db.PingContext(ctx)) }
 
 type txn struct {
-	store *Store
-	tx    *sql.Tx
-	done  bool
+	store    *Store
+	tx       *sql.Tx
+	done     bool
+	eventIDs []any
 }
 
 func (*txn) TxKind() string { return "mysql" }
@@ -64,11 +65,31 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx port
 	if err := fn(ctx, t); err != nil {
 		return err
 	}
+	if len(t.eventIDs) > 0 {
+		if err := t.orderEvents(ctx); err != nil {
+			return err
+		}
+	}
 	if err := sqlTx.Commit(); err != nil {
 		return wrap(err)
 	}
 	committed = true
 	return nil
+}
+
+// Only the last two statements before COMMIT take the shared sequence lock.
+// No transaction can commit a later batch until the previous one commits or
+// rolls back. An auto-increment ID assigned on INSERT cannot provide this.
+func (t *txn) orderEvents(ctx context.Context) error {
+	_, err := t.tx.ExecContext(ctx, `INSERT INTO outbox_sequence (singleton, last_batch) VALUES (1, 1)
+		ON DUPLICATE KEY UPDATE last_batch = last_batch + 1`)
+	if err != nil {
+		return wrap(err)
+	}
+	_, err = t.tx.ExecContext(ctx, `UPDATE outbox_events SET commit_seq =
+		(SELECT last_batch FROM outbox_sequence WHERE singleton = 1) WHERE event_id IN (`+
+		placeholders(len(t.eventIDs))+`)`, t.eventIDs...)
+	return wrap(err)
 }
 
 type querier interface {
@@ -671,13 +692,17 @@ func (s *Store) Append(ctx context.Context, tx ports.Tx, ev ports.Event) error {
 	_, err = q.ExecContext(ctx, `INSERT INTO outbox_events (event_id, workspace_id, event_type, aggregate_id, payload_json, status,
 		retry_count, created_at_us) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)`,
 		ev.ID, nullString(ev.WorkspaceID), ev.Type, nullString(ev.AggregateID), string(ev.Payload), ev.CreatedAtUs)
+	if err == nil {
+		t := tx.(*txn)
+		t.eventIDs = append(t.eventIDs, ev.ID)
+	}
 	return wrap(err)
 }
 
 // Events returns every outbox event, oldest first (tests and diagnostics).
 func (s *Store) Events(ctx context.Context) ([]ports.Event, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT event_id, workspace_id, event_type, aggregate_id, payload_json, created_at_us
-		FROM outbox_events ORDER BY created_at_us, event_id`)
+		FROM outbox_events ORDER BY commit_seq, created_at_us, event_id`)
 	if err != nil {
 		return nil, wrap(err)
 	}
@@ -699,7 +724,7 @@ func (s *Store) Events(ctx context.Context) ([]ports.Event, error) {
 // PendingEvents implements ports.OutboxQueue.
 func (s *Store) PendingEvents(ctx context.Context, limit int) ([]ports.Event, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT event_id, workspace_id, event_type, aggregate_id, payload_json, created_at_us
-		FROM outbox_events WHERE status = 'pending' AND event_type LIKE ? ORDER BY created_at_us, event_id LIMIT ?`,
+		FROM outbox_events WHERE status = 'pending' AND event_type LIKE ? ORDER BY commit_seq, created_at_us, event_id LIMIT ?`,
 		ports.EventPrefix+"%", limit)
 	if err != nil {
 		return nil, wrap(err)

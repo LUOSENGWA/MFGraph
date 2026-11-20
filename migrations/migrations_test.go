@@ -17,14 +17,14 @@ import (
 // packs, chunks, snapshot_entries, project commits, ...) must not appear yet.
 var wantTables = map[string][]string{
 	"kernel": {"principals", "projects"},
-	"mysql": {"blobs", "branches", "idempotency_keys", "outbox_events", "snapshot_parents", "snapshots",
+	"mysql": {"blobs", "branches", "idempotency_keys", "outbox_events", "outbox_sequence", "snapshot_parents", "snapshots",
 		"upload_parts", "upload_sessions", "workspace_usage", "workspaces", "workstreams"},
 }
 
 var wantVersions = map[string][]string{
 	"kernel": {"0000_bootstrap", "0001_project_owner"},
 	"mysql": {"0001_workspaces", "0002_workstreams_branches", "0003_snapshots", "0004_blobs",
-		"0006_uploads", "0008_usage_outbox_idempotency", "0009_actor_types"},
+		"0006_uploads", "0008_usage_outbox_idempotency", "0009_actor_types", "0010_outbox_order"},
 }
 
 // actorTypeColumns hold the type a host platform gives an actor, next to

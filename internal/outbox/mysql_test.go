@@ -696,3 +696,52 @@ func TestMySQLDuplicateUnderAnyKeyName(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// A slow workspace can stamp its events first and commit last while the
+// forwarder is offline. A restart must still drain in commit order.
+func TestMySQLBacklogCommitOrder(t *testing.T) {
+	e := newMySQLEnv(t)
+	work, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	legacy := ev(3, ports.EventCommitCreated, 30)
+	if _, err := e.db.ExecContext(work, `INSERT INTO outbox_events
+		(event_id, event_type, payload_json, created_at_us) VALUES (?, ?, ?, ?)`,
+		legacy.ID, legacy.Type, string(legacy.Payload), legacy.CreatedAtUs); err != nil {
+		t.Fatal(err)
+	}
+	one := ev(1, ports.EventWorkspaceCreated, 10)
+	two := ev(2, ports.EventBranchCreated, 20)
+	staged, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- e.store.WithTx(work, func(ctx context.Context, tx ports.Tx) error {
+			if err := e.store.Append(ctx, tx, one); err != nil {
+				return err
+			}
+			close(staged)
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}()
+	select {
+	case <-staged:
+	case err := <-done:
+		t.Fatalf("stage first event: %v", err)
+	case <-work.Done():
+		t.Fatal(work.Err())
+	}
+	err := e.store.WithTx(work, func(ctx context.Context, tx ports.Tx) error {
+		return e.store.Append(ctx, tx, two)
+	})
+	close(release)
+	if firstErr := <-done; err != nil || firstErr != nil {
+		t.Fatalf("commits: first %v, second %v", firstErr, err)
+	}
+	if n := e.flush(); n != 3 || kindsOf(e.hostRows()) != "commit_created,branch_created,workspace_created" {
+		t.Fatalf("host delivery: %s", kindsOf(e.hostRows()))
+	}
+}

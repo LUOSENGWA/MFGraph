@@ -108,6 +108,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx port
 	s.mu.RLock()
 	work := s.cur.clone()
 	s.mu.RUnlock()
+	oldEvents := len(work.events)
 	tx := &storeTx{store: s, st: work}
 	defer func() { tx.done = true }()
 	if err := fn(ctx, tx); err != nil {
@@ -116,6 +117,13 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx port
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	batch := work.events[oldEvents:]
+	sort.SliceStable(batch, func(i, j int) bool {
+		if batch[i].CreatedAtUs != batch[j].CreatedAtUs {
+			return batch[i].CreatedAtUs < batch[j].CreatedAtUs
+		}
+		return batch[i].ID < batch[j].ID
+	})
 	s.mu.Lock()
 	s.cur = work
 	s.mu.Unlock()
@@ -559,12 +567,6 @@ func (s *Store) PendingEvents(_ context.Context, limit int) ([]ports.Event, erro
 			out = append(out, ev)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].CreatedAtUs != out[j].CreatedAtUs {
-			return out[i].CreatedAtUs < out[j].CreatedAtUs
-		}
-		return out[i].ID < out[j].ID
-	})
 	if len(out) > limit {
 		out = out[:limit]
 	}

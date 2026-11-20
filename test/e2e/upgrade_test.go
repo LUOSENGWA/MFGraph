@@ -138,7 +138,7 @@ func schemaOf(t *testing.T, dsn string) string {
 //     uploads, commits, an idempotent commit, a restore);
 //  2. this server on that schema without migrating: /readyz 503
 //     schema_behind with mfgraph/0009_actor_types, and an ERROR line;
-//  3. migrate applies 0009 only;
+//  3. migrate applies the outstanding migrations;
 //  4. this server serves the old data and replays the old idempotent
 //     commit; the schema equals that of a fresh installation;
 //  5. rollback: the old server runs on the new schema without automatic
@@ -175,7 +175,7 @@ func TestUpgradeFromMain(t *testing.T) {
 	}
 	_ = json.Unmarshal(r.body, &envl)
 	if r.status != 503 || envl.Code != "db_unavailable" || envl.Details["check"] != "db" || envl.Details["reason"] != "schema_behind" ||
-		fmt.Sprint(envl.Details["missing"]) != "[mfgraph/0009_actor_types]" {
+		fmt.Sprint(envl.Details["missing"]) != "[mfgraph/0009_actor_types mfgraph/0010_outbox_order]" {
 		t.Fatalf("readyz before migrate: %d %s", r.status, r.body)
 	}
 	if !strings.Contains(n.logs.String(), "level=ERROR") || !strings.Contains(n.logs.String(), "schema is behind this build") {
@@ -183,11 +183,11 @@ func TestUpgradeFromMain(t *testing.T) {
 	}
 	n.stop()
 
-	// 3. migrate: 0009 only.
+	// 3. migrate: the outstanding migrations.
 	cmd := exec.Command(serverBin, "migrate")
 	cmd.Env = append(os.Environ(), "MFGRAPH_DB_DSN="+e["MFGRAPH_DB_DSN"])
 	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), `"component":"mfgraph","applied":["0009_actor_types"],"skipped":6`) {
+	if err != nil || !strings.Contains(string(out), `"component":"mfgraph","applied":["0009_actor_types","0010_outbox_order"],"skipped":6`) {
 		t.Fatalf("migrate: %v\n%s", err, out)
 	}
 
