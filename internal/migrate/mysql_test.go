@@ -417,7 +417,7 @@ func checkByteExactColumns(t *testing.T, db *sql.DB, schema string) {
 		"workstreams.default_branch_name": "varbinary(255)", "workspaces.scope_path": "varbinary(4096)",
 		"snapshots.scope_path": "varbinary(4096)", "upload_sessions.path": "varbinary(4096)",
 		"workspaces.storage_prefix": "varbinary(942)", "blobs.storage_key": "varbinary(1024)",
-		"packs.storage_key": "varbinary(1024)",
+		"packs.storage_key":                "varbinary(1024)",
 		"idempotency_keys.idempotency_key": "varbinary(128)",
 		// Actor references.
 		"projects.owner_ref":   "varbinary(255)",

@@ -501,13 +501,16 @@ func tcpListeners(pid int) int {
 
 // ---- appendix B rows -------------------------------------------------------
 
+var moduleVersions = []string{"mfgraph/0001_workspaces", "mfgraph/0002_workstreams_branches", "mfgraph/0003_snapshots", "mfgraph/0004_blobs",
+	"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types", "mfgraph/0010_outbox_order", "mfgraph/0011_packed_blobs", "mfgraph/0012_upload_completion"}
+
 // Row 6: migrate (with --config before the command) runs twice; the module's
 // versions are recorded; the kernel tables are not created.
 func TestModuleModeMigrate(t *testing.T) {
 	m := newModuleEnv(t)
 	first, second := m.migrate(), m.migrate()
 	if !strings.Contains(first, `"component":"mfgraph"`) || strings.Contains(first+second, `"component":"kernel"`) ||
-		!strings.Contains(second, `"applied":null,"skipped":9`) {
+		!strings.Contains(second, fmt.Sprintf(`"applied":null,"skipped":%d}`, len(moduleVersions))) {
 		t.Fatalf("migrate logs:\n%s\n%s", first, second)
 	}
 	var versions []string
@@ -521,9 +524,8 @@ func TestModuleModeMigrate(t *testing.T) {
 		versions = append(versions, c+"/"+v)
 	}
 	rows.Close()
-	want := []string{"mfgraph/0001_workspaces", "mfgraph/0002_workstreams_branches", "mfgraph/0003_snapshots", "mfgraph/0004_blobs",
-		"mfgraph/0006_uploads", "mfgraph/0008_usage_outbox_idempotency", "mfgraph/0009_actor_types", "mfgraph/0010_outbox_order", "mfgraph/0011_packed_blobs", "mfgraph/0012_upload_completion"}
-	if strings.Join(versions, ",") != strings.Join(want, ",") {
+
+	if strings.Join(versions, ",") != strings.Join(moduleVersions, ",") {
 		t.Fatalf("recorded versions %v", versions)
 	}
 	var kernel int
@@ -549,7 +551,7 @@ func TestModuleModeMigrateOnlyDSN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, want := range []string{`"component":"mfgraph","applied":["0001_workspaces",`, `"component":"mfgraph","applied":null,"skipped":9`} {
+	for i, want := range []string{`"component":"mfgraph","applied":["0001_workspaces",`, fmt.Sprintf(`"component":"mfgraph","applied":null,"skipped":%d}`, len(moduleVersions))} {
 		cmd := exec.Command(serverBin, "--config", moduleEnvFile, "migrate")
 		cmd.Env = []string{"MFGRAPH_DSN=" + m.env["MFGRAPH_DSN"]}
 		out, err := cmd.CombinedOutput()
@@ -560,7 +562,7 @@ func TestModuleModeMigrateOnlyDSN(t *testing.T) {
 	}
 	var mfgraph, others, kernel int
 	if err := m.db.QueryRow(`SELECT SUM(component = 'mfgraph'), SUM(component <> 'mfgraph') FROM schema_migrations`).Scan(&mfgraph,
-		&others); err != nil || mfgraph != 9 || others != 0 {
+		&others); err != nil || mfgraph != len(moduleVersions) || others != 0 {
 		t.Fatalf("recorded versions: mfgraph %d, others %d, %v", mfgraph, others, err)
 	}
 	if err := m.db.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()
