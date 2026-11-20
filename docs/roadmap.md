@@ -20,7 +20,7 @@
 
 ### M1.0b development status
 
-Standalone S3 and resumable uploads, explicit fixed-size chunk and pack storage, and whole-file snapshot upgrades are implemented. The storage matrix covers POSIX, MinIO and RustFS. A force-killed service can resume a session or replay its completion. Active sessions reserve space. A workspace quota ceiling still requires an authoritative source.
+Standalone S3 and resumable uploads, explicit fixed-size chunk and pack storage, and whole-file snapshot upgrades are implemented. The storage matrix covers POSIX, MinIO and RustFS. A force-killed service can resume a session or replay its completion. Active sessions reserve space, completed uploads credit unique whole-file bytes per workspace, and upgrades backfill stored files. A workspace quota ceiling still requires an authoritative source.
 
 The embedded part route, direct access to object storage, lock events and administrative access, checkpoints, project-level restore and MCP integration await host decisions. The full locking and object garbage collection milestones remain open. The local cleanup pass currently handles abandoned upload sessions, expired idempotency records, and published outbox rows with an explicit retention period.
 

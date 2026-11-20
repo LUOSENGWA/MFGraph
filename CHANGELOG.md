@@ -8,6 +8,7 @@ All notable changes will be documented here.
 
 - Standalone deployments can use a scoped S3-compatible bucket and resume uploads after a restart. The same HTTP session routes support POSIX relaying and native S3 part URLs.
 - Explicit chunk and pack sizes enable fixed chunks, immutable packs and shared small-file packs. Existing snapshots and staged whole files remain readable after upgrading.
+- A completed upload credits verified file bytes once per workspace. Both upload methods share the ledger, and the upgrade backfills existing staged and live files.
 - Added crash, resume, Range, two-forwarder and upgrade tests on MySQL and seekdb, with MinIO and RustFS storage fixtures.
 - The primary database connection uses utf8mb4. Read caching is bounded. Operators can configure upload time and concurrency limits, tree concurrency and local published-event retention.
 - The `0.2.0-dev` bundle identifies development builds. The independent Module 0.1.1 release point is commit `c4debc5`.

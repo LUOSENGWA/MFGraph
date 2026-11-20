@@ -109,6 +109,15 @@ S3 part URLs last up to 15 minutes. Sessions last 24 hours by default.
 returns 410 and releases its reservation. A cleanup pass also handles
 abandoned sessions after a restart. Embedded routing awaits host confirmation.
 
+Opening a session reserves the declared size. Successful completion releases
+the reservation and credits the verified file bytes in the same transaction.
+A whole-file PUT credits the bytes when it succeeds. The ledger counts each
+whole-file SHA-256 once per workspace, including staged files. Upload retries,
+switching upload methods, and a later snapshot commit preserve that total.
+Abort and expiry release the reservation. After an upgrade a background pass
+credits previously registered live and staged files in restartable batches.
+The source of the workspace quota ceiling awaits host confirmation.
+
 ## Lock
 
 ```text
