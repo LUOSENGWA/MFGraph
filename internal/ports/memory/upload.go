@@ -2,8 +2,10 @@ package memory
 
 import (
 	"context"
-	"github.com/LUOSENGWA/MFGraph/internal/ports"
 	"sort"
+
+	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
+	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
 
 type partKey struct {
@@ -87,6 +89,19 @@ func (s *Store) PendingUploadCleanup(_ context.Context, backend string, now int6
 	}
 	sort.Strings(ids)
 	return ids[:min(limit, len(ids))], nil
+}
+
+func (s *Store) ClaimBlobUsage(_ context.Context, tx ports.Tx, ws string, h contenthash.Hash, _ int64) (bool, error) {
+	st, err := s.write(tx)
+	if err != nil {
+		return false, err
+	}
+	k := blobKey{ws, h}
+	if _, exists := st.blobs[k]; !exists || st.counted[k] {
+		return false, nil
+	}
+	st.counted[k] = true
+	return true, nil
 }
 
 func (s *Store) GetUsage(_ context.Context, tx ports.Tx, ws string) (ports.Usage, error) {

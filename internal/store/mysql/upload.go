@@ -2,6 +2,8 @@ package mysql
 
 import (
 	"context"
+
+	"github.com/LUOSENGWA/MFGraph/internal/contenthash"
 	"github.com/LUOSENGWA/MFGraph/internal/ports"
 )
 
@@ -93,12 +95,25 @@ func (s *Store) PendingUploadCleanup(ctx context.Context, backend string, now in
 	}
 	return ids, wrap(rows.Err())
 }
+func (s *Store) ClaimBlobUsage(ctx context.Context, tx ports.Tx, ws string, h contenthash.Hash, at int64) (bool, error) {
+	q, err := s.writer(tx)
+	if err != nil {
+		return false, err
+	}
+	result, err := q.ExecContext(ctx, `UPDATE blobs SET usage_counted_at_us=? WHERE workspace_id=? AND blob_hash=? AND usage_counted_at_us IS NULL`, at, ws, h.Hex())
+	if err != nil {
+		return false, wrap(err)
+	}
+	n, err := result.RowsAffected()
+	return n == 1, wrap(err)
+}
+
 func (s *Store) GetUsage(ctx context.Context, tx ports.Tx, ws string) (u ports.Usage, err error) {
 	q, err := s.reader(tx)
 	if err != nil {
 		return u, err
 	}
-	err = q.QueryRowContext(ctx, "SELECT used_bytes,reserved_bytes FROM workspace_usage WHERE workspace_id=?"+lockSuffix(tx), ws).Scan(&u.Used, &u.Reserved)
+	err = q.QueryRowContext(ctx, "SELECT IF(usage_started_at_us IS NULL,0,used_bytes),reserved_bytes FROM workspace_usage WHERE workspace_id=?"+lockSuffix(tx), ws).Scan(&u.Used, &u.Reserved)
 	return u, wrap(err)
 }
 func (s *Store) SetUsage(ctx context.Context, tx ports.Tx, ws string, u ports.Usage, at int64) error {
@@ -106,6 +121,7 @@ func (s *Store) SetUsage(ctx context.Context, tx ports.Tx, ws string, u ports.Us
 	if err != nil {
 		return err
 	}
-	_, err = q.ExecContext(ctx, "UPDATE workspace_usage SET used_bytes=?,reserved_bytes=?,version=version+1,updated_at_us=? WHERE workspace_id=?", u.Used, u.Reserved, at, ws)
+	_, err = q.ExecContext(ctx, `UPDATE workspace_usage SET used_bytes=?,reserved_bytes=?,usage_started_at_us=COALESCE(usage_started_at_us,?),
+		version=version+1,updated_at_us=? WHERE workspace_id=?`, u.Used, u.Reserved, at, at, ws)
 	return wrap(err)
 }

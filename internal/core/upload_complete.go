@@ -195,7 +195,7 @@ func (s *Service) CompleteUpload(ctx context.Context, p ports.Principal, id stri
 					return zero, err
 				}
 			}
-			_, _, err = s.stage(ctx, ws, body, frozen.Size, expected, func(ctx context.Context, tx ports.Tx, b ports.Blob, created bool) error {
+			_, _, err = s.stage(ctx, ws, body, frozen.Size, expected, func(ctx context.Context, tx ports.Tx, b ports.Blob, used int64) error {
 				v, err := s.d.Store.GetUpload(ctx, tx, id)
 				if err != nil {
 					return err
@@ -205,15 +205,16 @@ func (s *Service) CompleteUpload(ctx context.Context, p ports.Principal, id stri
 				}
 				switch v.Status {
 				case ports.UploadCompleted:
+					if used > 0 {
+						if err := s.adjustUsage(ctx, tx, v.WorkspaceID, 0, used); err != nil {
+							return err
+						}
+					}
 				case ports.UploadCompleting:
 					if v.Expires <= s.nowUs() {
 						return uploadExpired()
 					}
-					var used int64
-					if created {
-						used = b.Size
-					}
-					if err := s.adjustReservation(ctx, tx, v, -v.Size, used); err != nil {
+					if err := s.adjustUsage(ctx, tx, v.WorkspaceID, -v.Size, used); err != nil {
 						return err
 					}
 					v.Status, v.Completed, v.Result = ports.UploadCompleted, s.nowUs(), b.Hash.Hex()
@@ -274,7 +275,7 @@ func (s *Service) endUpload(ctx context.Context, id, status string) error {
 }
 
 func (s *Service) releaseUpload(ctx context.Context, tx ports.Tx, u ports.Upload, status string) error {
-	if err := s.adjustReservation(ctx, tx, u, -u.Size, 0); err != nil {
+	if err := s.adjustUsage(ctx, tx, u.WorkspaceID, -u.Size, 0); err != nil {
 		return err
 	}
 	u.Status = status

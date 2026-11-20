@@ -50,8 +50,8 @@ func (s *Service) PutObject(ctx context.Context, p ports.Principal, req PutObjec
 }
 
 // stageFinish finalizes an upload in the same transaction as publication of
-// the blob. created distinguishes new content from a verified replay.
-type stageFinish func(context.Context, ports.Tx, ports.Blob, bool) error
+// the blob. used is the verified size newly counted for this workspace.
+type stageFinish func(context.Context, ports.Tx, ports.Blob, int64) error
 
 func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader, size int64, expected contenthash.Hash, finish stageFinish) (ports.Blob, bool, error) {
 	blob := ports.Blob{WorkspaceID: ws.ID, Status: ports.BlobStaged, CreatedAtUs: s.nowUs()}
@@ -93,16 +93,30 @@ func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader,
 	if finish != nil && blob.Size != size {
 		return ports.Blob{}, false, invalid("assembled file size differs from the declared size")
 	}
-	record := func(ctx context.Context, tx ports.Tx, created bool) error {
+	account := func(ctx context.Context, tx ports.Tx, b ports.Blob) error {
+		claimed, err := s.d.Store.ClaimBlobUsage(ctx, tx, ws.ID, b.Hash, s.nowUs())
+		if err != nil {
+			return err
+		}
+		var used int64
+		if claimed {
+			used = b.Size
+		}
+		if finish != nil {
+			return finish(ctx, tx, b, used)
+		}
+		if used > 0 {
+			return s.adjustUsage(ctx, tx, ws.ID, 0, used)
+		}
+		return nil
+	}
+	record := func(ctx context.Context, tx ports.Tx) error {
 		if blob.Chunking == layout.Fixed {
 			if err := s.d.Store.RecordLayout(ctx, tx, ws.ID, blob.Hash, packed.Packs, packed.File, blob.CreatedAtUs); err != nil {
 				return err
 			}
 		}
-		if finish != nil {
-			return finish(ctx, tx, blob, created)
-		}
-		return nil
+		return account(ctx, tx, blob)
 	}
 	var duplicate bool
 	err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
@@ -110,7 +124,7 @@ func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader,
 			duplicate = errors.Is(err, ports.ErrAlreadyExists)
 			return err
 		}
-		return record(ctx, tx, true)
+		return record(ctx, tx)
 	})
 	if !duplicate {
 		return blob, err == nil, mapErr(err, "blob")
@@ -120,8 +134,8 @@ func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader,
 		return ports.Blob{}, false, mapErr(err, "blob")
 	}
 	if err = s.checkObject(ctx, ws, old); !errors.Is(err, ports.ErrNotFound) {
-		if err == nil && finish != nil {
-			err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return finish(ctx, tx, old, false) })
+		if err == nil {
+			err = s.d.Store.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error { return account(ctx, tx, old) })
 		}
 		return old, false, mapErr(err, "object")
 	}
@@ -131,7 +145,7 @@ func (s *Service) stage(ctx context.Context, ws ports.Workspace, body io.Reader,
 		if err := s.d.Store.SetBlobLayout(ctx, tx, blob); err != nil {
 			return err
 		}
-		return record(ctx, tx, false)
+		return record(ctx, tx)
 	})
 	return blob, false, mapErr(err, "blob")
 }

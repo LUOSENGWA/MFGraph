@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -170,7 +169,7 @@ func (s *Service) openUpload(ctx context.Context, ws ports.Workspace, u ports.Up
 		if err := s.d.Store.InsertUpload(ctx, tx, u); err != nil {
 			return err
 		}
-		return s.adjustReservation(ctx, tx, u, u.Size, 0)
+		return s.adjustUsage(ctx, tx, u.WorkspaceID, u.Size, 0)
 	})
 	if err != nil {
 		return UploadTicket{}, mapErr(err, "upload")
@@ -228,17 +227,16 @@ func (s *Service) openUpload(ctx context.Context, ws ports.Workspace, u ports.Up
 	return ticket, nil
 }
 
-func (s *Service) adjustReservation(ctx context.Context, tx ports.Tx, u ports.Upload, delta, used int64) error {
-	ledger, err := s.d.Store.GetUsage(ctx, tx, u.WorkspaceID)
+func (s *Service) adjustUsage(ctx context.Context, tx ports.Tx, workspace string, reserved, used int64) error {
+	ledger, err := s.d.Store.GetUsage(ctx, tx, workspace)
 	if err != nil {
 		return err
 	}
-	if (delta > 0 && ledger.Reserved > math.MaxInt64-delta) || ledger.Reserved+delta < 0 || ledger.Used > math.MaxInt64-used {
-		return errors.New("invalid workspace usage balance")
+	ledger, err = ledger.Add(reserved, used)
+	if err != nil {
+		return err
 	}
-	ledger.Reserved += delta
-	ledger.Used += used
-	return s.d.Store.SetUsage(ctx, tx, u.WorkspaceID, ledger, s.nowUs())
+	return s.d.Store.SetUsage(ctx, tx, workspace, ledger, s.nowUs())
 }
 
 func (s *Service) makePartURLs(ctx context.Context, ws ports.Workspace, u ports.Upload, numbers []int) ([]UploadURL, error) {

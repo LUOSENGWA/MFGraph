@@ -79,6 +79,20 @@ func TestResumableSession(t *testing.T) {
 	if branch.HeadSnapshotID != "" {
 		t.Fatal("completing a session moved the branch")
 	}
+	for _, data := range []string{"abc", "xyz", "xyz"} {
+		_, _, err := e.svc.PutObject(ctx, alice, core.PutObjectRequest{
+			WorkspaceID: w.ID, Body: strings.NewReader(data), ContentLength: 3,
+		})
+		e.must(err)
+	}
+	ledger(0, 6)
+	fromWhole := init("from-whole", "")
+	ledger(3, 6)
+	p, err = e.svc.PutPart(ctx, alice, fromWhole.ID, 1, strings.NewReader("xyz"), 3)
+	e.must(err)
+	_, err = e.svc.CompleteUpload(ctx, alice, fromWhole.ID, []ports.Part{p}, "")
+	e.must(err)
+	ledger(0, 6)
 }
 
 // Simulate a failed final DB write after all bytes were durable. The accepted

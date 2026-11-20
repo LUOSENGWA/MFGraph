@@ -41,6 +41,7 @@ type state struct {
 	branches   map[string]ports.Branch
 	branchRefs map[[2]string]string // (workspace ID, ref name) -> branch ID
 	usage      map[string]ports.Usage
+	counted    map[blobKey]bool
 	uploads    map[string]ports.Upload
 	parts      map[partKey]ports.Part
 	snapshots  map[string]ports.Snapshot
@@ -60,6 +61,7 @@ func newState() *state {
 		branches:   map[string]ports.Branch{},
 		branchRefs: map[[2]string]string{},
 		usage:      map[string]ports.Usage{},
+		counted:    map[blobKey]bool{},
 		uploads:    map[string]ports.Upload{},
 		parts:      map[partKey]ports.Part{},
 		snapshots:  map[string]ports.Snapshot{},
@@ -90,6 +92,7 @@ func (s *state) clone() *state {
 		branches:   cloneMap(s.branches),
 		branchRefs: cloneMap(s.branchRefs),
 		usage:      cloneMap(s.usage),
+		counted:    cloneMap(s.counted),
 		uploads:    cloneMap(s.uploads),
 		parts:      cloneMap(s.parts),
 		snapshots:  cloneMap(s.snapshots),
