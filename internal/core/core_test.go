@@ -3,6 +3,7 @@ package core_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -677,6 +678,18 @@ func TestListsAndPagination(t *testing.T) {
 	}
 	d, err := e.svc.Diff(ctx, alice, commits[4].SnapshotID, commits[0].SnapshotID, core.Page{Limit: 3})
 	e.must(err)
+	_, err = e.svc.Diff(ctx, alice, commits[4].SnapshotID, commits[1].SnapshotID, core.Page{Cursor: d.NextCursor})
+	wantCode(t, "same target, different base", err, core.CodeInvalidRequest, "reason", core.ReasonInvalidCursor)
+	_, filtered, err := e.svc.Timeline(ctx, alice, id, br, core.Page{Limit: 1})
+	e.must(err)
+	_, _, err = e.svc.Timeline(ctx, alice, id, "", core.Page{Cursor: filtered})
+	wantCode(t, "different timeline filter", err, core.CodeInvalidRequest, "reason", core.ReasonInvalidCursor)
+	page, err := e.svc.ListTree(ctx, alice, commits[4].SnapshotID, "dir", core.Page{Limit: 1})
+	e.must(err)
+	for _, target := range []struct{ id, dir string }{{commits[4].SnapshotID, ""}, {commits[3].SnapshotID, "dir"}} {
+		_, err = e.svc.ListTree(ctx, alice, target.id, target.dir, core.Page{Cursor: page.NextCursor})
+		wantCode(t, "different tree list", err, core.CodeInvalidRequest, "reason", core.ReasonInvalidCursor)
+	}
 	d2, err := e.svc.Diff(ctx, alice, commits[4].SnapshotID, commits[0].SnapshotID, core.Page{Limit: 3, Cursor: d.NextCursor})
 	e.must(err)
 	if len(d.Items) != 3 || len(d2.Items) != 1 || d2.NextCursor != "" || d2.Items[0].Path != "dir/f4" {
@@ -812,8 +825,9 @@ func TestInvalidCursors(t *testing.T) {
 			wantCode(t, name+" cursor "+c[:min(len(c), 12)], err, core.CodeInvalidRequest, "reason", core.ReasonInvalidCursor)
 		}
 	}
-	// The deepest valid position is accepted.
-	if _, err := e.svc.Diff(ctx, alice, snap, "", core.Page{Cursor: cursor("d" + strings.Repeat("a/", tree.MaxDepth-1) + "a")}); err != nil {
+	// The deepest valid position is accepted within this list.
+	scope := sha256.Sum256([]byte("d" + snap + "\x00"))
+	if _, err := e.svc.Diff(ctx, alice, snap, "", core.Page{Cursor: cursor(string(scope[:]) + strings.Repeat("a/", tree.MaxDepth-1) + "a")}); err != nil {
 		t.Fatalf("a cursor of %d segments: %v", tree.MaxDepth, err)
 	}
 }

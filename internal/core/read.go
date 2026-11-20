@@ -30,9 +30,10 @@ func (s *Service) Timeline(ctx context.Context, p ports.Principal, workspaceID, 
 	if err != nil {
 		return nil, "", err
 	}
+	scope := cursorScope(cursorTimeline, workspaceID, branchID)
 	q := ports.SnapshotQuery{WorkspaceID: workspaceID, Limit: limit + 1}
 	if pg.Cursor != "" {
-		if q.Before, err = parseTimelineCursor(pg.Cursor); err != nil {
+		if q.Before, err = scope.parseTimelineCursor(pg.Cursor); err != nil {
 			return nil, "", err
 		}
 	}
@@ -58,7 +59,7 @@ func (s *Service) Timeline(ctx context.Context, p ports.Principal, workspaceID, 
 	if len(snaps) > limit {
 		snaps = snaps[:limit]
 		last := snaps[limit-1]
-		next = timelineCursor(ports.TimelineCursor{CreatedAtUs: last.CreatedAtUs, SnapshotID: last.ID})
+		next = scope.timelineCursor(ports.TimelineCursor{CreatedAtUs: last.CreatedAtUs, SnapshotID: last.ID})
 	}
 	return snaps, next, nil
 }
@@ -88,12 +89,6 @@ func (s *Service) ListTree(ctx context.Context, p ports.Principal, snapshotID, d
 	if err != nil {
 		return TreeListing{}, err
 	}
-	after := ""
-	if pg.Cursor != "" {
-		if after, err = decodeCursor(cursorTree, pg.Cursor); err != nil {
-			return TreeListing{}, err
-		}
-	}
 	var nfc, raw string
 	if dir != "" {
 		if nfc, raw, err = pathx.NormalizeLookup(dir); err != nil {
@@ -117,17 +112,22 @@ func (s *Service) ListTree(ctx context.Context, p ports.Principal, snapshotID, d
 			return TreeListing{}, invalidReason(ReasonNotADirectory, "the path names a file")
 		}
 	}
+	stored := strings.Join(segs, "/")
+	scope := cursorScope(cursorTree, snapshotID, stored)
+	after, err := scope.position(pg.Cursor)
+	if err != nil {
+		return TreeListing{}, err
+	}
 	entries, more, err := tree.ListDir(ctx, g, e.Hash, after, limit)
 	if err != nil {
 		return TreeListing{}, mapErr(err, "tree node")
 	}
-	stored := strings.Join(segs, "/")
 	out := TreeListing{SnapshotID: snap.ID, Path: stored, Items: make([]TreeEntry, len(entries))}
 	for i, x := range entries {
 		out.Items[i] = TreeEntry{Path: join(stored, x.Name), Entry: x}
 	}
 	if more {
-		out.NextCursor = encodeCursor(cursorTree, entries[len(entries)-1].Name)
+		out.NextCursor = scope.encode(entries[len(entries)-1].Name)
 	}
 	return out, nil
 }
@@ -230,9 +230,17 @@ func (s *Service) Diff(ctx context.Context, p ports.Principal, snapshotID, baseI
 	if err != nil {
 		return DiffResult{}, err
 	}
+	target, ws, err := s.snapshotAccess(ctx, p, snapshotID, ports.ActionWorkspaceRead)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	if baseID == "" && len(target.ParentIDs) > 0 {
+		baseID = target.ParentIDs[0]
+	}
+	scope := cursorScope(cursorDiff, target.ID, baseID)
 	var after []string
 	if pg.Cursor != "" {
-		pos, err := decodeCursor(cursorDiff, pg.Cursor)
+		pos, err := scope.position(pg.Cursor)
 		if err != nil {
 			return DiffResult{}, err
 		}
@@ -242,13 +250,6 @@ func (s *Service) Diff(ctx context.Context, p ports.Principal, snapshotID, baseI
 		if len(after) > tree.MaxDepth || slices.Contains(after, "") {
 			return DiffResult{}, invalidCursor()
 		}
-	}
-	target, ws, err := s.snapshotAccess(ctx, p, snapshotID, ports.ActionWorkspaceRead)
-	if err != nil {
-		return DiffResult{}, err
-	}
-	if baseID == "" && len(target.ParentIDs) > 0 {
-		baseID = target.ParentIDs[0]
 	}
 	var baseRoot contenthash.Hash
 	if baseID != "" {
@@ -267,7 +268,7 @@ func (s *Service) Diff(ctx context.Context, p ports.Principal, snapshotID, baseI
 	}
 	out := DiffResult{BaseSnapshotID: baseID, TargetSnapshotID: target.ID, Items: items}
 	if more {
-		out.NextCursor = encodeCursor(cursorDiff, items[len(items)-1].Path)
+		out.NextCursor = scope.encode(items[len(items)-1].Path)
 	}
 	return out, nil
 }

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -276,21 +277,27 @@ func (pg Page) limit() (int, error) {
 	return pg.Limit, nil
 }
 
-// Cursors are opaque to clients: a kind letter and the position, in
-// unpadded base64url.
-func encodeCursor(kind byte, pos string) string {
-	return base64.RawURLEncoding.EncodeToString(append([]byte{kind}, pos...))
+// A cursor is scoped to the list kind, resource and normalized filter.
+// Hash the scope so a long directory name does not inflate the next URL.
+type listScope [sha256.Size]byte
+
+func cursorScope(kind byte, resource, filter string) listScope {
+	return sha256.Sum256([]byte(string(kind) + resource + "\x00" + filter))
 }
 
-// decodeCursor returns the position of a cursor of the given kind. Every
-// cursor that cannot be parsed gives invalid_request with reason
-// invalid_cursor.
-func decodeCursor(kind byte, c string) (string, error) {
-	b, err := base64.RawURLEncoding.DecodeString(c)
-	if err != nil || len(b) < 2 || b[0] != kind {
+func (scope listScope) encode(pos string) string {
+	return base64.RawURLEncoding.EncodeToString(append(scope[:], pos...))
+}
+
+func (scope listScope) position(cursor string) (string, error) {
+	if cursor == "" {
+		return "", nil
+	}
+	b, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil || len(b) <= len(scope) || listScope(b[:len(scope)]) != scope {
 		return "", invalidCursor()
 	}
-	return string(b[1:]), nil
+	return string(b[len(scope):]), nil
 }
 
 func invalidCursor() *Error { return invalidReason(ReasonInvalidCursor, "invalid cursor") }
@@ -302,12 +309,12 @@ const (
 	cursorTimeline = 's'
 )
 
-func timelineCursor(c ports.TimelineCursor) string {
-	return encodeCursor(cursorTimeline, strconv.FormatInt(c.CreatedAtUs, 10)+":"+c.SnapshotID)
+func (scope listScope) timelineCursor(c ports.TimelineCursor) string {
+	return scope.encode(strconv.FormatInt(c.CreatedAtUs, 10) + ":" + c.SnapshotID)
 }
 
-func parseTimelineCursor(c string) (*ports.TimelineCursor, error) {
-	pos, err := decodeCursor(cursorTimeline, c)
+func (scope listScope) parseTimelineCursor(c string) (*ports.TimelineCursor, error) {
+	pos, err := scope.position(c)
 	if err != nil {
 		return nil, err
 	}
